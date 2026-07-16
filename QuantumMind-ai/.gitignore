@@ -1,0 +1,7 @@
+.vscode
+__pycache__
+VectorEmbeddingStore
+.env
+env
+.DS_Store
+.vscode

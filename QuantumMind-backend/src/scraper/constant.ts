@@ -1,0 +1,1 @@
+export const SCRAPER_PROVIDER = "SCRAPE_MODEL";

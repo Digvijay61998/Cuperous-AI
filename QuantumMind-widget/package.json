@@ -1,0 +1,46 @@
+{
+  "name": "chatbot-widget-js",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/es/index.js",
+  "commonjs": "dist/cjs/index.js",
+  "module": "dist/es/index.js",
+  "files": [
+    "dist"
+  ],
+  "author": "bizbot",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.10.5",
+    "@emotion/styled": "^11.10.5",
+    "@iconify/react": "^4.0.0",
+    "@mui/icons-material": "^5.10.16",
+    "@mui/material": "^5.10.15",
+    "@reduxjs/toolkit": "^1.9.0",
+    "axios": "^1.2.0",
+    "google-translate-api": "^2.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.0",
+    "react-perfect-scrollbar": "^1.5.8",
+    "react-redux": "^8.0.5",
+    "react-slideshow-image": "^4.0.5",
+    "react-webcam": "^7.0.1",
+    "socket.io-client": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/google-translate-api": "^2.3.2",
+    "@types/react": "^18.0.24",
+    "@types/react-dom": "^18.0.8",
+    "@vitejs/plugin-react": "^2.2.0",
+    "typescript": "^4.6.4",
+    "vite": "^3.2.3",
+    "vite-plugin-css-injected-by-js": "^2.1.1",
+    "vite-plugin-dts": "^1.7.1"
+  }
+}

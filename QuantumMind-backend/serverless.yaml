@@ -1,0 +1,51 @@
+service: NestJS-Serverless-Test
+
+plugins:
+  - serverless-offline
+
+package:
+  individually: true
+
+
+    
+  
+provider:
+  name: aws
+  runtime: nodejs16.x
+  region: us-east-1
+  environment:
+    DATABASE_HOST: home.passwordless4u.com
+    DATABASE_PORT: 2930
+    DATABASE_NAME: chatbot
+    DATABASE_USER: passwordless
+    DATABASE_PASSWORD: "U2AERqXe99zxEV26"
+    REDIS_HOST: 103.73.189.6
+    REDIS_PORT: 20034
+    REDIS_PASSWORD: redispass
+    MAIL_USERNAME: help@passwordless.com.au
+    MAIL_PASSWORD: 'help!@)(#$*&'
+
+
+
+functions:
+  main: 
+    handler: dist/lambda.handler
+    events:
+      - http:
+          method: any
+          path: /
+      - http:
+          method: any
+          path: '{proxy+}'
+
+custom:
+  scripts : 
+    hooks: 
+      'after:package:createDeploymentArtifacts': 
+        - 'yarn install --production'
+        - 'yarn build'
+        
+
+    
+
+

@@ -1,0 +1,21 @@
+
+  .container {
+  }
+
+  /*------ Style 2 ------*/
+  #style2 {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-color: transparent;
+    width: 40px;
+    height: 40px;
+    border: none;
+    cursor: pointer;
+  }
+  #style2::-webkit-color-swatch {
+    border-radius: 50%;
+  }
+  #style2::-moz-color-swatch {
+    border-radius: 50%;
+  }

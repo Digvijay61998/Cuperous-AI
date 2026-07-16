@@ -1,0 +1,1 @@
+export const SEGMENT_PROVIDER = 'SEGMENT_MODEL';

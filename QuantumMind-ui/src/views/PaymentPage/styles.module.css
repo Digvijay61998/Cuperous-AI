@@ -1,0 +1,195 @@
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,500;1,400&display=swap');
+
+.parent{
+    position: relative;
+    background: url('/images/payment/Blue_Bg_1_1.png');
+    background-position: fit-content;
+    background-repeat: no-repeat;
+    background-size: 100vmax;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.container{
+    position: relative;
+    margin-left: 13%;
+    padding-top: 9rem;
+}
+
+.content{
+    display: flex;
+    flex-direction: column;
+}
+
+.content h1{
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 900;
+    font-size: 8ch;
+    line-height: 68px;
+    /* text-transform: uppercase; */
+    color: #69C4F7;
+    padding: 1rem;
+}
+
+.content p{
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 400;
+    font-size: 3ch;
+
+    line-height: 1.5;
+    width: 100%;
+    color: #60606A;
+    padding: 1rem 2rem;
+  
+}
+
+
+.cards{
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.btn{
+    background: linear-gradient(89.76deg, #253FB6 -1.41%, #69C4F7 99.75%);
+    -webkit-border-radius: 52px;
+    -moz-border-radius: 52px;
+    border-radius: 52px;
+    height: auto;
+    color: #FFFFFF;
+    width: 12em;
+    font-weight: 200;
+    padding: 1rem;
+    box-shadow: -4.83896px -4.83896px 4px #D7F5FF;
+    border: 1px transparent;
+    display: inline-block;
+    cursor: pointer;
+    text-align: center;
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 600;
+    font-size: 2.3ch;
+    line-height: 44px;
+ }
+ 
+ .btn:hover {
+    opacity: 0.9;
+ }
+
+ .cardContainer{
+    width: 100%;
+    display: flex;
+    margin-top: 20rem;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+ }
+
+.cardContainer h2{
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 600;
+    font-size: 52px;
+    line-height: 71px;
+    text-align: center;
+    position: relative;
+    top: 6rem;
+    color: #60606A;
+}
+
+
+.cardContainer>p{
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 33px;
+    /* identical to box height */
+
+    text-align: center;
+
+    color: #60606A;
+}
+
+ .cards{
+    display: flex;
+    flex-direction: row;
+ }
+
+.free{
+    position: relative;
+    top:15rem;
+}
+
+ .about_hr_buddy{
+    margin-top:5rem;
+    display:flex;
+    justify-content:space-evenly;
+    width: 100%;
+    text-align: center;
+}
+.about_container_title{
+    text-align:center;
+    color:#60606A;
+}
+.about_container{
+    /* height:100%; */
+    /* width:100%; */
+    background-color:#F6F6F6;
+    color:60606A;
+    padding:3rem;
+    /* mix-blend-mode: overlay; */
+    opacity: 0.8;
+}
+
+.FAQs{
+    margin: 5%;
+    position: relative;
+}
+.menuContainer{
+    width: 38%;
+    display: flex;
+    flex-direction: column;
+    margin: 3% auto;
+}
+.FAQs h2{
+    text-align: center;
+    color: #60606A;
+    font-family: 'Open Sans';
+    font-style: normal;
+    font-weight: 700;
+    font-size: 4ch;
+    line-height: 82px;
+    text-align: center;
+}
+.plusIcon{
+    width: 2em;
+    position: absolute;
+    left: -4em;
+}
+.panel{
+    position: relative;
+    width: 100%;
+    margin: 5% auto;
+}
+
+.ball{
+    position: absolute;
+    left: -5em;
+    top: 0  ;
+}
+
+.cards{
+    min-height: 70rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 5%;
+}
+
+.featureHeader{
+    font-size: 1.5rem;
+}

@@ -1,0 +1,8 @@
+export enum TicketActivitiesEnum {
+  ASSIGNED = 'ASSIGNED',
+  REOPENED = 'REOPENED',
+  CLOSED = 'CLOSED',
+  COMMENTED = 'COMMENTED',
+  CREATED = 'CREATED',
+  RESOLVED = 'RESOLVED',
+}

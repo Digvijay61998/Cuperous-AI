@@ -1,0 +1,34 @@
+<p>
+    hey {{name}},
+</p>
+
+<div styl="margin-top: 20px;">
+    <p>
+        Here is the transcript of your chat.
+    </p>
+<p style="margin-top: 20px; "> 
+    {{#if transcript}}
+        {{#each transcript}}
+            <p>
+                <strong>
+                    {{label}}:
+                </strong>
+                <span>
+                    {{message}}
+                </span>
+                
+            </p>
+        {{/each}}
+    {{else}}
+        <p>
+            No transcript available.
+        </p>
+    {{/if}}
+</p>
+    </div>
+
+
+    <p>
+        warm regards,<br>
+        Engage team
+    </p>

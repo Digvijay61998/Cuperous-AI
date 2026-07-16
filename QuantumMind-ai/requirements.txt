@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pypdf
+langchain
+boto3
+awscli
+pymilvus
+docx2txt
+tiktoken
+sentence_transformers

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <h1>chatbot</h1>
+    <div id="root"></div>
+
+    <!-- Start of  Engage Bot code -->
+    <script type="module">
+      window.botId = "63e092a8a554792e523b731d";
+      window.baseUrl = "http://localhost:4000";
+      window.isOpenChat = true;
+      import engage from "http://localhost:4000/api/file/plugin.js";
+      engage();
+    </script>
+    <!-- End of Engage Bot code -->
+  </body>
+</html>

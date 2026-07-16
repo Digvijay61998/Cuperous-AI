@@ -1,0 +1,38 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 16
+    commands:
+      - echo Installing dependencies
+      #- npm install
+  pre_build:
+    commands:
+      - pip install awscli --upgrade --user
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 518573545843.dkr.ecr.ap-south-1.amazonaws.com
+      - REPOSITORY_URI=518573545843.dkr.ecr.ap-south-1.amazonaws.com/bizbot-ai
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - apt-get update
+      - apt-get install sshpass
+  build:
+    commands:
+      - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 --storage-driver=overlay&
+      - echo $REPOSITORY_URI
+      - echo $IMAGE_TAG
+      # - aws s3 cp s3://linkme-notification-service-us-east-1-codepipeline/.env .
+      - aws s3 cp s3://codepipeline-ap-south-1-553528238017/bizbotai.env ./.env
+      - docker build --rm -f Dockerfile -t bizbot-ai .
+      - docker tag bizbot-ai  $REPOSITORY_URI:latest
+      - echo Pushing the Docker images...
+      - docker push $REPOSITORY_URI:latest
+  post_build:
+    commands:
+      - echo Writing image definitions file...
+      - sshpass -p "ruyam" ssh -o StrictHostKeyChecking=no ubuntu@3.7.124.91 bash bizuaiDocker.sh
+      - printf '{"ImageURI":"%s"}' $REPOSITORY_URI:latest > imageDetail.json
+      - cat imageDetail.json
+artifacts:
+  files:
+    - imageDetail.json

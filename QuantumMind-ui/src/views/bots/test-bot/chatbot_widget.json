@@ -1,0 +1,84 @@
+[
+    {
+                "id": "d9273784-6e70-40f3-85d9-7ca34ae02e2d",
+                "type": "BOT_RESPONSE",
+                "responses": [
+                    {
+                        "delay": 2000,
+                        "type": "text",
+                        "message": "This is the text"
+                    },
+                    {
+                        "delay": 2000,
+                        "type": "image",
+                        "imageUrl": "https://cdn.chatbot.com/attachments/636b7603ea2b2800076f945d/Wsi6j3Ss3p8IzWeM.jpeg"
+                    },
+                    {
+                        "delay": 2000,
+                        "type": "button",
+                        "title": "Checkout our service",
+                        "buttons": [
+                            {
+                                "title": "Service 1",
+                                "type": "url",
+                                "value": "https://url.chatbot.com/url2?p=eyJpZCI6IjM2MmFkYTEyLTk1MmUtNDA4ZS1iZTI3LWViZjRhYjYzMzU0Ny01MGYwYTQ4MSIsImNoYXRJZCI6IjYzNzRhODMxOWJjZTYzMDAwN2MwYmRkZCIsInNpZCI6IjRiNGY1YTRkLTMzNjMtNDQwZS05MzdiLTczMDc4MTk0NjhiZSIsInRpdGxlIjoiU2VydmljZSAxIiwidXJsIjoiaHR0cHMlM0ElMkYlMkZzZXJ2aWNlLmNvbSJ9&s=4d93191e605df80e89041dd094127c787be2d977ac07b101bcdfeea6acee198b",
+                                "id": "362ada12-952e-408e-be27-ebf4ab633547-50f0a481"
+                            },
+                            {
+                                "title": "service 2",
+                                "type": "webview",
+                                "value": "https://url.chatbot.com/url2?p=eyJpZCI6IjUxYzk4ZjU2LTc5ODAtNDkyYS1hNTBjLWE5MTM4YzRiYzk5Ny01MGYwYTQ4MSIsImNoYXRJZCI6IjYzNzRhODMxOWJjZTYzMDAwN2MwYmRkZCIsInNpZCI6IjRiNGY1YTRkLTMzNjMtNDQwZS05MzdiLTczMDc4MTk0NjhiZSIsInRpdGxlIjoic2VydmljZSAyIiwidXJsIjoiaHR0cHMlM0ElMkYlMkZhYmMuY29tIn0%3D&s=61e447a5980c89080111b4fd820ef34e8414d256055767280762f75e6dc6ad06",
+                                "id": "51c98f56-7980-492a-a50c-a9138c4bc997-50f0a481"
+                            },
+                            {
+                                "title": "Go to step one",
+                                "type": "goto",
+                                "value": "b08806ca-7421-46a2-ac46-b24e9e5f546b",
+                                "id": "7e737ed4-b9f8-402e-994b-9aa2240dac83-50f0a481"
+                            },
+                            {
+                                "title": "Phone call",
+                                "type": "phone",
+                                "value": "+917030883094",
+                                "id": "97b76b33-4672-44cd-b76f-4756145ad392-50f0a481"
+                            }
+                        ]
+                    },
+                    {
+                        "delay": 2000,
+                        "type": "quickReplies",
+                        "title": "Quick action",
+                        "buttons": [
+                            {
+                                "title": "Go To transefer flow",
+                                "type": "goto",
+                                "value": "865623bf-cfbc-4abf-a5b4-e012421405f1",
+                                "id": "e9f26984-2550-422c-887b-66207da30d95-50f0a481"
+                            },
+                            {
+                                "title": "Go to create account",
+                                "type": "goto",
+                                "value": "2edb8456-c528-4ac4-a7bd-f67b88d8f7d3",
+                                "id": "613faafb-191c-499a-a349-0f6a71f6bed4-50f0a481"
+                            }
+                        ]
+                    }
+                ]
+    },
+    {
+        "id": "0bc1aae9-ab80-4be1-8322-4bc532de7b62",
+        "type": "INPUT_MESSAGE",
+        "value": "Hi"
+    },
+    {
+        "id": "a83918ff-eda3-443b-9542-f8d192c76948",
+        "type": "BOT_RESPONSE",
+        "responses": [
+            {
+                "type": "text",
+                "delay": 1000,
+                "message": "sds"
+            }
+        ]
+    }
+]

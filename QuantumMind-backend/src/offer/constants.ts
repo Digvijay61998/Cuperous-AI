@@ -1,0 +1,1 @@
+export const OFFER_PROVIDER = 'OFFER_PROVIDER';
