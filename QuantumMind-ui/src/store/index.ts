@@ -26,6 +26,7 @@ import serviceRequest from 'src/store/apps/service-request';
 import social from 'src/store/apps/social';
 import states from 'src/store/apps/states';
 import tags from 'src/store/apps/tags';
+import template from 'src/store/apps/template';
 import user from 'src/store/apps/user';
 import video from 'src/store/apps/video';
 import visitors from 'src/store/apps/visitor';
@@ -36,6 +37,7 @@ export const store = configureStore({
   reducer: {
     agent,
     video,
+    template,
     user,
     bots,
     chat,

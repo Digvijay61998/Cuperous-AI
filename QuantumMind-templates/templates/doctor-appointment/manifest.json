@@ -1,0 +1,54 @@
+{
+  "name": "Doctor Appointment Booking",
+  "description": "Mobile-first appointment booking flow for clinics and hospitals, optimised for WhatsApp WebView.",
+  "industry": "medical",
+  "category": "appointment",
+  "tags": ["healthcare", "appointment", "clinic", "booking"],
+  "supportedLanguages": ["en"],
+  "supportsDarkMode": false,
+  "estimatedDuration": "2 minutes",
+  "templateConfig": [
+    {
+      "key": "clinic_name",
+      "type": "text",
+      "label": "Clinic Name",
+      "defaultValue": "City Care Clinic",
+      "group": "Branding"
+    },
+    {
+      "key": "clinic_logo",
+      "type": "image",
+      "label": "Clinic Logo",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_title",
+      "type": "text",
+      "label": "Hero Title",
+      "defaultValue": "Book your appointment",
+      "group": "Header"
+    },
+    {
+      "key": "hero_subtitle",
+      "type": "text",
+      "label": "Hero Subtitle",
+      "defaultValue": "Choose a doctor, pick a slot, and you're done.",
+      "group": "Header"
+    },
+    {
+      "key": "primary_color",
+      "type": "color",
+      "label": "Primary Color",
+      "defaultValue": "#2241FF",
+      "group": "Theme"
+    },
+    {
+      "key": "success_message",
+      "type": "text",
+      "label": "Success Message",
+      "defaultValue": "Your appointment is confirmed!",
+      "group": "Content"
+    }
+  ]
+}

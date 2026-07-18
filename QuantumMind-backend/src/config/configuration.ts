@@ -144,6 +144,9 @@ export default () => ({
     },
   ],
 
+  template: {
+    storage: process.env.TEMPLATE_STORAGE || "local", // 'local' | 's3'
+  },
   encryption: {
     key: process.env.ENCRYPTION_KEY || "secretKey",
   },

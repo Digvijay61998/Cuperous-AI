@@ -1,1 +1,4 @@
 .env*
+
+# Template builds (local dev storage)
+QuantumMind-backend/uploaded-docs/templates/

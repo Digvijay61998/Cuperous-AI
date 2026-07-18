@@ -1,0 +1,24 @@
+import { useEffect, useState } from 'react';
+import {
+  getContext,
+  loadConfig,
+  configValue,
+  trackView,
+} from '@quantum/template-sdk';
+
+export default function App() {
+  const ctx = getContext();
+  const [config, setConfig] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    trackView();
+    loadConfig(undefined, { hero_title: '{{name}}' }).then(setConfig);
+  }, []);
+
+  return (
+    <main className="screen">
+      <h1>{configValue(config, 'hero_title', '{{name}}')}</h1>
+      <p>Hello{ctx.name ? `, ${ctx.name}` : ''}! This is the {{name}} template.</p>
+    </main>
+  );
+}

@@ -83,6 +83,11 @@ const navigation = (): VerticalNavItemsType => {
       path: '/question-bank/list',
     },
     {
+      title: 'Templates',
+      icon: 'material-symbols-light:web-sharp',
+      path: '/templates/list',
+    },
+    {
       title: 'Marketing',
       icon: 'mdi:marketplace',
       path: '',

@@ -38,6 +38,7 @@ import { FacebookModule } from "./facebook/facebook.module";
 import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
 import { VideoModule } from "./video/video.module";
+import { TemplateModule } from "./template/template.module";
 import { WhatsappModule } from "./whatsapp/whatsapp.module";
 import { MailsModule } from "./mails/mails.module";
 import { SocialModule } from "./social/social.module";
@@ -80,6 +81,7 @@ import { ScrapeModule } from "./scraper/scraper.module";
     TelegramModule,
     ChatInitializerModule,
     VideoModule,
+    TemplateModule,
     WhatsappModule,
     MailsModule,
     SocialModule,
