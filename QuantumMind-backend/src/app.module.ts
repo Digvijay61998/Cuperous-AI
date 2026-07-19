@@ -39,6 +39,10 @@ import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
 import { VideoModule } from "./video/video.module";
 import { TemplateModule } from "./template/template.module";
+import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
+import { MessagingModule } from "./messaging/messaging.module";
+import { TemplateSessionModule } from "./template-session/template-session.module";
+import { ScheduleModule } from "@nestjs/schedule";
 import { WhatsappModule } from "./whatsapp/whatsapp.module";
 import { MailsModule } from "./mails/mails.module";
 import { SocialModule } from "./social/social.module";
@@ -82,6 +86,10 @@ import { ScrapeModule } from "./scraper/scraper.module";
     ChatInitializerModule,
     VideoModule,
     TemplateModule,
+    FeatureFlagsModule,
+    MessagingModule,
+    TemplateSessionModule,
+    ScheduleModule.forRoot(),
     WhatsappModule,
     MailsModule,
     SocialModule,

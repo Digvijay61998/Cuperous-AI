@@ -24,6 +24,10 @@ export interface TemplateContext {
   platform?: TemplatePlatform;
   templateId?: string;
   leadId?: string;
+  /** Template session id (path param for the session endpoints). */
+  sessionId?: string;
+  /** Session auth token (validated server-side). */
+  sessionToken?: string;
   lang: string;
   /** Any extra query params, exposed untyped for forward compatibility. */
   extra: Record<string, string>;
@@ -37,6 +41,8 @@ const KNOWN_KEYS = new Set([
   'cid',
   'src',
   'tid',
+  'sid',
+  'stk',
   'lead',
   'lang',
 ]);
@@ -57,6 +63,8 @@ export const getContext = (search: string = window.location.search): TemplateCon
     conversationId: p.get('cid') || undefined,
     platform: (p.get('src') as TemplatePlatform) || undefined,
     templateId: p.get('tid') || undefined,
+    sessionId: p.get('sid') || undefined,
+    sessionToken: p.get('stk') || undefined,
     leadId: p.get('lead') || undefined,
     lang: p.get('lang') || 'en',
     extra,

@@ -21,6 +21,7 @@ import socialReports from 'src/store/apps/reports/social';
 import ticketsReport from 'src/store/apps/reports/ticket';
 import VisitorsReports from 'src/store/apps/reports/visitors';
 import webhookReports from 'src/store/apps/reports/webhooks';
+import messaging from 'src/store/apps/messaging';
 import segments from 'src/store/apps/segments';
 import serviceRequest from 'src/store/apps/service-request';
 import social from 'src/store/apps/social';
@@ -66,6 +67,7 @@ export const store = configureStore({
     socialReports,
     dashboard,
     scraper,
+    messaging,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

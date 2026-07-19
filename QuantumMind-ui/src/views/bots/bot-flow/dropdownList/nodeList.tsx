@@ -5,8 +5,16 @@ export const nodeList: any =  (
   y: number,
   id: string,
 ) => {
+  const yOffset =
+    nodeType === 'SUCCESS'
+      ? -80
+      : nodeType === 'TIMEOUT'
+      ? 0
+      : nodeType === 'FAILURE'
+      ? 80
+      : 50;
   const append = {
-    position: { x:  x + 300, y:  nodeType === "SUCCESS" ? y - 50 : y + 50 },
+    position: { x: x + 300, y: y + yOffset },
     id,
     type:
       nodeType === 'CLOSE_CHAT' 
@@ -60,11 +68,17 @@ export const nodeList: any =  (
     FALL_BACK: {
       data: { label: 'Fall Back', icon: 'pajamas:false-positive' },
     },
+    OPEN_TEMPLATE: {
+      data: { label: 'Open Template', icon: 'material-symbols-light:web-sharp' },
+    },
     SUCCESS: {
       data: { label: 'Success', icon: 'akar-icons:circle-check-fill' },
     },
     FAILURE: {
       data: { label: 'Failure', icon: 'entypo:circle-with-cross' },
+    },
+    TIMEOUT: {
+      data: { label: 'Timeout', icon: 'mdi:timer-sand' },
     },
   };
   const newNode = listNodes[nodeType];

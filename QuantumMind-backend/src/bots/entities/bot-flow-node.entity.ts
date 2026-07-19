@@ -15,6 +15,21 @@ export interface BotPayload {
   attributes?: [];
   eventField?: string;
   secure?: boolean;
+  // ** Open Template node (Phase 2) **
+  templateId?: string;
+  buttonText?: string;
+  buttonIcon?: string;
+  variableMappings?: TemplateVariableMapping[];
+  callbackEvent?: string;
+  timeoutMinutes?: number;
+  sessionExpiryMinutes?: number;
+  analyticsEnabled?: boolean;
+}
+
+export interface TemplateVariableMapping {
+  templateKey: string; // config key the template expects
+  source: 'attribute' | 'static';
+  value: string; // attribute name (when source=attribute) or literal (when static)
 }
 
 interface elements {

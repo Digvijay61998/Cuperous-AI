@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   applyTheme,
   configValue,
-  createAppointment,
   getContext,
+  initSession,
   loadConfig,
+  submitSession,
   track,
-  trackView,
 } from '@quantum/template-sdk';
 import { buildDays, DOCTORS, Doctor, TIME_SLOTS } from './data';
 
@@ -29,7 +29,8 @@ export default function App() {
 
   // Load admin-editable config (labels, colors, logo) + apply theme.
   useEffect(() => {
-    trackView();
+    // Fire opened-heartbeat + view event, keep session alive (Phase 2).
+    initSession();
     loadConfig(undefined, {
       clinic_name: 'City Care Clinic',
       hero_title: 'Book your appointment',
@@ -52,29 +53,44 @@ export default function App() {
     if (!canSubmit || !doctor) return;
     setSubmitting(true);
     setError('');
-    try {
-      await createAppointment({
-        practitioner: doctor.name,
-        service: doctor.specialty,
-        date,
-        slot,
-        name: name.trim(),
-        phone: phone.trim(),
-        notes: notes.trim(),
-      });
+
+    // Submit through the SDK session client: persists the submission, resumes
+    // the paused workflow server-side, and shows the standard return-to-chat
+    // screen on success.
+    const result = await submitSession(
+      {
+        category: 'appointment',
+        industry: 'medical',
+        primaryDate: date,
+        data: {
+          practitioner: doctor.name,
+          service: doctor.specialty,
+          date,
+          slot,
+          name: name.trim(),
+          phone: phone.trim(),
+          notes: notes.trim(),
+        },
+      },
+      {
+        title: configValue(config, 'success_message', 'Your appointment is confirmed!'),
+        message: `${doctor.name} on ${date} at ${slot}. You can return to the chat now.`,
+        color: configValue(config, 'primary_color', '#2241FF'),
+      },
+    );
+
+    if (result.ok) {
       track('complete', { doctor: doctor.id, date, slot });
       setStep('success');
-    } catch (e: any) {
-      // In local/dev without the Phase-2 endpoint this may fail; still show
-      // success so the flow is demoable, but surface a note.
-      track('error', { message: e?.message });
+    } else {
+      // No active session (e.g. opened directly / preview) — show the local
+      // success screen so the flow stays demoable.
       setError(
-        'We could not reach the booking service. Your selection was recorded locally for this demo.',
+        'No active booking session was found. This is expected when previewing the template directly.',
       );
       setStep('success');
-    } finally {
-      setSubmitting(false);
     }
+    setSubmitting(false);
   };
 
   return (

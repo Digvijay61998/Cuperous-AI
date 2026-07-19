@@ -14,6 +14,7 @@ import TransferChat from 'src/views/bots/bot-flow/modals/TransferChat';
 import UserInput from 'src/views/bots/bot-flow/modals/UserInput';
 import Webhook from 'src/views/bots/bot-flow/modals/Webhook';
 import AiNode from 'src/views/bots/bot-flow/modals/AiNode'
+import OpenTemplate from 'src/views/bots/bot-flow/modals/OpenTemplate';
 import { useRouter } from 'next/router';
 
 type Props = {
@@ -98,6 +99,7 @@ const index = (props: Props) => {
       )}
       {nodeType === 'QUESTIONS' && <Questions {...props} {...modalProps} />}
       {nodeType === 'AI_NODE' && <AiNode {...props} {...modalProps} />}
+      {nodeType === 'OPEN_TEMPLATE' && <OpenTemplate {...props} {...modalProps} />}
     </div>
   );
 };

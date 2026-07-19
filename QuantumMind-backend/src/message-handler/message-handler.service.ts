@@ -36,6 +36,9 @@ import { generateId } from "src/util";
 import { WebhookStatusEnum } from "src/webhook/enums/webhook-status.enum";
 import { WebhookService } from "src/webhook/webhook.service";
 import { ModeEnum } from "src/widget/enums/mode.enum";
+import { MessagingProviderRegistry } from "src/messaging/messaging-provider.registry";
+import { TemplateSessionService } from "src/template-session/template-session.service";
+import { TemplateService } from "src/template/template.service";
 import { Markup } from "telegraf";
 import { MESSAGE_HANDLER_QUEUE } from "./constants";
 import { MessageResponseDto } from "./dto/message-response.dto";
@@ -64,7 +67,10 @@ export class MessageHandlerService {
     private readonly questionsService: QuestionsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly messagingRegistry: MessagingProviderRegistry,
+    private readonly templateSessionService: TemplateSessionService,
+    private readonly templateService: TemplateService
   ) {}
 
   async setNextNode(nodeId: string, userId: string | any) {
@@ -250,6 +256,9 @@ export class MessageHandlerService {
 
         case NodeTypeEnum.CLOSE_CHAT:
           return await this.handleCloseChat(message, currentNode, userId);
+
+        case NodeTypeEnum.OPEN_TEMPLATE:
+          return await this.handleOpenTemplate(message, currentNode, userId);
 
         default:
           return await this.defaultFallback(message, currentNode, userId);
@@ -991,6 +1000,216 @@ export class MessageHandlerService {
       },
     ]);
     this.eventEmitter.emit("end.conversation", { conversationId, userId });
+  }
+
+  // ==========================================================================
+  // Open Template node (Phase 2)
+  // ==========================================================================
+
+  /** Resolve dynamic variable mappings against the workflow's attributes. */
+  private resolveTemplateVariables(
+    mappings: any[] = [],
+    attributes: Record<string, any> = {}
+  ): Record<string, any> {
+    const out: Record<string, any> = {};
+    for (const m of mappings || []) {
+      if (!m?.templateKey) continue;
+      out[m.templateKey] =
+        m.source === "static" ? m.value : attributes?.[m.value] ?? "";
+    }
+    return out;
+  }
+
+  /**
+   * Launches a hosted template: creates a correlation session, sends the CTA
+   * button via the active messaging provider, and PAUSES the workflow. Resume
+   * happens out-of-band via the template.* events (not the next chat message).
+   */
+  async handleOpenTemplate(
+    message: any,
+    node: BotFlowNode,
+    userId: string | any
+  ) {
+    const userData = this.socketStateService.getUserData(userId);
+    if (!userData) return;
+    const { botId, conversationId, platform, ctx, attributes, mode } = userData;
+    const payload = node.payload || {};
+
+    // Resolve the paired child nodes (created alongside this node in the UI).
+    const nextNodes = await Promise.all(
+      node.next.map((id: string) => this.botsService.getBotNode(id))
+    );
+    const failureNode = nextNodes.find(
+      (n: BotFlowNode) => n?.nodeType === NodeTypeEnum.FAILURE
+    );
+
+    try {
+      if (!payload.templateId) {
+        this.logger.error("OPEN_TEMPLATE node missing templateId");
+        if (failureNode) return this.handleNode(failureNode, message, userId);
+        return;
+      }
+
+      const template: any = await this.templateService.findOne(
+        payload.templateId
+      );
+      if (!template || !template.hostedUrl) {
+        this.logger.error(`Template ${payload.templateId} has no hosted build`);
+        if (failureNode) return this.handleNode(failureNode, message, userId);
+        return;
+      }
+
+      const variables = this.resolveTemplateVariables(
+        payload.variableMappings,
+        attributes
+      );
+
+      const { session, launchUrl } = await this.templateSessionService.create({
+        templateId: payload.templateId,
+        templateVersion: template.currentVersion,
+        botId,
+        nodeId: node.id,
+        visitorId: userId,
+        conversationId,
+        platform,
+        variables,
+        hostedUrl: template.hostedUrl,
+        expiryMinutes: payload.sessionExpiryMinutes,
+      });
+
+      // Persist which session this workflow is now waiting on.
+      this.socketStateService.updateUserData(userId, {
+        metadata: {
+          ...(userData.metadata || {}),
+          pendingTemplateSessionId: session.id,
+        },
+      });
+
+      const buttonText = payload.buttonText || "Open";
+      const responses = (node.responses as any[]) || [];
+      const bodyText = responses[0]?.value || buttonText;
+
+      // Send the CTA through the ACTIVE provider for this channel (never
+      // hardcoded to WhatsApp) — resolved via the feature-flag registry.
+      const provider = await this.messagingRegistry.resolve(platform, botId);
+      if (provider && mode !== ModeEnum.preview) {
+        const recipient = ctx?.recipient || ctx?.sender_psid || userId;
+        await provider.sendMessage(
+          recipient,
+          provider.supportsFeature("cta_url")
+            ? { type: "cta_url", text: bodyText, cta: { displayText: buttonText, url: launchUrl } }
+            : { type: "text", text: `${bodyText}\n${buttonText}: ${launchUrl}` },
+          ctx
+        );
+      } else {
+        // Preview / widget fallback: surface the link as a normal bot message.
+        await this.sendBotMessage(userId, [
+          { type: "text", value: `${bodyText}\n${buttonText}: ${launchUrl}` },
+        ]);
+      }
+
+      await this.templateSessionService.markLaunched(session.id);
+      if (payload.analyticsEnabled !== false) {
+        this.eventEmitter.emit("template.launched", {
+          sessionId: session.id,
+          templateId: payload.templateId,
+          visitorId: userId,
+          callbackEvent: payload.callbackEvent,
+        });
+      }
+      // PAUSE: stay on this node; do not advance until a callback arrives.
+    } catch (error) {
+      this.logger.error(`Error in handleOpenTemplate: ${error.message}`);
+      if (failureNode) return this.handleNode(failureNode, message, userId);
+    }
+  }
+
+  /** Rehydrate the minimal socket state needed to resume after a restart. */
+  private async rehydrateForResume(session: {
+    visitorId: string;
+    botId: any;
+    conversationId: string;
+    platform: string;
+    nodeId: string;
+  }) {
+    const node = await this.botsService.getBotNode(session.nodeId);
+    this.socketStateService.updateUserData(session.visitorId, {
+      botId: session.botId?.toString(),
+      conversationId: session.conversationId,
+      platform: session.platform,
+      currentNode: node,
+    });
+  }
+
+  private async routeTemplateResume(
+    sessionId: string,
+    outcome: "SUCCESS" | "TIMEOUT" | "FAILURE",
+    mergeData?: Record<string, any>
+  ) {
+    const session: any = await this.templateSessionService.findById(sessionId);
+    if (!session) return;
+    const userId = session.visitorId;
+
+    if (!this.socketStateService.getUserData(userId)) {
+      await this.rehydrateForResume(session);
+    }
+
+    const node = await this.botsService.getBotNode(session.nodeId);
+    if (!node) return;
+    const nextNodes = await Promise.all(
+      node.next.map((id: string) => this.botsService.getBotNode(id))
+    );
+    const target =
+      nextNodes.find((n: BotFlowNode) => n?.nodeType === NodeTypeEnum[outcome]) ||
+      nextNodes.find((n: BotFlowNode) => n?.nodeType === NodeTypeEnum.SUCCESS);
+
+    if (mergeData) {
+      const existing = this.socketStateService.getUserData(userId)?.attributes || {};
+      this.socketStateService.updateUserData(userId, {
+        attributes: { ...existing, ...mergeData },
+      });
+    }
+    if (!target) return;
+    this.socketStateService.updateUserData(userId, { currentNode: target });
+    return this.handleNode(target, "", userId);
+  }
+
+  @OnEvent("template.submitted", { async: true })
+  async onTemplateSubmitted(data: { sessionId: string; data: Record<string, any> }) {
+    try {
+      await this.routeTemplateResume(data.sessionId, "SUCCESS", data.data);
+      await this.templateSessionService.markValidated(data.sessionId);
+    } catch (error) {
+      this.logger.error(`Error resuming from template submit: ${error.message}`);
+    }
+  }
+
+  @OnEvent("template.abandoned", { async: true })
+  async onTemplateAbandoned(data: { sessionId: string }) {
+    // Opened but not completed -> TIMEOUT route (#1)
+    await this.routeTemplateResume(data.sessionId, "TIMEOUT").catch((e) =>
+      this.logger.error(`Error routing abandoned template: ${e.message}`)
+    );
+  }
+
+  @OnEvent("template.expired", { async: true })
+  async onTemplateExpired(data: { sessionId: string }) {
+    // Never opened -> FAILURE route (#1)
+    await this.routeTemplateResume(data.sessionId, "FAILURE").catch((e) =>
+      this.logger.error(`Error routing expired template: ${e.message}`)
+    );
+  }
+
+  @OnEvent("messaging.widget.send", { async: true })
+  async onWidgetSend(data: { userId: string; message: any }) {
+    // The widget provider delegates delivery back here so it can use the
+    // existing socket propagation path without a circular dependency.
+    const { userId, message } = data;
+    const value =
+      message.type === "cta_url"
+        ? `${message.text || ""}\n${message.cta?.displayText}: ${message.cta?.url}`
+        : message.text;
+    return this.sendBotMessage(userId, [{ type: "text", value }]);
   }
 
   async findAnswerFromQuestionBank(message: string, language = this.language) {

@@ -110,6 +110,11 @@ const navigation = (): VerticalNavItemsType => {
       path: '/social/list',
     },
     {
+      title: 'Channel Providers',
+      icon: 'carbon:connect',
+      path: '/messaging/providers',
+    },
+    {
       title: 'Reports',
       icon: 'mdi:graph-box-outline',
       path: '',

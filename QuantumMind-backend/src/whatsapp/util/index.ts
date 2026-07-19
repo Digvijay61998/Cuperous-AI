@@ -195,6 +195,45 @@ export class WhatsappCloud {
     return response;
   }
 
+  /**
+   * Sends a free-form interactive message with a single Call-To-Action URL
+   * button (interactive.type = cta_url). Opens the URL in WhatsApp's in-app
+   * browser. Valid inside a 24h customer-service window without a pre-approved
+   * template.
+   */
+  async sendCtaUrl({ recipientPhone, bodyText, buttonText, url, footerText }) {
+    this._mustHaverecipientPhone(recipientPhone);
+    if (!bodyText) throw new Error('"bodyText" is required in making a request');
+    if (!buttonText)
+      throw new Error('"buttonText" is required in making a request');
+    if (!url) throw new Error('"url" is required in making a request');
+
+    const body = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: recipientPhone,
+      type: "interactive",
+      interactive: {
+        type: "cta_url",
+        body: { text: bodyText },
+        action: {
+          name: "cta_url",
+          parameters: {
+            display_text: buttonText,
+            url,
+          },
+        },
+        ...(footerText ? { footer: { text: footerText } } : {}),
+      },
+    };
+
+    return await this._fetchAssistant({
+      url: "/messages",
+      method: "POST",
+      body,
+    });
+  }
+
   async markMessageAsRead({ message_id }) {
     try {
       this._mustHaveMessageId(message_id);

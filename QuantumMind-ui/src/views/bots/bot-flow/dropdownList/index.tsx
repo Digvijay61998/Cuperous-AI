@@ -122,6 +122,11 @@ export default function DropDownList(props: Props) {
       name: 'Fall Back',
       icon: 'pajamas:false-positive',
     },
+    {
+      type: 'OPEN_TEMPLATE',
+      name: 'Open Template',
+      icon: 'material-symbols-light:web-sharp',
+    },
   ];
   const handleGetNodeType = async (
     e: React.MouseEvent<HTMLElement>,
@@ -131,7 +136,57 @@ export default function DropDownList(props: Props) {
     let newNodeId = `node_${nodeId}`;
     let updatedNodes: any = [];
     let updatedEdges: any = [];
-    if (
+    if (value === 'OPEN_TEMPLATE') {
+      // Open Template branches three ways: SUCCESS (submitted),
+      // TIMEOUT (opened but abandoned), FAILURE (expired / never opened).
+      const successNodeId = `success_${nodeId}`;
+      const timeoutNodeId = `timeout_${nodeId}`;
+      const failureNodeId = `failure_${nodeId}`;
+      const templateNode = nodeList(
+        value,
+        selectedNode.position.x,
+        selectedNode.position.y,
+        newNodeId,
+      );
+      const successNode = nodeList(
+        'SUCCESS',
+        templateNode.position.x,
+        templateNode.position.y,
+        successNodeId,
+      );
+      const timeoutNode = nodeList(
+        'TIMEOUT',
+        templateNode.position.x,
+        templateNode.position.y,
+        timeoutNodeId,
+      );
+      const failureNode = nodeList(
+        'FAILURE',
+        templateNode.position.x,
+        templateNode.position.y,
+        failureNodeId,
+      );
+      updatedNodes = [
+        ...nodes,
+        templateNode,
+        successNode,
+        timeoutNode,
+        failureNode,
+      ];
+      setNodes(updatedNodes);
+      updatedEdges = [
+        ...edges,
+        { id: `el-${newNodeId}`, source: selectedNode.id, target: newNodeId, sourceHandle: 'a' },
+        { id: `el-${successNodeId}`, source: newNodeId, target: successNodeId, sourceHandle: 'a' },
+        { id: `el-${timeoutNodeId}`, source: newNodeId, target: timeoutNodeId, sourceHandle: 'a' },
+        { id: `el-${failureNodeId}`, source: newNodeId, target: failureNodeId, sourceHandle: 'a' },
+      ];
+      dispatch(
+        updateBotFlow({ nodes: updatedNodes, edges: updatedEdges, _id: botId }),
+      );
+      setEdges(updatedEdges);
+      setOpen(false);
+    } else if (
       value === 'WEBHOOK' ||
       value === 'QUESTIONS' ||
       value === 'TRANSFER_TO_AGENT'
