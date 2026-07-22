@@ -1,10 +1,29 @@
-fastapi
-uvicorn
-pypdf
-langchain
-boto3
-awscli
-pymilvus
-docx2txt
-tiktoken
-sentence_transformers
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+python-multipart==0.0.20
+
+# HTTP client
+httpx==0.28.1
+
+# Vector database
+pymilvus==2.4.9
+# pymilvus -> environs needs marshmallow<4 (4.x removed __version_info__)
+marshmallow>=3.13,<4
+
+# Text processing / chunking
+langchain-text-splitters==0.3.4
+
+# Embeddings (free, local, CPU-friendly)
+sentence-transformers==3.3.1
+
+# LLM providers
+openai==1.59.6
+anthropic==0.42.0
+
+# File parsing (for uploaded documents)
+pypdf==5.1.0
+python-docx==1.1.2

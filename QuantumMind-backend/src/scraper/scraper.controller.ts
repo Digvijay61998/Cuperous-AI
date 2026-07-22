@@ -62,6 +62,17 @@ export class ScraperController {
     return await this.ScraperService.findOne(id);
   }
 
+  // Push a scraped record's content into the AI knowledge base.
+  @Post(":id/ingest")
+  @Public()
+  async ingest(
+    @Param("id") id: string,
+    @Body()
+    body: { clientId?: string; botId?: string; companyName?: string }
+  ) {
+    return await this.ScraperService.ingestToKnowledgeBase(id, body || {});
+  }
+
   @Delete(":id")
   remove(@Param("id") id: string) {
     return this.ScraperService.remove(id);

@@ -41,6 +41,9 @@ export interface SocketState {
   botName?: string;
   metadata?: Record<string, unknown>;
   ctx?: any;
+  // Number of workflow nodes traversed for the current inbound message.
+  // Reset per message; used to abort runaway loops. See MAX_NODE_HOPS.
+  nodeHops?: number;
 }
 
 @Injectable()
@@ -77,9 +80,15 @@ export class SocketStateService {
   }
 
   public remove(userId: string, socket: AuthenticatedSocket): boolean {
-    const existingSockets = this.socketState.get(userId).socket || [];
+    const entry = this.socketState.get(userId);
+    if (!entry) {
+      // Already removed (race with end.conversation or duplicate disconnect).
+      return true;
+    }
 
-    if (!existingSockets) {
+    const existingSockets = entry.socket || [];
+
+    if (!existingSockets.length) {
       return true;
     }
 
@@ -87,8 +96,8 @@ export class SocketStateService {
 
     if (!sockets.length) {
       const role = socket.auth.role;
-      if (role === "visitor" && this.socketState.get(userId).handledByAgent) {
-        const conversationId = this.socketState.get(userId).conversationId;
+      if (role === "visitor" && entry.handledByAgent) {
+        const conversationId = entry.conversationId;
         this.visitorService.updateStatus(userId, VisitorStatusEnum.OFFLINE);
         this.conversationService.endConversation(
           conversationId,
@@ -101,6 +110,7 @@ export class SocketStateService {
       this.socketState.delete(userId);
     } else {
       this.socketState.set(userId, {
+        ...entry,
         socket: sockets,
       });
     }

@@ -47,6 +47,8 @@ import { WhatsappModule } from "./whatsapp/whatsapp.module";
 import { MailsModule } from "./mails/mails.module";
 import { SocialModule } from "./social/social.module";
 import { ScrapeModule } from "./scraper/scraper.module";
+import { AiModule } from "./ai/ai.module";
+import { TrainingDataModule } from "./trainingdata/trainingdata.module";
 
 @Module({
   imports: [
@@ -57,6 +59,8 @@ import { ScrapeModule } from "./scraper/scraper.module";
 
     DatabaseModule,
     ScrapeModule,
+    AiModule,
+    TrainingDataModule,
     TokenModule,
     AuthModule,
     AgentModule,

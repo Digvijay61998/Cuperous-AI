@@ -48,6 +48,11 @@ export class EngageGateway implements OnGatewayConnection {
     const { userId, role } = client.auth;
 
     const userData = this.socketStateService.getUserData(userId);
+    if (!userData) {
+      // Socket state was evicted (conversation ended, disconnect race, etc.)
+      // — nothing to do; the client will reconnect and re-initialize.
+      return of({ event: "error", data: { message: "Session expired" } });
+    }
 
     const { handledByAgent, assignedAgentId, platform } = userData;
 

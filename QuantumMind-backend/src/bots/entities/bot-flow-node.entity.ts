@@ -24,6 +24,12 @@ export interface BotPayload {
   timeoutMinutes?: number;
   sessionExpiryMinutes?: number;
   analyticsEnabled?: boolean;
+  // ** AI Response node **
+  // Knowledge-base tenant to query. Multiple bots of the same company can share
+  // one clientId so they all answer from the same ingested data. Falls back to
+  // the bot's own id when not set.
+  clientId?: string;
+  companyName?: string;
 }
 
 export interface TemplateVariableMapping {

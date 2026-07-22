@@ -15,6 +15,7 @@ import { response } from "express";
 // import { Public } from 'src/auth/Public/public.decorator';
 // import scraper from 'src/util/scraper'
 import { ConfigService } from "@nestjs/config";
+import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
 
 @Injectable()
 export class ScraperService {
@@ -23,7 +24,8 @@ export class ScraperService {
     @Inject(SCRAPER_PROVIDER)
     private readonly scraperModel: Model<ScraperDocument>,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly eventEmitter: EventEmitter2
   ) {}
 
   async create(CreateScrapeDto: CreateScrapeDto) {
@@ -91,6 +93,110 @@ export class ScraperService {
         `Error while deleting webhook with id ${id} : ${error.message}`
       );
       throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  /**
+   * Push a scraped record's content into the AI knowledge base so the
+   * AI_RESPONSE workflow node can answer questions grounded in it.
+   *
+   * The whole page's text (all `data` blocks) is sent as a single page keyed by
+   * the record URL. Re-ingesting the same URL replaces its prior chunks on the
+   * AI side, so re-scrapes stay fresh with no duplicates.
+   */
+  async ingestToKnowledgeBase(
+    scrapeId: string,
+    overrides: {
+      clientId?: string;
+      botId?: string;
+      companyName?: string;
+    } = {}
+  ) {
+    const scrape = await this.scraperModel.findById(scrapeId);
+    if (!scrape) {
+      throw new HttpException("Scrape not found", 404);
+    }
+
+    const clientId = overrides.clientId || scrape.clientId;
+    if (!clientId) {
+      throw new HttpException(
+        "clientId is required to ingest into the knowledge base",
+        400
+      );
+    }
+
+    const content = (scrape.data || []).join("\n\n").trim();
+    if (!content) {
+      this.logger.warn(`Scrape ${scrapeId} has no content to ingest`);
+      return { success: false, chunksIngested: 0, message: "No content" };
+    }
+
+    const aiUrl = this.configService.get("ai.url");
+    const payload = {
+      client_id: clientId,
+      bot_id: overrides.botId || scrape.botId || null,
+      pages: [
+        {
+          url: scrape.url,
+          title: scrape.title || "",
+          content,
+        },
+      ],
+    };
+
+    try {
+      const res = await firstValueFrom(
+        this.httpService.post(`${aiUrl}/ingest/website`, payload)
+      );
+
+      // Persist tenant association + sync status for observability.
+      scrape.clientId = clientId;
+      if (overrides.botId || scrape.botId) {
+        scrape.botId = overrides.botId || scrape.botId;
+      }
+      if (overrides.companyName || scrape.companyName) {
+        scrape.companyName = overrides.companyName || scrape.companyName;
+      }
+      scrape.aiSynced = true;
+      scrape.aiSyncedAt = new Date();
+      await scrape.save();
+
+      this.logger.log(
+        `Ingested scrape ${scrapeId} (url=${scrape.url}) into KB for client=${clientId}`
+      );
+      return res.data;
+    } catch (error) {
+      this.logger.error(
+        `Failed to ingest scrape ${scrapeId} into KB: ${error.message}`
+      );
+      throw new HttpException(
+        `Knowledge base ingestion failed: ${error.message}`,
+        error.status || 500
+      );
+    }
+  }
+
+  /**
+   * Auto-ingest when a scrape completes. The external scraper (or any producer)
+   * emits `scraper.completed` with the scrape id and the owning tenant.
+   */
+  @OnEvent("scraper.completed", { async: true })
+  async onScrapeCompleted(payload: {
+    scrapeId: string;
+    clientId?: string;
+    botId?: string;
+    companyName?: string;
+  }) {
+    try {
+      await this.ingestToKnowledgeBase(payload.scrapeId, {
+        clientId: payload.clientId,
+        botId: payload.botId,
+        companyName: payload.companyName,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Auto-ingest on scraper.completed failed: ${error.message}`
+      );
     }
   }
 }

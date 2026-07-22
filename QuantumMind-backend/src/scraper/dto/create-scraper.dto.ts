@@ -21,6 +21,20 @@ export class CreateScrapeDto {
   @IsArray()
   tags: [];
 
+  // Tenant/knowledge-base this scrape belongs to (optional; can be supplied at
+  // ingest time instead).
+  @IsOptional()
+  @IsString()
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  botId?: string;
+
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
   // @IsEnum(ScrapeStatusEnum)
   // @IsOptional()
   // status: string;

@@ -76,6 +76,7 @@ import QADeleteDialog from './RemoveUnansweredQDialog';
 import Link from 'next/link';
 import BotDesign from './bot-design';
 import axios from 'axios';
+import TrainingData from './TrainingData';
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(function Alert(
   props,
   ref,
@@ -335,19 +336,9 @@ const BotSetting = () => {
     }
 
     if (value === 'training-data') {
-      const formData = new FormData();
-      formData.append("userId", "12345")
-      formData.append("botId", `${botId}`)
-      let url = process.env.NEXT_PUBLIC_BACKEND_URL as string;
-      url+= "/trainingdata/upload"
-      Object.keys(filesToUpload).map(key=>formData.append("file", filesToUpload[key]))
-      const response = await axios.post(url, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-      setFileMeta(response.data)
-      return response
+      // Training data is now managed by the dedicated <TrainingData /> component
+      // (its own upload / scrape / list / delete). Nothing to do on form submit.
+      return;
     }
   };
 
@@ -1598,18 +1589,7 @@ React.useEffect(() => {
                 backgroundColor: 'transparent',
               }}
             >
-              <Grid item xs={12} sm={12}>
-              <input
-                  // size="small"
-                  name="name"
-                  id="file"
-                  multiple
-                  type={"file"}
-                  onChange={(e) => {
-                    return handleFileList(e)
-                  }}
-                ></input>
-              </Grid>
+              {botId && <TrainingData botId={`${botId}`} />}
             </TabPanel>
           </CardContent>
           <Divider sx={{ m: '0 !important' }} />
@@ -1621,7 +1601,9 @@ React.useEffect(() => {
                 sx={{
                   mr: 2,
                   display:
-                    value === 'installation-instuction' || value === 'new'
+                    value === 'installation-instuction' ||
+                    value === 'new' ||
+                    value === 'training-data'
                       ? 'none'
                       : 'block',
                 }}

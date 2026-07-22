@@ -174,6 +174,13 @@ export default () => ({
   scraper: {
     url: process.env.SCRAPER_URL || "http://localhost:4001",
   },
+
+  ai: {
+    // QuantumMind AI (RAG) service. See QuantumMind-ai repo.
+    url: process.env.AI_URL || "http://localhost:8000",
+    // Request timeout (ms) for AI query calls.
+    timeout: parseInt(process.env.AI_TIMEOUT, 10) || 20000,
+  },
   delay: {
     node: process.env.NODE_DELAY || 1000,
     message: process.env.MESSAGE_DELAY || 750,

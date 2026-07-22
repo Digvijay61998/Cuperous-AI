@@ -35,6 +35,24 @@ export class Scraper {
     default: ScrapeStatusEnum.DRAFT,
   })
   status: string;
+
+  // Tenant this scraped content belongs to. Multiple bots of the same company
+  // share one clientId so the ingested data is queryable by all of them.
+  @Prop()
+  clientId: string;
+
+  @Prop()
+  botId: string;
+
+  @Prop()
+  companyName: string;
+
+  // Whether this record's content has been pushed into the AI knowledge base.
+  @Prop({ default: false })
+  aiSynced: boolean;
+
+  @Prop()
+  aiSyncedAt: Date;
 }
 
 export const ScraperSchema = SchemaFactory.createForClass(Scraper);

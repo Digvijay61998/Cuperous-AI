@@ -33,6 +33,13 @@ import { AuthenticatedSocket } from "src/socket/socket.adaptor";
 import { TicketsService } from "src/tickets/tickets.service";
 import { UnansweredService } from "src/unanswered/unanswered.service";
 import { generateId } from "src/util";
+import {
+  banner,
+  isDebugLogs,
+  maskDeep,
+  newRequestId,
+  preview,
+} from "src/util/ai-logger";
 import { WebhookStatusEnum } from "src/webhook/enums/webhook-status.enum";
 import { WebhookService } from "src/webhook/webhook.service";
 import { ModeEnum } from "src/widget/enums/mode.enum";
@@ -40,7 +47,7 @@ import { MessagingProviderRegistry } from "src/messaging/messaging-provider.regi
 import { TemplateSessionService } from "src/template-session/template-session.service";
 import { TemplateService } from "src/template/template.service";
 import { Markup } from "telegraf";
-import { MESSAGE_HANDLER_QUEUE } from "./constants";
+import { MAX_NODE_HOPS, MESSAGE_HANDLER_QUEUE } from "./constants";
 import { MessageResponseDto } from "./dto/message-response.dto";
 import { BotNodeStateEnum } from "./enums/bot-node-state.enum";
 import { UserInputValidationEnum } from "./enums/user-input-validation.enums";
@@ -80,6 +87,17 @@ export class MessageHandlerService {
     });
   }
 
+  /**
+   * Lightweight, gated step tracer for workflow execution. Enabled by the same
+   * flags as the AI logger (NODE_ENV=development, LOG_LEVEL=debug, or
+   * AI_DEBUG_LOGS=true). Use it to follow the exact node walk and message
+   * delivery for a single inbound message when a flow misbehaves.
+   */
+  private trace(step: string, detail = ""): void {
+    if (!isDebugLogs()) return;
+    this.logger.debug(`[FLOW] ${step}${detail ? ` :: ${detail}` : ""}`);
+  }
+
   async handleBlockedContent() {
     const userId = this.user.auth.userId;
     return await this.sendBotMessage(userId, [
@@ -105,6 +123,30 @@ export class MessageHandlerService {
     if (!userData) return;
     const { mode, conversationId, currentNode } = userData;
     if (!currentNode) return;
+
+    // Fresh node-traversal budget for this inbound message (loop protection).
+    this.socketStateService.updateUserData(userId, { nodeHops: 0 });
+
+    // Reset the per-conversation send-delay baseline for every inbound message.
+    // `this.delay` lives on a singleton service and is keyed by conversationId;
+    // sendBotMessage only ever INCREASES it (by ~nodeDelay per call) and it was
+    // never zeroed between turns. Left unreset it climbs unbounded, so later
+    // bot messages get scheduled (via setTimeout) many seconds into the future
+    // and appear to "never arrive" — which is exactly how the static flow broke
+    // once AI testing kept the process/conversation alive across many turns.
+    // Zeroing here makes each turn schedule from "now" while still staggering
+    // multiple messages within the same turn.
+    if (conversationId) {
+      this.delay[conversationId] = 0;
+    }
+
+    this.trace(
+      "handleMessage:in",
+      `type=${type} node=${currentNode.nodeType} conv=${conversationId} msg=${preview(
+        message,
+        80
+      )}`
+    );
 
     if (mode !== ModeEnum.preview && conversationId && message) {
       const chatId = generateId("chat", 10);
@@ -139,7 +181,7 @@ export class MessageHandlerService {
 
       return this.handleNode(step, message, userId);
     }
-    message = message.trim().toLowerCase();
+    message = (message ?? "").trim().toLowerCase();
     if (message === "start" || message === "reset" || message === "restart") {
       const { startNode, botSettings, role } =
         this.socketStateService.getUserData(userId);
@@ -184,6 +226,48 @@ export class MessageHandlerService {
       const userdata = this.socketStateService.getUserData(userId);
       if (!userdata) return;
       const { conversationId, defaultFallback } = userdata;
+
+      // ---- Loop protection ----------------------------------------------
+      // Every node traversal for a single inbound message is metered here.
+      // A cyclic flow (e.g. AI node whose fallback routes back into itself)
+      // would otherwise recurse forever and crash the process.
+      const hops = (userdata.nodeHops ?? 0) + 1;
+      this.socketStateService.updateUserData(userId, { nodeHops: hops });
+      if (hops > MAX_NODE_HOPS) {
+        banner(
+          this.logger,
+          "[WORKFLOW LOOP DETECTED]",
+          {
+            "User ID": userId,
+            "Conversation ID": conversationId,
+            "Last Node": currentNode
+              ? `${currentNode.nodeType} ${currentNode.id}`
+              : "(none)",
+            Hops: hops,
+            Limit: MAX_NODE_HOPS,
+          },
+          "error"
+        );
+        await this.sendBotMessage(userId, [
+          {
+            type: "text",
+            value:
+              userdata.botSettings?.fallbackMessage ||
+              "Sorry, something went wrong. Please try again.",
+          },
+        ]);
+        // Stop the run. Leave nodeHops high so any other concurrently-looping
+        // chain for this user also aborts immediately; the next inbound message
+        // resets the budget in handleMessage. Reset to startNode so future
+        // messages still work (null would silence the bot permanently).
+        const sn = this.socketStateService.getUserData(userId)?.startNode;
+        this.socketStateService.updateUserData(userId, {
+          currentNode: sn || null,
+        });
+        return;
+      }
+      // --------------------------------------------------------------------
+
       if (!currentNode) {
         return this.defaultFallback(message, defaultFallback, userId);
       }
@@ -198,6 +282,12 @@ export class MessageHandlerService {
       this.logger.verbose(
         `current Node: ${currentNode.nodeType} ${currentNode.id}`
       );
+      this.trace(
+        "handleNode",
+        `type=${currentNode.nodeType} id=${currentNode.id} hop=${hops} next=[${(
+          currentNode.next || []
+        ).join(",")}] responses=${(currentNode.responses || []).length}`
+      );
 
       switch (currentNode.nodeType) {
         case NodeTypeEnum.START_NODE:
@@ -210,6 +300,10 @@ export class MessageHandlerService {
 
         case NodeTypeEnum.BOT_RESPONSE:
           return await this.handleBotResponse(message, currentNode, userId);
+
+        case NodeTypeEnum.AI_RESPONSE:
+        case NodeTypeEnum.AI_NODE:
+          return await this.handleAiResponse(message, currentNode, userId);
 
         case NodeTypeEnum.USER_INPUT:
           return await this.handleUserInput(message, currentNode, userId);
@@ -299,6 +393,15 @@ export class MessageHandlerService {
       (node: BotFlowNode) => node.nodeType !== NodeTypeEnum.FALL_BACK
     );
 
+    this.trace(
+      "handleStartNode",
+      `start=${currentNode.id} next=[${(currentNode.next || []).join(
+        ","
+      )}] resolvedOther=${otherNode?.nodeType ?? "(none)"} fallback=${
+        defaultFallback?.id ?? "(none)"
+      }`
+    );
+
     const startMessagesList = [
       "start",
       "reset",
@@ -325,6 +428,22 @@ export class MessageHandlerService {
       }
     }
 
+    // The start node must connect to at least one non-fallback node for the
+    // flow to advance. If the graph has none (misconfigured builder export, or
+    // every child is a FALL_BACK), route to the fallback instead of calling
+    // handleNode(undefined), which would traverse into nothing and stall the
+    // conversation after only the welcome message.
+    if (!otherNode) {
+      this.trace(
+        "handleStartNode:no-other-node",
+        `routing to ${defaultFallback ? "defaultFallback" : "terminal fallback"}`
+      );
+      if (defaultFallback) {
+        return this.handleNode(defaultFallback, message, userId);
+      }
+      return this.defaultFallback(message, undefined, userId);
+    }
+
     return this.handleNode(otherNode, message, userId);
   }
 
@@ -333,6 +452,12 @@ export class MessageHandlerService {
     node: BotFlowNode,
     userId: string | any
   ) {
+    this.trace(
+      "handleBotResponse",
+      `id=${node.id} next=${node.next.length} responses=${
+        (node.responses || []).length
+      }`
+    );
     if (node.next.length === 1) {
       await this.sendBotMessage(userId, node.responses);
       const nextNode = await this.botsService.getBotNode(node.next[0]);
@@ -407,6 +532,16 @@ export class MessageHandlerService {
             },
           ]);
         }
+
+        // No question bank match — route to the default fallback node (which
+        // may be an AI_NODE). This was previously just sending a static
+        // fallback message, which meant the AI fallback node was never reached.
+        const { defaultFallback } =
+          this.socketStateService.getUserData(userId);
+        if (defaultFallback) {
+          return this.handleNode(defaultFallback, message, userId);
+        }
+
         const { fallbackMessage } =
           this.socketStateService.getUserData(userId)?.botSettings;
         return await this.sendBotMessage(userId, [
@@ -424,6 +559,244 @@ export class MessageHandlerService {
       currentNode: null,
     });
   }
+  /**
+   * AI Response node: answer the user's message using the QuantumMind AI (RAG)
+   * service, grounded in the client's ingested website / knowledge-base data.
+   *
+   * Routing:
+   *  - confident answer  -> send it, then continue to a SUCCESS child (or the
+   *    single next node if there is one).
+   *  - not confident, or the AI service is unreachable -> take the FAILURE child
+   *    if the designer added one, otherwise fall back to the default fallback.
+   */
+  async handleAiResponse(message: any, node: BotFlowNode, userId: string | any) {
+    const userData = this.socketStateService.getUserData(userId);
+    if (!userData) return;
+    const { botId, botName, defaultFallback, conversationId } = userData;
+
+    // Correlation id shared with the AI service (via x-request-id header).
+    const requestId = newRequestId();
+    const debug = isDebugLogs();
+    const startedAt = Date.now();
+
+    const nextNodes: BotFlowNode[] = await Promise.all(
+      (node.next || []).map((nodeId: string) => this.botsService.getBotNode(nodeId))
+    );
+    const successNode = nextNodes.find(
+      (n: BotFlowNode) => n?.nodeType === NodeTypeEnum.SUCCESS
+    );
+    const failureNode = nextNodes.find(
+      (n: BotFlowNode) => n?.nodeType === NodeTypeEnum.FAILURE
+    );
+    const otherNode = nextNodes.find(
+      (n: BotFlowNode) =>
+        n &&
+        n.nodeType !== NodeTypeEnum.SUCCESS &&
+        n.nodeType !== NodeTypeEnum.FAILURE
+    );
+
+    // A company can share one knowledge base across many bots via clientId.
+    const clientId = node.payload?.clientId || botId;
+    const companyName = node.payload?.companyName || botName;
+
+    const chatHistory = await this.getRecentChatHistory(
+      conversationId,
+      userId,
+      message
+    );
+
+    banner(this.logger, "[BACKEND] Incoming AI Request", {
+      "Request ID": requestId,
+      Timestamp: new Date().toISOString(),
+      Endpoint: "AI_RESPONSE node",
+      "Node ID": node.id,
+      "User ID": userId,
+      "Conversation ID": conversationId,
+      "Client ID": clientId,
+      Question: message,
+      "History turns": chatHistory.length,
+    });
+
+    const aiUrl = this.configService.get("ai.url");
+    const timeout = this.configService.get("ai.timeout");
+    const requestBody = {
+      client_id: clientId,
+      question: message,
+      bot_id: botId,
+      company_name: companyName,
+      chat_history: chatHistory,
+    };
+
+    banner(this.logger, "[BACKEND -> AI SERVICE]", {
+      URL: `${aiUrl}/query/ask`,
+      Method: "POST",
+      "Request ID": requestId,
+      Timeout: `${timeout}ms`,
+      Body: debug ? preview(maskDeep(requestBody), 1000) : `(question=${preview(message, 120)})`,
+    });
+
+    let aiResult: {
+      answer?: string;
+      confident?: boolean;
+      tokens_used?: number;
+      provider?: string;
+      model?: string;
+    } | null = null;
+
+    const callStart = Date.now();
+    try {
+      const res = await firstValueFrom(
+        this.httpService.post(`${aiUrl}/query/ask`, requestBody, {
+          timeout,
+          headers: { "x-request-id": requestId },
+        })
+      );
+      aiResult = res.data;
+
+      banner(
+        this.logger,
+        "[AI SERVICE -> BACKEND]",
+        {
+          "Request ID": requestId,
+          Status: res.status,
+          "Response Time": `${Date.now() - callStart}ms`,
+          Confident: aiResult?.confident,
+          "Token Usage": aiResult?.tokens_used ?? 0,
+          Model: aiResult?.model,
+          Provider: aiResult?.provider,
+          "Answer": preview(aiResult?.answer ?? "(none)", 300),
+        },
+        aiResult?.confident ? "success" : "warn"
+      );
+    } catch (error) {
+      // Never hide exceptions: full context for debugging.
+      const status = error?.response?.status;
+      const respBody = error?.response?.data;
+      banner(
+        this.logger,
+        "[AI SERVICE -> BACKEND] ERROR",
+        {
+          "Request ID": requestId,
+          Message: error?.message,
+          "Status Code": status ?? "(no response)",
+          "Response Time": `${Date.now() - callStart}ms`,
+          Timeout: error?.code === "ECONNABORTED" ? `exceeded ${timeout}ms` : "no",
+          "Response Body": respBody ? preview(respBody, 800) : "(none)",
+          "Request Body": preview(maskDeep(requestBody), 500),
+        },
+        "error"
+      );
+      if (error?.stack) this.logger.error(error.stack);
+    }
+
+    if (aiResult?.confident && aiResult.answer) {
+      await this.sendBotMessage(userId, [
+        { type: "text", value: aiResult.answer },
+      ]);
+
+      // Usage signal for billing / analytics (persisted by a listener).
+      this.eventEmitter.emit("ai.response.generated", {
+        botId,
+        clientId,
+        visitorId: userId,
+        conversationId,
+        question: message,
+        tokensUsed: aiResult.tokens_used || 0,
+        provider: aiResult.provider,
+        model: aiResult.model,
+      });
+
+      banner(
+        this.logger,
+        "[BACKEND -> CLIENT]",
+        {
+          "Request ID": requestId,
+          "Final Response": preview(aiResult.answer, 300),
+          "Response Length": aiResult.answer.length,
+          "HTTP Status": 200,
+          "Total Request Time": `${Date.now() - startedAt}ms`,
+        },
+        "success"
+      );
+
+      if (successNode) return this.handleNode(successNode, message, userId);
+      if (otherNode) return this.handleNode(otherNode, message, userId);
+      return;
+    }
+
+    // Not confident, or the AI service failed -> send fallback and STOP.
+    // CRITICAL: Do NOT call this.defaultFallback() here — it recurses into
+    // handleNode() which routes back to this AI_NODE, creating an infinite loop.
+    // Instead, send one terminal message and clear the node.
+    banner(
+      this.logger,
+      "[BACKEND -> CLIENT] Fallback",
+      {
+        "Request ID": requestId,
+        Reason: aiResult ? "not confident (no relevant knowledge)" : "AI service error",
+        Route: failureNode ? "FAILURE node" : "terminal fallback message",
+        "Total Request Time": `${Date.now() - startedAt}ms`,
+      },
+      "warn"
+    );
+
+    if (failureNode) return this.handleNode(failureNode, message, userId);
+
+    // Terminal: send one fallback message and reset to start node (NOT null,
+    // which would silently drop all future messages from this user).
+    const fallbackMsg =
+      this.socketStateService.getUserData(userId)?.botSettings?.fallbackMessage ||
+      "I am sorry, I am not able to understand you";
+    await this.sendBotMessage(userId, [{ type: "text", value: fallbackMsg }]);
+    // Reset to start node so the next message re-enters the flow normally.
+    const startNode = this.socketStateService.getUserData(userId)?.startNode;
+    if (startNode) {
+      this.socketStateService.updateUserData(userId, { currentNode: startNode });
+    }
+    return;
+  }
+
+  /**
+   * Recent conversation turns passed to the AI service for multi-turn context.
+   * Maps each stored chat to a role based on its sender (the visitor => "user",
+   * anyone else => "assistant"), drops the just-saved current question, and caps
+   * the history to the last few turns to keep prompts small and cheap.
+   */
+  async getRecentChatHistory(
+    conversationId: string,
+    userId: string,
+    currentMessage: string
+  ): Promise<{ role: string; content: string }[]> {
+    if (!conversationId) return [];
+    try {
+      const conversation: any =
+        await this.conversationService.getConversationById(conversationId);
+      const chats: any[] = conversation?.chats || [];
+
+      let history = chats
+        .filter((c: any) => c && c.type === "text" && c.message)
+        .map((c: any) => ({
+          role: String(c.sender) === String(userId) ? "user" : "assistant",
+          content: c.message as string,
+        }));
+
+      // The current question is usually persisted just before this runs; drop it
+      // so the AI service doesn't see it twice (it appends the question itself).
+      if (
+        history.length &&
+        history[history.length - 1].role === "user" &&
+        history[history.length - 1].content === currentMessage
+      ) {
+        history = history.slice(0, -1);
+      }
+
+      return history.slice(-6);
+    } catch (error) {
+      this.logger.error(`getRecentChatHistory failed: ${error.message}`);
+      return [];
+    }
+  }
+
   async handleUserInput(message: any, node: BotFlowNode, userId: string | any) {
     const nextNodes = await this.botsService.getBotNode(node.next[0]);
     const nodeState = this.socketStateService.getNodeState(userId, node.id);
@@ -537,7 +910,7 @@ export class MessageHandlerService {
       {
         type: "text",
         value:
-          this.socketStateService.getUserData(userId).botSettings
+          this.socketStateService.getUserData(userId)?.botSettings
             ?.fallbackMessage || "I am sorry, I am not able to understand you",
       },
     ]);
@@ -580,11 +953,21 @@ export class MessageHandlerService {
     const failureNode = nextNodes.find((ele: BotFlowNode) => {
       return ele.nodeType === NodeTypeEnum.FAILURE;
     });
-    const webhookId = node.payload.webhookId;
-    if (!webhookId) {
-      return this.handleNode(failureNode, message, userId);
-    }
-
+   const webhookId = node.payload?.webhookId;
+if (!webhookId) {
+  this.logger.warn(
+    `WEBHOOK node ${node.id} has no webhookId configured; routing to failure/fallback.`
+  );
+  if (failureNode) {
+    return this.handleNode(failureNode, message, userId);
+  }
+  // No failure branch either — fall back gracefully instead of crashing.
+  return this.defaultFallback(
+    message,
+    this.socketStateService.getUserData(userId)?.defaultFallback,
+    userId
+  );
+}
     const { attributes, metadata } =
       this.socketStateService.getUserData(userId);
     const data = {
@@ -1230,8 +1613,19 @@ export class MessageHandlerService {
       userId,
     };
 
+    // Normalize input: a bare string, a single object, undefined, or an array
+    // are all acceptable callers. Anything empty is a no-op so a node with no
+    // configured responses never throws (.map on undefined) or corrupts the
+    // delay accumulator with negative math — either of which would silently
+    // break the rest of the flow.
     if (typeof message === "string") {
+      message = [{ type: ChatTypeEnum.TEXT, value: message }];
+    } else if (message && !Array.isArray(message)) {
       message = [message];
+    }
+    if (!Array.isArray(message) || message.length === 0) {
+      this.trace("sendBotMessage:skip", "no messages to send");
+      return;
     }
 
     const userData = this.socketStateService.getUserData(userId);
@@ -1243,6 +1637,11 @@ export class MessageHandlerService {
     const nodeDelay = parseInt(this.configService.get("delay.node")) || 1000;
     const message_delay =
       parseInt(this.configService.get("delay.message")) || 750;
+
+    this.trace(
+      "sendBotMessage",
+      `count=${message.length} baseDelay=${messageDelay}ms conv=${conversationId}`
+    );
 
     message.map((ele: any, index: number) => {
       if (ele.type === ChatTypeEnum.RANDOM_TEXT) {
@@ -1287,8 +1686,13 @@ export class MessageHandlerService {
       }, messageDelay + index * message_delay);
     });
 
+    // Advance the baseline so the NEXT sendBotMessage in this same turn is
+    // staggered after the last message emitted here. Math.max guards against
+    // the length===0 case (already returned above, but defensive) producing a
+    // negative offset. The baseline is zeroed again at the start of the next
+    // inbound message in handleMessage.
     this.delay[conversationId] =
-      messageDelay + (message.length - 1) * message_delay + nodeDelay;
+      messageDelay + Math.max(0, message.length - 1) * message_delay + nodeDelay;
   }
 
   async sendMessageToAgent(userId: string, message: any, visitor: SocketState) {
@@ -1438,7 +1842,11 @@ export class MessageHandlerService {
   }
 
   async saveUnansweredMessage(message: string, userId: string) {
-    const { botId } = this.socketStateService.getUserData(userId);
+    // Conversation state can be evicted at any time (disconnect / end);
+    // guard so a missing state never crashes the process.
+    const userData = this.socketStateService.getUserData(userId);
+    if (!userData) return;
+    const { botId } = userData;
     if (this.checkIfQuestionIsProper(message)) {
       this.logger.debug(`Adding question to Unanswered Questions: ${message}`);
       await this.unansweredService.create({

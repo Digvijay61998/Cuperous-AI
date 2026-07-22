@@ -1,0 +1,22 @@
+# Milvus / compose data volumes
+volumes/
+
+# Python caches & envs
+__pycache__/
+*.pyc
+.venv/
+env/
+.pytest_cache/
+
+# VCS & editor
+.git/
+.gitignore
+.vscode/
+.DS_Store
+
+# Local env and docs
+.env
+*.md
+
+# Tests are not needed in the runtime image
+tests/

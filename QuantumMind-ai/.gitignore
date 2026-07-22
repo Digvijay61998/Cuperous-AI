@@ -3,5 +3,10 @@ __pycache__
 VectorEmbeddingStore
 .env
 env
+.venv
 .DS_Store
-.vscode
+
+# Local runtime data & caches
+volumes/
+.pytest_cache/
+*.pyc
