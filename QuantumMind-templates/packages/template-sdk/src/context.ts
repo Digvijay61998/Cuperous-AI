@@ -3,7 +3,7 @@
  * inside a WebView, e.g.
  *   .../index.html?vid=abc&ph=9198...&bid=xyz&cid=conv1&src=whatsapp&tid=tmpl1&lang=en
  *
- * The WhatsApp phone number IS the unique visitor identifier in QuantumMind,
+ * The WhatsApp phone number IS the unique visitor identifier in JarCube,
  * so no login/auth is required. For website (widget) flows the visitor is
  * created/identified upstream and vid is passed through the same way.
  */

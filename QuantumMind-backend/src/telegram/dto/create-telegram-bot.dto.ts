@@ -10,7 +10,7 @@ export class CreateTelegramBotDto {
 
   @IsString()
   @IsNotEmpty()
-  engageBot: string;
+  jarcubeBot: string;
 
   @IsString()
   @IsNotEmpty()

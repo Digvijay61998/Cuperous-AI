@@ -1,15 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { EngageService } from './engage.service';
+import { JarCubeService } from './jarcube.service';
 
-describe('EngageService', () => {
-  let service: EngageService;
+describe('JarCubeService', () => {
+  let service: JarCubeService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [EngageService],
+      providers: [JarCubeService],
     }).compile();
 
-    service = module.get<EngageService>(EngageService);
+    service = module.get<JarCubeService>(JarCubeService);
   });
 
   it('should be defined', () => {

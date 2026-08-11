@@ -63,7 +63,7 @@ def test_confident_answer_when_relevant_context_found():
 
 
 def test_low_confidence_when_no_relevant_context():
-    # Both hits are below the default min_similarity_score (0.30).
+    # Both hits are below the default min_similarity_score (0.15).
     store = FakeStore(
         [
             {"text": "Unrelated marketing copy.", "source_url": "", "score": 0.10},

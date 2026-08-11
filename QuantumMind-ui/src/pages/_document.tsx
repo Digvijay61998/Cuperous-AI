@@ -21,8 +21,15 @@ class CustomDocument extends Document {
             rel='stylesheet'
             href='https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap'
           />
-          <link rel='apple-touch-icon' sizes='180x180' href='/logo.jpeg' />
-          <link rel='shortcut icon' href='/logo.jpeg' />
+          {/* Favicons. These previously pointed at /logo.jpeg, which does not exist in
+              public/, so no icon rendered in the browser tab. They now use the real
+              JarCube logo assets. */}
+          <link rel='icon' href='/favicon.ico' sizes='any' />
+          <link rel='icon' type='image/png' sizes='192x192' href='/logo-192.png' />
+          <link rel='icon' type='image/png' sizes='512x512' href='/logo-512.png' />
+          <link rel='apple-touch-icon' sizes='180x180' href='/apple-touch-icon.png' />
+          <link rel='manifest' href='/manifest.json' />
+          <meta name='theme-color' content='#8A00FF' />
           
         </Head>
         <body>

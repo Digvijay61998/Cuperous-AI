@@ -95,7 +95,7 @@ const SocialList = () => {
     method: 'add',
     name: '',
     botId: '',
-    engageBot: '',
+    jarcubeBot: '',
     platform: '',
     accessToken: ''
   }
@@ -258,13 +258,13 @@ console.log("filteredDatafilteredData",platform)
     {
       flex: 1,
       minWidth: 180,
-      headerName: 'Engage Bot',
-      field: 'engageBot',
+      headerName: 'JarCube Bot',
+      field: 'jarcubeBot',
       headerClassName:'custom-header',
       renderCell: ({ row }: any) => {
         return (
-          <Link href={`/bots/settings/${row?.engageBot?._id || row?.engageBot?.id || row?.engageBot}`}>
-            <StyledLink>{row?.engageBot?.name || row?.engageBot?._id || row?.engageBot?.id || row?.engageBot}</StyledLink>
+          <Link href={`/bots/settings/${row?.jarcubeBot?._id || row?.jarcubeBot?.id || row?.jarcubeBot}`}>
+            <StyledLink>{row?.jarcubeBot?.name || row?.jarcubeBot?._id || row?.jarcubeBot?.id || row?.jarcubeBot}</StyledLink>
           </Link>
         );
       },

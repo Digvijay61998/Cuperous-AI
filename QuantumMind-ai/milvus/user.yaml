@@ -1,0 +1,32 @@
+# Milvus config override — merged on top of the image's default
+# /milvus/configs/milvus.yaml (1030 lines). Only the keys below are changed;
+# everything else keeps the shipped defaults.
+#
+# Why a file and not environment variables: Milvus only documents env support
+# for three minio keys (MINIO_ADDRESS, MINIO_ACCESS_KEY_ID,
+# MINIO_SECRET_ACCESS_KEY). useSSL / bucketName / region have no env
+# equivalent, so setting them via env silently leaves the MinIO defaults
+# (useSSL: false, bucketName: a-bucket) in place and S3 access fails.
+#
+# Credentials are deliberately NOT here — they come from the environment via
+# docker-compose so no secrets live in the repo.
+#
+# Docs: https://milvus.io/docs/v2.4.x/deploy_s3.md
+
+minio:
+  # <bucket>.s3.<region>.amazonaws.com is also valid; the plain regional
+  # endpoint works because useVirtualHost is false.
+  address: s3.ap-south-1.amazonaws.com
+  port: 443
+  useSSL: true
+  bucketName: jarcube-milvus-data
+  # Key prefix inside the bucket. Changing this on a running instance orphans
+  # existing data, so set it once and leave it.
+  rootPath: milvus
+  useIAM: false
+  cloudProvider: aws
+  region: ap-south-1
+  useVirtualHost: false
+  # Default is 10000. Raised because S3 round trips are slower than a MinIO
+  # container on the same host, and a timeout here fails the segment flush.
+  requestTimeoutMs: 30000

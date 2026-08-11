@@ -21,7 +21,7 @@ export class FacebookService {
   private botList: Record<
     string,
     {
-      engageBotId: string;
+      jarcubeBotId: string;
       accessToken: string;
     }
   > = {};
@@ -61,11 +61,11 @@ export class FacebookService {
         const pageId = entry.id;
         //console.log('pageId', pageId);
 
-        const { accessToken, engageBotId } = this.botList[pageId] || {};
-        if (!accessToken || !engageBotId) {
-          const { accessToken, engageBotId } =
+        const { accessToken, jarcubeBotId } = this.botList[pageId] || {};
+        if (!accessToken || !jarcubeBotId) {
+          const { accessToken, jarcubeBotId } =
             await this.socialService.getBotToken(pageId);
-          this.botList[pageId] = { accessToken, engageBotId };
+          this.botList[pageId] = { accessToken, jarcubeBotId };
         }
 
         if (entry.changes) {
@@ -128,7 +128,7 @@ export class FacebookService {
   ) {
     this.logger.log(`Received message from ${sender_psid}`);
     //console.log(received_message);
-    const { accessToken, engageBotId } = this.botList[pageId] || {};
+    const { accessToken, jarcubeBotId } = this.botList[pageId] || {};
     const userData = await this.getUserDetails(sender_psid, accessToken);
 
     const { first_name, last_name, id } = userData;
@@ -136,10 +136,10 @@ export class FacebookService {
       {
         name: `${first_name} ${last_name}`,
         username: id,
-        bot: engageBotId,
+        bot: jarcubeBotId,
         platform: PlatformEnum.FACEBOOK,
       },
-      engageBotId
+      jarcubeBotId
     );
 
     const user: any = {
@@ -218,7 +218,7 @@ export class FacebookService {
     received_postback: any,
     pageId: string
   ) {
-    const { accessToken, engageBotId } = this.botList[pageId] || {};
+    const { accessToken, jarcubeBotId } = this.botList[pageId] || {};
     const userData = await this.getUserDetails(sender_psid, accessToken);
 
     const { first_name, last_name, id } = userData;
@@ -226,10 +226,10 @@ export class FacebookService {
       {
         name: `${first_name} ${last_name}`,
         username: id,
-        bot: engageBotId,
+        bot: jarcubeBotId,
         platform: PlatformEnum.FACEBOOK,
       },
-      engageBotId
+      jarcubeBotId
     );
 
     const user: any = {

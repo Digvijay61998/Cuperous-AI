@@ -1,10 +1,10 @@
-# QuantumMind Templates
+# JarCube Templates
 
 Monorepo of interactive templates served inside WhatsApp WebView (and other
-platforms) when a customer interacts with a QuantumMind bot.
+platforms) when a customer interacts with a JarCube bot.
 
 Each template is an independent React + Vite app that builds to a self-contained
-static bundle. The QuantumMind backend ingests the build as a ZIP, hosts it
+static bundle. The JarCube backend ingests the build as a ZIP, hosts it
 (locally in `uploaded-docs/templates/` or on S3), and serves it to customers.
 
 ## Structure

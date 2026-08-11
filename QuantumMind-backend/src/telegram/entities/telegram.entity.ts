@@ -26,7 +26,7 @@ export class Telegram {
     ref: 'Bot',
     required: true,
   })
-  engageBot: string;
+  jarcubeBot: string;
 
   @Prop({
     enum: TelegramStatus,

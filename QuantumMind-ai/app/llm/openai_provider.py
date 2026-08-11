@@ -64,4 +64,7 @@ class OpenAICompatibleProvider(LLMProvider):
             tokens_used=tokens,
             model=self.model,
             provider=self.name,
+            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            finish_reason=choice.finish_reason,
         )

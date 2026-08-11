@@ -8,7 +8,7 @@ export type TelegramContext = Context & {
 };
 
 export const TelegramUserMiddleware =
-  (chatInitializerService: ChatInitializerService, engageBotId: string) =>
+  (chatInitializerService: ChatInitializerService, jarcubeBotId: string) =>
   async (ctx: TelegramContext, next: () => Promise<any>) => {
     try {
       if (!ctx.from || !ctx.chat)
@@ -23,9 +23,9 @@ export const TelegramUserMiddleware =
           name: `${user.user.first_name} ${user.user.last_name}`,
           username: user.user.username,
           platform: PlatformEnum.TELEGRAM,
-          bot: engageBotId,
+          bot: jarcubeBotId,
         },
-        engageBotId,
+        jarcubeBotId,
       );
 
       ctx.visitorId = visitor.visitorId;

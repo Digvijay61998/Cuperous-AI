@@ -79,7 +79,7 @@ const ChatLog = (props: any) => {
   );
 
   data.setting = {
-    botName: 'Engage Bot',
+    botName: 'JarCube',
     avatar: '/logo.jpeg',
     isSoundOn: false,
   };

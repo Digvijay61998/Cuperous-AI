@@ -1,4 +1,4 @@
-"""QuantumMind AI Service — FastAPI application entrypoint.
+"""JarCube AI Service — FastAPI application entrypoint.
 
 A standalone RAG (Retrieval-Augmented Generation) service that:
   * ingests client website/manual content into a multi-tenant vector store

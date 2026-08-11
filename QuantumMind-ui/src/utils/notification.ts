@@ -3,7 +3,7 @@ function sendNotification(message: any, user: any, type: any) {
   if (document.hasFocus()) {
     return;
   }
-  const notification = new Notification('New message from Engage Chatbot', {
+  const notification = new Notification('New message from JarCube', {
     icon:
       type === 'image'
         ? message

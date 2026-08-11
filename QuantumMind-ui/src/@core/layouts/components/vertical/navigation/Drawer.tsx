@@ -66,7 +66,7 @@ const Drawer = (props: Props) => {
       }
     } else {
       return {
-        backgroundColor: '#fff'
+        backgroundColor: 'customColors.sideBarBg'
       }
     }
   }

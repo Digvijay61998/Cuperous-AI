@@ -86,7 +86,7 @@ const ChatContent = (props: any) => {
     }
   };
 
-  const clientHeight = document?.getElementById("bizbot-widget")?.clientHeight;
+  const clientHeight = document?.getElementById("jarcube-widget")?.clientHeight;
   const dispatch = useDispatch<AppDispatch>();
   // const { messages: messageArray } = useSelector(
   //   (state: RootState) => state.bot
@@ -746,7 +746,7 @@ const ChatContent = (props: any) => {
               fontSize: "0.8rem",
             }}
           >
-            Powered by <a href="#">bizbot.works</a>
+            Powered by <a href="#">JarCube</a>
           </footer>
         )}
         <SendTranscriptDialog

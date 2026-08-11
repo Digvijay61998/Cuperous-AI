@@ -14,6 +14,15 @@ class LLMResult:
     tokens_used: int
     model: str
     provider: str
+    # Split token counts, when the provider reports them. Needed for cost
+    # attribution in tracing (prompt and completion tokens are priced
+    # differently). Default 0 so existing callers and fake providers in tests
+    # keep working unchanged.
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    # Provider-reported stop reason, when available. Useful for spotting silent
+    # truncation against llm_max_tokens.
+    finish_reason: str | None = None
 
 
 class LLMProvider(ABC):

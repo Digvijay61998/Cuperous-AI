@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     # ---- Service ----
-    app_name: str = "QuantumMind AI Service"
+    app_name: str = "JarCube AI Service"
     app_env: Literal["development", "production"] = "development"
     host: str = "0.0.0.0"
     port: int = 8000
@@ -44,10 +44,25 @@ class Settings(BaseSettings):
     milvus_port: str = "19530"
     milvus_collection: str = "quantummind_knowledge"
 
+    # ---- Tracing (PLAN.md Phase 0.5) ----
+    # Emits one structured [TRACE] line per request with per-stage latency,
+    # token counts and estimated cost. Cheap, stdlib-only, no external exporter.
+    ai_tracing: bool = True
+
+    @property
+    def tracing_enabled(self) -> bool:
+        return self.ai_tracing
+
     # ---- Embeddings ----
     # Free, local sentence-transformers model. 384-dim, CPU friendly.
+    # NOTE: the real vector dimension is read from the loaded model at runtime
+    # (EmbeddingService.dimension) — there is deliberately no EMBEDDING_DIM
+    # setting, because a stale value would silently disagree with the model.
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_dim: int = 384
+    # Warn when a chunk exceeds the model's usable token budget. all-MiniLM-L6-v2
+    # truncates at ~256 tokens *silently*, so without this guard we lose the tail
+    # of long chunks with no error. See PLAN.md finding L5.
+    embedding_max_tokens: int = 256
 
     # ---- Text chunking ----
     chunk_size: int = 500
@@ -78,6 +93,25 @@ class Settings(BaseSettings):
     moonshot_base_url: str = "https://api.moonshot.cn/v1"
 
     anthropic_api_key: str = ""
+
+    # ---- AWS S3 (Milvus storage backend) ----
+    # Declared so the shared .env validates, but the AI service never talks to
+    # S3 itself — docker-compose forwards these to Milvus as
+    # MINIO_ACCESS_KEY_ID / MINIO_SECRET_ACCESS_KEY. Bucket, region and SSL are
+    # set in milvus/user.yaml because Milvus has no env var for them.
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "ap-south-1"
+
+    # ---- Evaluation (PLAN.md Phase 0) ----
+    # Model used by the eval harness as LLM-as-judge for faithfulness and answer
+    # relevancy. Kept separate from llm_model so we can judge with a stronger (or
+    # simply different) model than the one under test.
+    eval_judge_model: str = "gpt-4o-mini"
+    # Path to the golden dataset consumed by the harness.
+    eval_dataset_path: str = "eval/golden/dataset.yaml"
+    # Where run results are written (JSON, one file per run + a history file).
+    eval_results_dir: str = "eval/results"
 
     @property
     def cors_origins_list(self) -> list[str]:

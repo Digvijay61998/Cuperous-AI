@@ -210,15 +210,15 @@ const BotSetting = () => {
     opacity: 0.5,
   };
   const getDynamicScript = () => {
-    return `<!-- Start of  Engage Bot code -->
+    return `<!-- Start of JarCube code -->
     <script type='module'>
     window.botId =  "${botId}";
     window.baseUrl = "${env.baseurl}";
     window.isOpenChat = false;
-    import engage from "${env.baseurl}/api/file/plugin.js";
-    engage();
+    import jarcube from "${env.baseurl}/api/file/plugin.js";
+    jarcube();
   </script>
-    <!-- End of Engage Bot code -->
+    <!-- End of JarCube code -->
 `;
   };
   return (

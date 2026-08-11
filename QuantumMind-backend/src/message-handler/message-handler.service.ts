@@ -52,6 +52,46 @@ import { MessageResponseDto } from "./dto/message-response.dto";
 import { BotNodeStateEnum } from "./enums/bot-node-state.enum";
 import { UserInputValidationEnum } from "./enums/user-input-validation.enums";
 
+/**
+ * Accepted spellings for the yes/no validators. The old check was an exact
+ * `["yes", "no"].includes(message)`, so "y", "yeah", "yep", "nope" and every
+ * other natural reply was treated as invalid input.
+ */
+const YES_WORDS = new Set([
+  "yes", "y", "yeah", "yeh", "yep", "yup", "ya", "sure", "ok", "okay",
+  "correct", "right", "true", "affirmative", "please", "haan", "ha",
+]);
+const NO_WORDS = new Set([
+  "no", "n", "nope", "nah", "never", "false", "negative", "dont", "don't",
+  "nahi", "na",
+]);
+
+/** A phone number may only contain digits and the usual separators. */
+const PHONE_SHAPE = /^\+?[\d\s().-]+$/;
+/** E.164 allows 7..15 significant digits. */
+const PHONE_MIN_DIGITS = 7;
+const PHONE_MAX_DIGITS = 15;
+
+const MONTH_NAME = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+const DMY_DATE = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/;
+const YMD_DATE = /^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/;
+
+/**
+ * Relative strength of the different ways a USER_INPUT node can match, used to
+ * pick a winner when a menu offers several branches. A typed/validated match is
+ * always stronger than a keyword hit, which is stronger than a bare capture.
+ */
+const MATCH_SCORE_ENTITY = 1000;
+const MATCH_SCORE_KEYWORD_BASE = 100;
+const MATCH_SCORE_CAPTURE_ONLY = 1;
+
+interface UserInputMatch {
+  matched: boolean;
+  /** Higher wins when several branches match the same message. */
+  score: number;
+  reason: string;
+}
+
 @Injectable()
 export class MessageHandlerService {
   private readonly logger = new Logger(MessageHandlerService.name);
@@ -119,10 +159,25 @@ export class MessageHandlerService {
     this.language = language;
     const userId = this.user.auth.userId;
     this.ctx = ctx;
+
+    console.log(
+      `\n>>> [handleMessage] ENTER | userId=${userId} type=${type} message=${JSON.stringify(message).slice(0, 150)}`
+    );
+
     const userData = this.socketStateService.getUserData(userId);
-    if (!userData) return;
+    if (!userData) {
+      console.log(`>>> [handleMessage] EXIT early — no userData for ${userId}`);
+      return;
+    }
     const { mode, conversationId, currentNode } = userData;
-    if (!currentNode) return;
+    if (!currentNode) {
+      console.log(`>>> [handleMessage] EXIT early — currentNode is null/undefined for ${userId}`);
+      return;
+    }
+
+    console.log(
+      `>>> [handleMessage] currentNode=${currentNode.nodeType} id=${currentNode.id} conv=${conversationId}`
+    );
 
     // Fresh node-traversal budget for this inbound message (loop protection).
     this.socketStateService.updateUserData(userId, { nodeHops: 0 });
@@ -174,13 +229,42 @@ export class MessageHandlerService {
     }
 
     if (type === "goto") {
-      const step = await this.botsService.getBotNode(message);
+      console.log(`>>> [handleMessage] GOTO branch — looking up node: "${message}"`);
+      let step: BotFlowNode | null = null;
+      try {
+        step = await this.botsService.getBotNode(message);
+      } catch (e) {
+        console.log(`>>> [handleMessage] GOTO getBotNode threw: ${e.message}`);
+        // getBotNode throws HttpException 404 when the id doesn't exist.
+      }
+      if (!step) {
+        console.log(`>>> [handleMessage] GOTO target NOT FOUND — falling back`);
+        this.logger.warn(
+          `goto target "${message}" not found — sending fallback`
+        );
+        return this.defaultFallback(
+          message,
+          this.socketStateService.getUserData(userId)?.defaultFallback,
+          userId
+        );
+      }
+      console.log(`>>> [handleMessage] GOTO resolved to: ${step.nodeType} id=${step.id} next=[${(step.next||[]).join(",")}] responses=${(step.responses||[]).length}`);
       this.socketStateService.updateUserData(userId, {
         currentNode: step,
       });
 
       return this.handleNode(step, message, userId);
     }
+    // Keep the original casing before folding the working copy to lowercase.
+    // Matching stays case-insensitive, but captured attributes should read
+    // "Digvijay Sharma", not "digvijay sharma", because they flow straight into
+    // webhook payloads, tickets and template pre-fills.
+    if (typeof message === "string") {
+      this.socketStateService.updateUserData(userId, {
+        rawMessage: message.trim(),
+      });
+    }
+
     message = (message ?? "").trim().toLowerCase();
     if (message === "start" || message === "reset" || message === "restart") {
       const { startNode, botSettings, role } =
@@ -498,18 +582,32 @@ export class MessageHandlerService {
           BotNodeStateEnum.NEW
         );
 
-        const matchedNode = nextNodes
-          .map((ele: BotFlowNode) => {
-            if (ele.nodeType === NodeTypeEnum.USER_INPUT) {
-              return this.checkIfUserInputMatching(message, ele, userId)
-                ? ele
-                : null;
-            }
-            return null;
-          })
-          .find((ele: any) => ele);
+        // Score every candidate and take the strongest, rather than the first
+        // one in edge order. With first-wins, a branch keyed on the digit "1"
+        // captured "i have 1 question about my bill" before the branch keyed on
+        // "bill" was ever considered. `allowCaptureOnlyMatch: false` stops a
+        // child that only declares an alias from absorbing every reply.
+        let matchedNode: BotFlowNode = null;
+        let matchedScore = 0;
+        let matchedReason = "";
+        for (const ele of nextNodes) {
+          if (ele?.nodeType !== NodeTypeEnum.USER_INPUT) continue;
+          const result = this.evaluateUserInput(message, ele, {
+            allowCaptureOnlyMatch: false,
+          });
+          if (result.matched && result.score > matchedScore) {
+            matchedNode = ele;
+            matchedScore = result.score;
+            matchedReason = result.reason;
+          }
+        }
 
         if (matchedNode) {
+          this.trace(
+            "handleBotResponse:branch",
+            `matched=${matchedNode.id} score=${matchedScore} via=${matchedReason}`
+          );
+          this.captureUserInput(message, matchedNode, userId);
           this.socketStateService.setNodeState(
             userId,
             matchedNode.id,
@@ -560,7 +658,7 @@ export class MessageHandlerService {
     });
   }
   /**
-   * AI Response node: answer the user's message using the QuantumMind AI (RAG)
+   * AI Response node: answer the user's message using the JarCube AI (RAG)
    * service, grounded in the client's ingested website / knowledge-base data.
    *
    * Routing:
@@ -815,76 +913,144 @@ export class MessageHandlerService {
     }
   }
 
+  /**
+   * The value to persist for a captured answer.
+   *
+   * handleMessage lowercases the inbound text so keyword matching is
+   * case-insensitive, but that lowercased copy is what every capture site was
+   * storing — names and cities reached the CRM webhook as "digvijay sharma".
+   * Substitute the original only when it is demonstrably the same message, so a
+   * stale value from an earlier turn can never leak in.
+   */
+  private captureValue(message: any, userId: string | any): any {
+    if (typeof message !== "string") return message;
+    const raw = this.socketStateService.getUserData(userId)?.rawMessage;
+    return typeof raw === "string" && raw.toLowerCase() === message
+      ? raw
+      : message;
+  }
+
+  /** Escape a designer-authored keyword so it is safe inside a RegExp. */
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  /**
+   * Whole-word (or whole-phrase) containment.
+   *
+   * Matching used to be a bare `message.includes(keyword)`, which let a keyword
+   * match the middle of an unrelated word: keyword "1" matched "i have 1
+   * question about my bill" AND "my 100mbps plan", and utterance "nothing else
+   * for now" matched a user simply answering "no". Requiring a non-alphanumeric
+   * boundary on both sides means a term only matches when it stands on its own.
+   */
+  private containsPhrase(haystack: string, needle: string): boolean {
+    const term = (needle || "").trim().toLowerCase();
+    if (!term || !haystack) return false;
+    const boundary = "[^\\p{L}\\p{N}]";
+    const pattern = new RegExp(
+      `(?:^|${boundary})${this.escapeRegExp(term)}(?:${boundary}|$)`,
+      "iu"
+    );
+    return pattern.test(haystack);
+  }
+
+  /**
+   * Decide whether a USER_INPUT node accepts this message, and how strongly.
+   *
+   * PURE: this never writes to session state. Capture is a separate step
+   * (`captureUserInput`) because a menu evaluates every candidate branch before
+   * choosing one — the old combined version stored the alias of each candidate
+   * it tested, and emitted `mask.chat` once per candidate.
+   *
+   * `allowCaptureOnlyMatch` is the fix for the branch-swallowing bug. A node
+   * whose only configuration is an alias legitimately matches anything (that is
+   * what a capture step is), but that must not apply while picking between the
+   * children of a menu, where the first aliased child would otherwise absorb
+   * every reply.
+   */
+  private evaluateUserInput(
+    message: string,
+    node: BotFlowNode,
+    options: { allowCaptureOnlyMatch?: boolean } = {}
+  ): UserInputMatch {
+    const { allowCaptureOnlyMatch = true } = options;
+    const { alias, entity } = node.payload || {};
+    const text = typeof message === "string" ? message : "";
+    const keywords = node.keywords || [];
+    const utterances = node.utterance || [];
+
+    if (entity && entity !== UserInputValidationEnum.ANY) {
+      return this.validationCheck(entity, text)
+        ? { matched: true, score: MATCH_SCORE_ENTITY, reason: `entity:${entity}` }
+        : { matched: false, score: 0, reason: `entity:${entity}:invalid` };
+    }
+
+    // Longest matching term wins, so a specific keyword like "bill" outranks a
+    // generic menu digit like "1" no matter which branch the edges list first.
+    let best = 0;
+    let bestTerm = "";
+    for (const term of [...keywords, ...utterances]) {
+      if (!term) continue;
+      // Utterances are example phrases: match either direction, so both a user
+      // typing a fragment of the example and a user wrapping the example in a
+      // longer sentence are recognised.
+      const hit =
+        this.containsPhrase(text, term) || this.containsPhrase(term, text);
+      if (hit && term.trim().length > best) {
+        best = term.trim().length;
+        bestTerm = term;
+      }
+    }
+    if (best > 0) {
+      return {
+        matched: true,
+        score: MATCH_SCORE_KEYWORD_BASE + best,
+        reason: `term:${bestTerm}`,
+      };
+    }
+
+    if (alias && allowCaptureOnlyMatch) {
+      return {
+        matched: true,
+        score: MATCH_SCORE_CAPTURE_ONLY,
+        reason: "capture-only",
+      };
+    }
+    return { matched: false, score: 0, reason: "no-match" };
+  }
+
+  /**
+   * Persist the answer this node was configured to capture. Called only for the
+   * node that actually won, never for candidates that were merely tested.
+   */
+  private captureUserInput(
+    message: string,
+    node: BotFlowNode,
+    userId: string | any
+  ): void {
+    const { alias, secure } = node.payload || {};
+    if (secure) {
+      this.eventEmitter.emit("mask.chat", this.chatId);
+    }
+    if (!alias) return;
+    this.socketStateService.updateUserData(userId, {
+      attributes: {
+        ...this.socketStateService.getUserData(userId)?.attributes,
+        [alias]: this.captureValue(message, userId),
+      },
+    });
+  }
+
   checkIfUserInputMatching(
     message: string,
     node: BotFlowNode,
     userId: string | any
   ): boolean {
-    const { alias, entity, secure } = node.payload;
-    if (secure) {
-      this.eventEmitter.emit("mask.chat", this.chatId);
-    }
-    if (entity && entity !== UserInputValidationEnum.ANY) {
-      if (!this.validationCheck(entity, message)) {
-        return false;
-      }
-      if (alias) {
-        this.socketStateService.updateUserData(userId, {
-          attributes: {
-            ...this.socketStateService.getUserData(userId).attributes,
-            [alias]: message,
-          },
-        });
-      }
-      return true;
-    }
-
-    if (node.keywords.length > 0) {
-      const keywordMatched = node.keywords.some((keyword: string) => {
-        return message.includes(keyword.toLowerCase());
-      });
-
-      if (keywordMatched) {
-        if (alias) {
-          this.socketStateService.updateUserData(userId, {
-            attributes: {
-              ...this.socketStateService.getUserData(userId).attributes,
-              [alias]: message,
-            },
-          });
-        }
-        return true;
-      }
-    }
-
-    if (node.utterance.length > 0) {
-      const utteranceMatched = node.utterance.some((utterance: string) => {
-        return utterance.toLowerCase().includes(message.toLowerCase());
-      });
-
-      if (utteranceMatched) {
-        if (alias) {
-          this.socketStateService.updateUserData(userId, {
-            attributes: {
-              ...this.socketStateService.getUserData(userId).attributes,
-              [alias]: message,
-            },
-          });
-        }
-        return true;
-      }
-    }
-
-    if (alias) {
-      this.socketStateService.updateUserData(userId, {
-        attributes: {
-          ...this.socketStateService.getUserData(userId).attributes,
-          [alias]: message,
-        },
-      });
-      return true;
-    }
-    return false;
+    const result = this.evaluateUserInput(message, node);
+    if (!result.matched) return false;
+    this.captureUserInput(message, node, userId);
+    return true;
   }
 
   async defaultFallback(message: any, node: BotFlowNode, userId: string | any) {
@@ -1039,28 +1205,107 @@ if (!webhookId) {
     }
   }
 
+  /** Real calendar date check — rejects things like 32/01/2026 or month 15. */
+  private isRealDate(year: number, month: number, day: number): boolean {
+    if (!(month >= 1 && month <= 12) || !(day >= 1 && day <= 31)) return false;
+    const dt = new Date(year, month - 1, day);
+    return (
+      dt.getFullYear() === year &&
+      dt.getMonth() === month - 1 &&
+      dt.getDate() === day
+    );
+  }
+
+  /**
+   * Date validation that does not rely on Date.parse alone.
+   *
+   * `Date.parse("1")` succeeds (it means the year 2001), so the old
+   * `!isNaN(Date.parse(message))` check accepted a bare "1" as a valid date.
+   * Date.parse also rejects the day-first format most of the world writes, so
+   * "15/01/2026" used to fail. Handle the numeric forms explicitly and only fall
+   * back to Date.parse for spelled-out months.
+   */
+  private isValidDate(text: string): boolean {
+    const dmy = text.match(DMY_DATE);
+    if (dmy) {
+      const day = Number(dmy[1]);
+      const month = Number(dmy[2]);
+      const year = Number(dmy[3]);
+      // Accept day-first (common outside the US) or month-first.
+      return (
+        this.isRealDate(year, month, day) || this.isRealDate(year, day, month)
+      );
+    }
+    const ymd = text.match(YMD_DATE);
+    if (ymd) {
+      return this.isRealDate(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]));
+    }
+    if (MONTH_NAME.test(text)) return !isNaN(Date.parse(text));
+    return false;
+  }
+
+  /** Count of significant digits, for phone-number length checks. */
+  private digitCount(text: string): number {
+    return (text.match(/\d/g) || []).length;
+  }
+
   validationCheck(validation: string, message: any) {
+    // Callers pass values straight off the wire, and QUESTIONS elements may omit
+    // `entity` entirely, so normalise defensively instead of assuming a string.
+    const text =
+      typeof message === "string"
+        ? message.trim()
+        : message == null
+        ? ""
+        : String(message).trim();
+    const lower = text.toLowerCase();
+
     switch (validation) {
       case UserInputValidationEnum.EMAIL:
-        return isEmail(message);
+        return isEmail(text);
+
       case UserInputValidationEnum.NUMBER:
-        return !isNaN(message);
+        // `!isNaN("")` and `!isNaN("   ")` are both true, so an empty answer
+        // used to pass as a number.
+        return text.length > 0 && !isNaN(Number(text));
+
       case UserInputValidationEnum.TEXT:
-        return isString(message);
+        // `isString()` is true for every string, including "", so this branch
+        // never rejected anything at all.
+        return text.length > 0;
+
       case UserInputValidationEnum.ANY:
         return true;
+
       case UserInputValidationEnum.DATE:
-        return !isNaN(Date.parse(message));
+        return this.isValidDate(text);
+
       case UserInputValidationEnum.ALPHANUMERIC:
-        return /^[a-zA-Z0-9]*$/.test(message);
+        // The quantifier was `*`, which matches the empty string.
+        return /^[a-zA-Z0-9]+$/.test(text);
+
       case UserInputValidationEnum.YES_NO:
-        return ["yes", "no"].includes(message);
+        return YES_WORDS.has(lower) || NO_WORDS.has(lower);
       case UserInputValidationEnum.YES:
-        return ["yes"].includes(message);
+        return YES_WORDS.has(lower);
       case UserInputValidationEnum.NO:
-        return ["no"].includes(message);
+        return NO_WORDS.has(lower);
+
       case UserInputValidationEnum.PHONE:
-        return !isNaN(message);
+        // Was `!isNaN(message)`, which rejected "+91 98765 43210" (not a
+        // number), accepted the single digit "5" as a mobile number, and
+        // accepted "" and "   ".
+        return (
+          PHONE_SHAPE.test(text) &&
+          this.digitCount(text) >= PHONE_MIN_DIGITS &&
+          this.digitCount(text) <= PHONE_MAX_DIGITS
+        );
+
+      case UserInputValidationEnum.COUNTRY:
+        // Had no case at all, so it fell through to `default: true` and accepted
+        // any input including the empty string.
+        return /^[a-zA-Z][a-zA-Z\s.'-]*$/.test(text);
+
       default:
         return true;
     }
@@ -1184,8 +1429,8 @@ if (!webhookId) {
     if (node.payload.alias) {
       this.socketStateService.updateUserData(userId, {
         attributes: {
-          ...this.socketStateService.getUserData(userId).attributes,
-          [node.payload.alias]: message,
+          ...this.socketStateService.getUserData(userId)?.attributes,
+          [node.payload.alias]: this.captureValue(message, userId),
         },
       });
     }
@@ -1237,6 +1482,13 @@ if (!webhookId) {
       ]);
       this.socketStateService.setQuestionNodeState(userId, node.id, {
         currentQuestion: 0,
+        // `lifespan` was omitted here, so the first question started with
+        // lifespan === undefined. The retry test below is `lifespan + 1 <
+        // attempt`, and `undefined + 1` is NaN, so every comparison was false:
+        // the first question skipped its retries entirely and applied
+        // actionOnFailure on the very first invalid answer, unlike every
+        // later question.
+        lifespan: 0,
       });
     }
     if (currentQuestion !== -1) {
@@ -1256,9 +1508,15 @@ if (!webhookId) {
           lifespan: 0,
         });
         if (alias) {
+          // Merge, never replace. updateUserData is only a shallow top-level
+          // merge, so passing a bare { [alias]: message } here would discard
+          // every attribute captured so far — including the earlier answers of
+          // THIS questionnaire. A 4-field form would then reach the downstream
+          // webhook / template variable mappings with just the last field.
           this.socketStateService.updateUserData(userId, {
             attributes: {
-              [alias]: message,
+              ...this.socketStateService.getUserData(userId)?.attributes,
+              [alias]: this.captureValue(message, userId),
             },
           });
         }
@@ -1278,8 +1536,12 @@ if (!webhookId) {
           },
         ]);
       } else {
+        // No retry budget configured means "keep asking". Previously this
+        // re-sent the prompt and then FELL THROUGH to actionOnFailure, so the
+        // user was asked the same question again and immediately moved past it
+        // in the same turn.
         if (!attempt || attempt === -1) {
-          await this.sendBotMessage(userId, [
+          return await this.sendBotMessage(userId, [
             {
               type: "text",
               value: element.prompt,
@@ -1287,11 +1549,11 @@ if (!webhookId) {
           ]);
         }
 
-        const haveLifespan = lifespan + 1 < attempt;
+        const haveLifespan = (lifespan ?? 0) + 1 < attempt;
 
         if (haveLifespan && attempt && attempt > 0) {
           this.socketStateService.setQuestionNodeState(userId, node.id, {
-            lifespan: lifespan + 1,
+            lifespan: (lifespan ?? 0) + 1,
             currentQuestion: currentQuestion,
           });
           return await this.sendBotMessage(userId, [

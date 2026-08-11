@@ -107,7 +107,7 @@ class VectorStoreService:
         ]
         schema = CollectionSchema(
             fields,
-            description="QuantumMind multi-tenant knowledge base",
+            description="JarCube multi-tenant knowledge base",
             # Number of physical partitions used to spread tenants.
             num_partitions=16,
         )
@@ -201,6 +201,39 @@ class VectorStoreService:
                 }
             )
         return hits
+
+    def sources_for_texts(self, client_id: str, texts: list[str]) -> list[str]:
+        """Resolve chunk texts back to their logical ``source`` names.
+
+        Used by the evaluation harness: ``QueryResponse.sources`` carries chunk
+        text and an optional URL, but not the ``source`` field, and manual
+        ingests leave ``source_url`` empty. Rather than widen the public API
+        response for the harness's benefit, we look the chunks up here.
+
+        Order is preserved so precision@k stays meaningful. Chunks that cannot be
+        resolved are skipped rather than guessed at.
+        """
+        if not texts:
+            return []
+
+        expr = f'client_id == "{_escape(client_id)}"'
+        try:
+            rows = self._collection.query(
+                expr=expr, output_fields=["text", "source"], limit=16384
+            )
+        except Exception:
+            logger.warning("Could not query chunk sources", exc_info=True)
+            return []
+
+        # Map on a text prefix: Milvus round-trips the full string, but matching a
+        # prefix is resilient to any whitespace normalisation along the way.
+        lookup = {(r.get("text") or "")[:200]: r.get("source", "") for r in rows}
+        resolved: list[str] = []
+        for text in texts:
+            source = lookup.get((text or "")[:200])
+            if source:
+                resolved.append(source)
+        return resolved
 
     # ----------------------------------------------------------------- deletes
     def delete_by_source(self, client_id: str, source: str) -> int:

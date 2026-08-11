@@ -30,7 +30,7 @@ export class Social {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Bot',
   })
-  engageBot: any;
+  jarcubeBot: any;
 
   @Prop()
   botId: string;

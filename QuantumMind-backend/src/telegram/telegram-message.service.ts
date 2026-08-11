@@ -18,7 +18,7 @@ export class TelegramMessageService {
   private botList: Record<
     string,
     {
-      enageBotId: string;
+      jarcubeBotId: string;
       accessToken: string;
     }
   > = {};
@@ -33,19 +33,19 @@ export class TelegramMessageService {
 
   async handlePostWebhook(body: any, botId: string) {
     try {
-      let { accessToken, enageBotId } = this.botList[botId] || {};
+      let { accessToken, jarcubeBotId } = this.botList[botId] || {};
 
       if (!accessToken) {
         const data = await this.socialService.getBotToken(botId);
 
         accessToken = data?.accessToken;
-        enageBotId = data?.engageBotId;
+        jarcubeBotId = data?.jarcubeBotId;
         if (!accessToken) return;
-        this.botList[botId] = { accessToken, enageBotId };
+        this.botList[botId] = { accessToken, jarcubeBotId };
       }
 
       const bot = new Telegraf(accessToken);
-      bot.use(TelegramUserMiddleware(this.chatInitializerService, enageBotId));
+      bot.use(TelegramUserMiddleware(this.chatInitializerService, jarcubeBotId));
       bot.use(this.handleSendMessage.bind(this));
       await bot.handleUpdate(body);
     } catch (error) {

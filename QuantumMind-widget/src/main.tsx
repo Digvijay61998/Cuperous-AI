@@ -17,10 +17,10 @@ const chatbot = () => {
     element.id = "root";
     document.body.appendChild(element);
   }
-  let isRoot = document?.getElementById("bizbot-widget-root");
+  let isRoot = document?.getElementById("jarcube-widget-root");
   if (isRoot) {
     return ReactDOM.createRoot(
-      document.getElementById("bizbot-widget-root") as HTMLElement
+      document.getElementById("jarcube-widget-root") as HTMLElement
     ).render(
       <>
         <App />
@@ -28,10 +28,10 @@ const chatbot = () => {
     );
   } else {
     let element = document.createElement("div");
-    element.id = "bizbot-widget-root";
+    element.id = "jarcube-widget-root";
     document.body.appendChild(element);
     return ReactDOM.createRoot(
-      document.getElementById("bizbot-widget-root") as HTMLElement
+      document.getElementById("jarcube-widget-root") as HTMLElement
     ).render(
       <>
         <App />

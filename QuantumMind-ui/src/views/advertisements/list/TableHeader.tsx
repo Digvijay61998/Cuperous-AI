@@ -42,7 +42,7 @@ const TableHeader = (props: TableHeaderProps) => {
       <Box
         sx={{ gap: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}
       >
-        <Button sx={{backgroundColor : "#2241FF"}} onClick={toggle} variant="contained">
+        <Button sx={{backgroundColor : 'secondary.main'}} onClick={toggle} variant="contained">
           Add Advertisement
         </Button>
       </Box>

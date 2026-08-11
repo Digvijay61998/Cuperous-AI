@@ -85,12 +85,12 @@ export class SocialService {
       const queryObject = {};
       if (status) queryObject['status'] = status;
       if (platform) queryObject['platform'] = platform;
-      if (bot) queryObject['engageBot'] = bot;
+      if (bot) queryObject['jarcubeBot'] = bot;
 
       const social = this.socialModel
         .find(queryObject)
         .sort({ createdAt: -1 })
-        .populate('engageBot', 'name')
+        .populate('jarcubeBot', 'name')
         .skip(documentsToSkip);
       if (limitOfDocuments) {
         social.limit(limitOfDocuments);
@@ -223,7 +223,7 @@ export class SocialService {
       if (!bot) return null;
       return {
         accessToken: await this.decrypt(bot.accessToken),
-        engageBotId: bot.engageBot.toHexString(),
+        jarcubeBotId: bot.jarcubeBot.toHexString(),
       };
     } catch (error) {
       this.logger.error(`Error while getting all webhooks : ${error.message}`);

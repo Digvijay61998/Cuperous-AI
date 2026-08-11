@@ -266,7 +266,15 @@ const LoginPage = () => {
               size="large"
               type="submit"
               variant="contained"
-              sx={{ mb: 4, backgroundColor: "#2241FF" }}
+              sx={{
+                mb: 4,
+                // Brand gradient from the JarCube logo, replacing the hardcoded blue #2241FF.
+                background: theme => theme.palette.customColors.logoGradient,
+                '&:hover': {
+                  background: theme => theme.palette.customColors.logoGradient,
+                  filter: 'brightness(1.08)'
+                }
+              }}
             >
               Log in
             </Button>

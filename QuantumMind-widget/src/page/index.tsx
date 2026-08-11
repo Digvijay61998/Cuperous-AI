@@ -72,7 +72,7 @@ export default function App(props: any) {
 
       setVisitorAccessToken(accessToken);
       const socket = io(serviceIP, {
-        path: "/socket.io/engage",
+        path: "/socket.io/jarcube",
         auth: {
           token: accessToken,
         },
@@ -257,7 +257,7 @@ const [customStyle, setCustomStyle] = useState<any>(isMobile ? mobileStyle : des
   };
 
   return (
-    <div id="bizbot-widget"
+    <div id="jarcube-widget"
     >
       {botSettings &&
         Object?.keys(botSettings).length > 0 &&

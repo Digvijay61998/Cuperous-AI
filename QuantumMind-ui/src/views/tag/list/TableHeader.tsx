@@ -92,7 +92,7 @@ const TableHeader = (props: TableHeaderProps) => {
           placeholder="Search Tags"
           onChange={(e) => handleFilter(e.target.value)}
         />
-        <Button variant="contained" sx={{backgroundColor : "#2241FF"}} onClick={() => setShow(true)}>
+        <Button variant="contained" sx={{backgroundColor : 'secondary.main'}} onClick={() => setShow(true)}>
           Add Tags
         </Button>
       </Box>

@@ -44,6 +44,10 @@ export interface SocketState {
   // Number of workflow nodes traversed for the current inbound message.
   // Reset per message; used to abort runaway loops. See MAX_NODE_HOPS.
   nodeHops?: number;
+  // The current inbound message with its original casing, kept because
+  // handleMessage lowercases the working copy for case-insensitive matching.
+  // Attribute capture reads this so stored answers are not mangled.
+  rawMessage?: string;
 }
 
 @Injectable()

@@ -16,6 +16,7 @@ from app.logging_utils import (
     new_request_id,
     set_request_id,
 )
+from app.tracing import finish_trace, span_summary, start_trace
 
 logger = logging.getLogger("http")
 
@@ -30,9 +31,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
         debug = settings.debug_logs_enabled
 
-        # 1. Establish / reuse the correlation id.
+        # 1. Establish / reuse the correlation id, and open a trace keyed by it
+        #    so log lines and the trace summary share one identifier.
         request_id = request.headers.get(REQUEST_ID_HEADER) or new_request_id()
         set_request_id(request_id)
+        start_trace(request_id)
 
         start = time.perf_counter()
 
@@ -67,12 +70,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 request.url.path,
                 duration_ms,
             )
+            finish_trace(level=logging.ERROR)
             raise
 
         duration_ms = (time.perf_counter() - start) * 1000
 
         # 4. Log the response (buffer the body so we can print it in debug).
         response.headers[REQUEST_ID_HEADER] = request_id
+        stages = span_summary()
 
         if debug:
             resp_body = b""
@@ -83,13 +88,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             level = logging.INFO if response.status_code < 400 else logging.ERROR
             logger.log(
                 level,
-                "[HTTP <-] %s %s -> %d in %.0fms | body=%s",
+                "[HTTP <-] %s %s -> %d in %.0fms | stages=%s | body=%s",
                 request.method,
                 request.url.path,
                 response.status_code,
                 duration_ms,
+                stages,
                 preview,
             )
+            finish_trace()
             return Response(
                 content=resp_body,
                 status_code=response.status_code,
@@ -100,12 +107,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         level = logging.INFO if response.status_code < 400 else logging.ERROR
         logger.log(
             level,
-            "[HTTP <-] %s %s -> %d in %.0fms",
+            "[HTTP <-] %s %s -> %d in %.0fms | stages=%s",
             request.method,
             request.url.path,
             response.status_code,
             duration_ms,
+            stages,
         )
+        finish_trace()
         return response
 
 

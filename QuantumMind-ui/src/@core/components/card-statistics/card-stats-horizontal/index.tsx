@@ -56,8 +56,8 @@ const CardStatsHorizontal = (props: CardStatsHorizontalProps) => {
        
       </CardContent>
       <CardActions sx={{ justifyContent: 'flex-start',
-      // backgroundColor:mode === 'light' ? '#F0F5FE' : 'gray',
-      backgroundColor:'#F0F5fe',
+      backgroundColor:mode === 'light' ? '#F0F5FE' : 'gray',
+      // backgroundColor:'#F0F5fe', 
        display : "flex", alignItems : "center", height : "40px" }}>
         <Typography variant='body2' sx={{fontSize: subFontSize, margin : "20px auto 0 5px"}}>{subtitle}</Typography>
       </CardActions>

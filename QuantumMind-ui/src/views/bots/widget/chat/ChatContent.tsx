@@ -132,7 +132,7 @@ const ChatContent = (props: any) => {
                 >
                   <MuiAvatar
                     src={botStyles?.avatar || '/logo.jpeg'}
-                    alt={'Engage Bot'}
+                    alt={'JarCube'}
                     sx={{ width: '2.375rem', height: '2.375rem' }}
                   />
 
@@ -144,7 +144,7 @@ const ChatContent = (props: any) => {
                         color: botStyles?.headerTextColor || '#000',
                       }}
                     >
-                      {botName || 'Engage Bot'}
+                      {botName || 'JarCube'}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -269,7 +269,7 @@ const ChatContent = (props: any) => {
                   >
                     <MuiAvatar
                       src={botStyles?.avatar || '/logo.jpeg'}
-                      alt={'Engage Bot'}
+                      alt={'JarCube'}
                       sx={{ width: '2.375rem', height: '2.375rem' }}
                     />
                   </Badge>
@@ -281,7 +281,7 @@ const ChatContent = (props: any) => {
                         color: botStyles?.headerTextColor || '#000',
                       }}
                     >
-                      {botName || 'Engage Bot'}
+                      {botName || 'JarCube'}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -416,7 +416,7 @@ const ChatContent = (props: any) => {
                   >
                     <MuiAvatar
                       src={botStyles?.avatar || '/logo.jpeg'}
-                      alt={'Engage Bot'}
+                      alt={'JarCube'}
                       sx={{ width: '2.375rem', height: '2.375rem' }}
                     />
                   </Badge>
@@ -428,7 +428,7 @@ const ChatContent = (props: any) => {
                         color: botStyles?.headerTextColor || '#000',
                       }}
                     >
-                      {botName || 'Engage Bot'}
+                      {botName || 'JarCube'}
                     </Typography>
                     <Typography
                       variant="caption"

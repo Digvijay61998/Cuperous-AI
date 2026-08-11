@@ -18,7 +18,7 @@ export class WhatsappService {
     string,
     {
       accessToken: string;
-      engageBotId: string;
+      jarcubeBotId: string;
       whatsappCloud?: WhatsappCloud;
     }
   > = {};
@@ -74,7 +74,7 @@ export class WhatsappService {
           const bot = await this.socialService.getBotToken(businessId);
           if (!bot) return;
           accessToken = bot.accessToken;
-          const engageBotId = bot.engageBotId;
+          const jarcubeBotId = bot.jarcubeBotId;
           whatsappCloud = new WhatsappCloud();
           whatsappCloud.initialize({
             accessToken,
@@ -82,7 +82,7 @@ export class WhatsappService {
             senderPhoneNumberId: metadata.phone_number_id,
             graphAPIVersion: "v15.0",
           });
-          this.bots[businessId] = { accessToken, whatsappCloud, engageBotId };
+          this.bots[businessId] = { accessToken, whatsappCloud, jarcubeBotId };
         }
         // await whatsappCloud.markMessageAsRead({
         //   message_id: data.message.message_id,
@@ -97,7 +97,7 @@ export class WhatsappService {
 
   async handleIncomingMessage(data: any, bot: any) {
     try {
-      const { engageBotId, whatsappCloud, accessToken } = bot;
+      const { jarcubeBotId, whatsappCloud, accessToken } = bot;
       if (data.isMessage) {
         const { message } = data;
         const { message_id } = message;
@@ -115,10 +115,10 @@ export class WhatsappService {
             name: from.name,
             username: from.phone,
             phone: from.phone,
-            bot: engageBotId,
+            bot: jarcubeBotId,
             platform: PlatformEnum.WHATSAPP,
           },
-          engageBotId
+          jarcubeBotId
         );
 
         this.socketStateService.updateUserData(visitor.visitorId, {

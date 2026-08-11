@@ -159,7 +159,7 @@ const ChatContent = (props: any) => {
                     {selectedChat.contact.avatar ? (
                       <MuiAvatar
                         src={'/logo.jpeg'}
-                        alt={'Engage Bot'}
+                        alt={'JarCube'}
                         sx={{ width: '2.375rem', height: '2.375rem' }}
                       />
                     ) : (
@@ -172,13 +172,13 @@ const ChatContent = (props: any) => {
                           fontSize: '1rem',
                         }}
                       >
-                        {getInitials('Engage Bot')}
+                        {getInitials('JarCube')}
                       </CustomAvatar>
                     )}
                   </Badge>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Typography sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
-                      Engage Bot
+                      JarCube
                     </Typography>
                     <Typography
                       variant="caption"

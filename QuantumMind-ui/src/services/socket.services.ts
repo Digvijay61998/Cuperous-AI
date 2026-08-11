@@ -96,7 +96,7 @@ export class SocketServices {
     console.log('init', url);
     //this.socket.disconnect();
     this.socket = io(url, {
-      path: '/socket.io/engage',
+      path: '/socket.io/jarcube',
       auth: {
         token,
       },

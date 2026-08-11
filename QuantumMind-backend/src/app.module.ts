@@ -23,7 +23,7 @@ import { ConversationModule } from "./conversation/conversation.module";
 import { RedisModule } from "./redis/redis.module";
 import { SocketModule } from "./socket/socket.module";
 import { RedisPropagateModule } from "./redis-propagate/redis-propagate.module";
-import { EngageGateway } from "./engage/engage.gateway";
+import { JarCubeGateway } from "./jarcube/jarcube.gateway";
 import { MessageHandlerModule } from "./message-handler/message-handler.module";
 import { WidgetModule } from "./widget/widget.module";
 import { UnansweredModule } from "./unanswered/unanswered.module";
@@ -32,8 +32,8 @@ import { QuestionsModule } from "./questions/questions.module";
 import { FeedbackModule } from "./feedback/feedback.module";
 import { AdvertisementModule } from "./advertisement/advertisement.module";
 import { OfferModule } from "./offer/offer.module";
-import { EngageService } from "./engage/engage.service";
-import { EngageModule } from "./engage/engage.module";
+import { JarCubeService } from "./jarcube/jarcube.service";
+import { JarCubeModule } from "./jarcube/jarcube.module";
 import { FacebookModule } from "./facebook/facebook.module";
 import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
@@ -83,7 +83,7 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     FeedbackModule,
     AdvertisementModule,
     OfferModule,
-    EngageModule,
+    JarCubeModule,
     EventEmitterModule.forRoot(),
     FacebookModule,
     TelegramModule,
@@ -105,8 +105,8 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-    EngageGateway,
-    EngageService,
+    JarCubeGateway,
+    JarCubeService,
   ],
 })
 export class AppModule {}

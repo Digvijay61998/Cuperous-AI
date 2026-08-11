@@ -4,6 +4,14 @@ export default () => ({
   },
   admin: {
     name: process.env.ADMIN_NAME || "Admin",
+    // NOTE: the fallbacks below were intentionally NOT rebranded to JarCube.
+    // They are not display strings — they identify existing state:
+    //   admin@engage.com  matches the already-seeded admin account (and the
+    //                     prefilled dev credentials in QuantumMind-ui/.env),
+    //                     so changing it locks you out of local login.
+    //   .../engage        is the name of the existing MongoDB database.
+    //   bizbot            is the name of the live AWS S3 bucket.
+    // Change each one only together with the corresponding account/DB/bucket.
     email: process.env.ADMIN_EMAIL || "admin@engage.com",
     password: process.env.ADMIN_PASSWORD || "admin@123",
   },
@@ -176,7 +184,7 @@ export default () => ({
   },
 
   ai: {
-    // QuantumMind AI (RAG) service. See QuantumMind-ai repo.
+    // JarCube AI (RAG) service. See QuantumMind-ai repo.
     url: process.env.AI_URL || "http://localhost:8000",
     // Request timeout (ms) for AI query calls.
     timeout: parseInt(process.env.AI_TIMEOUT, 10) || 20000,

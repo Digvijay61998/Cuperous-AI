@@ -94,6 +94,12 @@ def _extract_text_from_file(file: UploadFile) -> str:
     """Extract plain text from an uploaded file (PDF, DOCX, or TXT)."""
     filename = (file.filename or "").lower()
     content = file.file.read()
+    return _extract_text_from_bytes(content, filename)
+
+
+def _extract_text_from_bytes(content: bytes, filename: str) -> str:
+    """Extract plain text from file bytes (PDF, DOCX, or TXT)."""
+    filename = filename.lower()
 
     if filename.endswith(".pdf"):
         from pypdf import PdfReader
@@ -129,28 +135,31 @@ def ingest_file(
 ):
     """Upload and ingest a document (PDF, DOCX, or TXT).
 
-    Extracts text from the file, chunks it, and stores it in the vector DB.
+    Extracts text from the file, chunks it, and stores vectors in Milvus.
+    The original file is NOT stored here — the backend handles S3 storage.
     The source is the original filename so re-uploading replaces old content.
     """
     try:
-        text = _extract_text_from_file(file)
+        content = file.file.read()
+        filename = file.filename or "uploaded_file"
+
+        text = _extract_text_from_bytes(content, filename)
         if not text:
             raise HTTPException(status_code=400, detail="Could not extract text from file")
 
-        source = file.filename or "uploaded_file"
         count = service.ingest_text(
             client_id=client_id,
             text=text,
-            source=source,
+            source=filename,
             source_type="file",
             bot_id=bot_id,
         )
         return IngestResponse(
             success=True,
             client_id=client_id,
-            source=source,
+            source=filename,
             chunks_ingested=count,
-            message=f"Extracted text from '{source}' and ingested {count} chunk(s).",
+            message=f"Ingested {count} chunk(s) from '{filename}'.",
             text=text,
         )
     except HTTPException:
@@ -170,35 +179,38 @@ def ingest_files(
     """Upload and ingest multiple documents at once.
 
     Each file is processed independently; failures in one don't block others.
+    Original files are NOT stored here — backend handles S3 storage.
     """
     results = []
     for f in files:
         try:
-            text = _extract_text_from_file(f)
+            content = f.file.read()
+            filename = f.filename or "uploaded_file"
+
+            text = _extract_text_from_bytes(content, filename)
             if not text:
                 results.append(IngestResponse(
                     success=False,
                     client_id=client_id,
-                    source=f.filename or "unknown",
+                    source=filename,
                     chunks_ingested=0,
-                    message=f"Could not extract text from '{f.filename}'",
+                    message=f"Could not extract text from '{filename}'",
                 ))
                 continue
 
-            source = f.filename or "uploaded_file"
             count = service.ingest_text(
                 client_id=client_id,
                 text=text,
-                source=source,
+                source=filename,
                 source_type="file",
                 bot_id=bot_id,
             )
             results.append(IngestResponse(
                 success=True,
                 client_id=client_id,
-                source=source,
+                source=filename,
                 chunks_ingested=count,
-                message=f"Ingested {count} chunk(s) from '{source}'.",
+                message=f"Ingested {count} chunk(s) from '{filename}'.",
             ))
         except Exception as e:  # noqa: BLE001
             logger.exception(f"Failed to ingest file {f.filename}")

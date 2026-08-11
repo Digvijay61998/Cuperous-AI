@@ -1,0 +1,372 @@
+# Golden dataset for the JarCube AI eval harness (PLAN.md Phase 0.1)
+#
+# Structure
+# ---------
+# corpus:  documents ingested before the run. Each becomes one `source` in Milvus.
+# cases:   questions asked against that corpus, with expectations.
+#
+# Case fields
+#   id                 stable identifier — never renumber, results are keyed on it
+#   question           what we ask
+#   chat_history       optional prior turns; THIS IS THE POINT for multi-turn cases
+#   expect_confident   true  -> the pipeline must answer
+#                      false -> the pipeline must decline (out-of-scope question)
+#   ground_truth       reference answer, used to score answer correctness
+#   expected_sources   source names that MUST appear in retrieved chunks (recall)
+#   expected_facts     substrings that a correct answer should contain
+#   tags               free-form labels; use these to slice results by category
+#
+# Tag conventions
+#   single_turn        no history
+#   multi_turn         depends on chat_history — FAILS today (L1), Phase 1 target
+#   exact_match        SKU / error code / version — Phase 3 target
+#   out_of_scope       must return confident=false
+#   paraphrase         wording differs a lot from the source text
+#   multi_hop          answer requires combining two chunks
+#   p1_target          slice Phase 1 must improve
+#   p3_target          slice Phase 3 must improve
+#
+# Keep this file honest. Cases that are expected to fail today are how we prove
+# a phase worked. Do not delete them to make the numbers look good. Equally, do
+# not leave a tag claiming "expected to fail" on a case that measurably passes —
+# see the exact_match note below.
+#
+# ⚠️ Corpus size caveat (PLAN.md finding L23): 5 documents produce 5 chunks and
+# retrieval_top_k is 5, so most in-scope cases retrieve the entire corpus.
+# Context recall is therefore trivially 1.000 and context precision is
+# artificially low. Grow this corpus before trusting Phase 2/3 deltas.
+
+corpus:
+  - source: support-hours
+    source_type: manual
+    text: |
+      Acme Corporation customer support is available Monday through Friday,
+      9:00am to 5:00pm Pacific Time. We are closed on weekends and on all US
+      federal holidays.
+
+      Outside of those hours you can email help@acme.test and we will reply
+      within one business day. Priority support customers receive a response
+      within 4 hours, including weekends.
+
+  - source: shipping-policy
+    source_type: manual
+    text: |
+      Acme offers free standard shipping on all orders over $50 within the
+      continental United States. Orders under $50 are charged a flat $6.95
+      shipping fee.
+
+      Standard shipping takes 5 to 7 business days. Express shipping is
+      available for $19.95 and arrives in 2 business days. We do not ship to
+      PO boxes.
+
+      International shipping is available to Canada and Mexico only, at a flat
+      rate of $34.95, and takes 10 to 14 business days.
+
+  - source: returns-policy
+    source_type: manual
+    text: |
+      You may return any unused item within 30 days of delivery for a full
+      refund. Items must be in original packaging with all tags attached.
+
+      To start a return, email returns@acme.test with your order number. We
+      will send a prepaid shipping label. Refunds are processed within 5
+      business days of us receiving the returned item.
+
+      Opened software, gift cards, and clearance items marked FINAL SALE are
+      not eligible for return.
+
+  - source: product-catalog
+    source_type: manual
+    text: |
+      The Acme Widget Pro, model number QM-4471-B, is our flagship product. It
+      retails at $249.99 and includes a 2 year manufacturer warranty.
+
+      The Acme Widget Lite, model number QM-2200-A, is the entry level option
+      at $89.99 with a 1 year warranty.
+
+      Both models are compatible with firmware version 3.2 and later. Firmware
+      3.1 and earlier require the QM-ADAPT-1 adapter, sold separately for
+      $14.99.
+
+  - source: troubleshooting
+    source_type: manual
+    text: |
+      Error code ERR_TIMEOUT_502 means the device could not reach the Acme
+      cloud service. Check your network connection and confirm that port 8443
+      is not blocked by a firewall.
+
+      Error code ERR_AUTH_401 means the device credentials have expired. Open
+      the Acme app, go to Settings, and tap Re-authenticate.
+
+      If the status light blinks amber three times, the battery is below 10
+      percent. Charge the device for at least 30 minutes before use.
+
+cases:
+  # ---------------------------------------------------------------- baseline
+  # These should already pass. If one of them regresses, something is broken.
+  - id: SH-01
+    question: When is support open?
+    expect_confident: true
+    ground_truth: >
+      Support is available Monday through Friday, 9:00am to 5:00pm Pacific Time.
+      It is closed on weekends and US federal holidays.
+    expected_sources: [support-hours]
+    expected_facts: ["Monday", "Friday"]
+    tags: [single_turn, baseline]
+
+  - id: SH-02
+    question: Can I get help on a Saturday?
+    expect_confident: true
+    ground_truth: >
+      Standard support is closed on weekends, but you can email help@acme.test
+      and get a reply within one business day. Priority support customers get a
+      response within 4 hours including weekends.
+    expected_sources: [support-hours]
+    expected_facts: ["email"]
+    tags: [single_turn, paraphrase, baseline]
+
+  - id: SP-01
+    question: How much does shipping cost?
+    expect_confident: true
+    ground_truth: >
+      Standard shipping is free on orders over $50, otherwise a flat $6.95.
+      Express shipping is $19.95.
+    expected_sources: [shipping-policy]
+    expected_facts: ["$50"]
+    tags: [single_turn, baseline]
+
+  - id: SP-02
+    question: Do you deliver to other countries?
+    expect_confident: true
+    ground_truth: >
+      International shipping is available to Canada and Mexico only, at a flat
+      $34.95, taking 10 to 14 business days.
+    expected_sources: [shipping-policy]
+    expected_facts: ["Canada", "Mexico"]
+    tags: [single_turn, paraphrase, baseline]
+
+  - id: RP-01
+    question: What is your return window?
+    expect_confident: true
+    ground_truth: >
+      Unused items can be returned within 30 days of delivery for a full refund,
+      in original packaging with tags attached.
+    expected_sources: [returns-policy]
+    expected_facts: ["30 days"]
+    tags: [single_turn, baseline]
+
+  - id: RP-02
+    question: Can I return a gift card?
+    expect_confident: true
+    ground_truth: >
+      No. Gift cards, opened software, and FINAL SALE clearance items are not
+      eligible for return.
+    expected_sources: [returns-policy]
+    expected_facts: ["not eligible"]
+    tags: [single_turn, baseline]
+
+  # ---------------------------------------------------------- multi-turn (L1)
+  # EXPECTED TO FAIL until Phase 1. Chat history never reaches retrieval, so the
+  # follow-up embeds to something meaningless. These cases are the proof.
+  #
+  # MEASURED 2026-07-30 (run 8aa7f7b9): 2 of 4 fail outright.
+  #   MT-01 "What about weekends?"      -> retrieves nothing, declines. FAIL.
+  #   MT-04 "How do I start one?"       -> retrieves nothing, declines. FAIL.
+  #   MT-02 "And how long does that take?" -> passes by accident: "how long"
+  #         still overlaps the shipping chunk's vocabulary.
+  #   MT-03 "Is it cheaper than that?"  -> retrieves the right source but answers
+  #         wrong (says the Pro is the price, misses the Lite). recall 1.0,
+  #         fact_coverage 0.0 — a retrieval hit with a reasoning miss.
+  # Slice score: recall 0.500, precision 0.208, confidence 0.500.
+  # Phase 1 must take all three to 1.000 (precision >= 0.500).
+  - id: MT-01
+    question: What about weekends?
+    chat_history:
+      - role: user
+        content: When is support open?
+      - role: assistant
+        content: Support is available Monday through Friday, 9am to 5pm Pacific Time.
+    expect_confident: true
+    ground_truth: >
+      Support is closed on weekends, but email help@acme.test gets a reply within
+      one business day, and priority customers get 4-hour response including
+      weekends.
+    expected_sources: [support-hours]
+    expected_facts: ["weekend"]
+    tags: [multi_turn, p1_target]
+
+  - id: MT-02
+    question: And how long does that take?
+    chat_history:
+      - role: user
+        content: Do you ship to Canada?
+      - role: assistant
+        content: Yes, we ship to Canada at a flat rate of $34.95.
+    expect_confident: true
+    ground_truth: International shipping to Canada takes 10 to 14 business days.
+    expected_sources: [shipping-policy]
+    expected_facts: ["14"]
+    tags: [multi_turn, p1_target]
+
+  - id: MT-03
+    question: Is it cheaper than that?
+    chat_history:
+      - role: user
+        content: How much is the Widget Pro?
+      - role: assistant
+        content: The Acme Widget Pro is $249.99.
+    expect_confident: true
+    ground_truth: The Acme Widget Lite is the cheaper option at $89.99.
+    expected_sources: [product-catalog]
+    expected_facts: ["89.99"]
+    tags: [multi_turn, p1_target]
+
+  - id: MT-04
+    question: How do I start one?
+    chat_history:
+      - role: user
+        content: What is your return policy?
+      - role: assistant
+        content: You can return unused items within 30 days for a full refund.
+    expect_confident: true
+    ground_truth: >
+      Email returns@acme.test with your order number and we will send a prepaid
+      shipping label.
+    expected_sources: [returns-policy]
+    expected_facts: ["returns@acme.test"]
+    tags: [multi_turn, p1_target]
+
+  # ------------------------------------------------------ exact match (L2, P3)
+  # MEASURED 2026-07-30 (run 8aa7f7b9): these PASS at baseline — recall 1.000,
+  # precision 0.750, confidence 1.000 — contradicting the prediction that
+  # dense-only retrieval would fail on SKUs and error codes. The tag was renamed
+  # from `expected_fail_until_p3` to `p3_target` to stop the file asserting
+  # something the data disproves.
+  #
+  # Why they pass: with only 5 documents there is nothing to confuse the
+  # retriever. The subword pieces MiniLM produces for "QM-4471-B" are enough to
+  # pick the right chunk out of five candidates. The published failure mode
+  # assumes a realistic corpus where many chunks compete for the same tokens.
+  #
+  # These are therefore NOT yet a valid test of hybrid search. Before Phase 3
+  # (task 3.7) the corpus must grow — many products with near-identical codes,
+  # e.g. QM-4471-B vs QM-4471-C vs QM-4417-B — so the cases can discriminate.
+  # Keeping them meanwhile: they guard against regression. See PLAN.md L23.
+  - id: EM-01
+    question: What is QM-4471-B?
+    expect_confident: true
+    ground_truth: >
+      QM-4471-B is the model number for the Acme Widget Pro, priced at $249.99
+      with a 2 year warranty.
+    expected_sources: [product-catalog]
+    expected_facts: ["Widget Pro"]
+    tags: [exact_match, p3_target]
+
+  - id: EM-02
+    question: How do I fix ERR_TIMEOUT_502?
+    expect_confident: true
+    ground_truth: >
+      ERR_TIMEOUT_502 means the device could not reach the Acme cloud service.
+      Check the network connection and confirm port 8443 is not firewalled.
+    expected_sources: [troubleshooting]
+    expected_facts: ["8443"]
+    tags: [exact_match, p3_target]
+
+  - id: EM-03
+    question: I need the QM-ADAPT-1, how much is it?
+    expect_confident: true
+    ground_truth: The QM-ADAPT-1 adapter is sold separately for $14.99.
+    expected_sources: [product-catalog]
+    expected_facts: ["14.99"]
+    tags: [exact_match, p3_target]
+
+  - id: EM-04
+    question: What does ERR_AUTH_401 mean?
+    expect_confident: true
+    ground_truth: >
+      ERR_AUTH_401 means the device credentials expired. Open the Acme app, go to
+      Settings, and tap Re-authenticate.
+    expected_sources: [troubleshooting]
+    expected_facts: ["Re-authenticate"]
+    tags: [exact_match, p3_target]
+
+  # ----------------------------------------------------------------- multi-hop
+  - id: MH-01
+    question: If I buy the Widget Lite, do I get free shipping?
+    expect_confident: true
+    ground_truth: >
+      Yes. The Widget Lite is $89.99, which is over the $50 threshold for free
+      standard shipping in the continental US.
+    expected_sources: [product-catalog, shipping-policy]
+    expected_facts: ["free"]
+    tags: [multi_hop, single_turn]
+
+  - id: MH-02
+    question: My device is on firmware 3.0 — do I need to buy anything extra?
+    expect_confident: true
+    ground_truth: >
+      Yes. Firmware 3.1 and earlier require the QM-ADAPT-1 adapter, sold
+      separately for $14.99.
+    expected_sources: [product-catalog]
+    expected_facts: ["adapter"]
+    tags: [multi_hop, single_turn]
+
+  # --------------------------------------------------------------- out of scope
+  # Must return confident=false. If these start answering, the confidence gate
+  # has been loosened too far and we are inviting hallucination.
+  - id: OOS-01
+    question: What is the airspeed velocity of an unladen swallow?
+    expect_confident: false
+    ground_truth: null
+    expected_sources: []
+    tags: [out_of_scope]
+
+  - id: OOS-02
+    question: Who won the World Cup in 1998?
+    expect_confident: false
+    ground_truth: null
+    expected_sources: []
+    tags: [out_of_scope]
+
+  - id: OOS-03
+    question: Can you write me a Python script to scrape a website?
+    expect_confident: false
+    ground_truth: null
+    expected_sources: []
+    tags: [out_of_scope]
+
+  - id: OOS-04
+    question: Do you sell rocket engines?
+    expect_confident: false
+    ground_truth: null
+    expected_sources: []
+    tags: [out_of_scope]
+
+  # -------------------------------------------------------------- edge phrasing
+  - id: EP-01
+    question: hours?
+    expect_confident: true
+    ground_truth: Support is open Monday through Friday, 9am to 5pm Pacific Time.
+    expected_sources: [support-hours]
+    expected_facts: ["9"]
+    tags: [single_turn, terse]
+
+  - id: EP-02
+    question: i wanna send somethin back how do i do that
+    expect_confident: true
+    ground_truth: >
+      Email returns@acme.test with your order number within 30 days and we will
+      send a prepaid shipping label.
+    expected_sources: [returns-policy]
+    expected_facts: ["returns@acme.test"]
+    tags: [single_turn, typos]
+
+  - id: EP-03
+    question: whats the cheapest way to get my order
+    expect_confident: true
+    ground_truth: >
+      Standard shipping is the cheapest — free on orders over $50, otherwise
+      $6.95. It takes 5 to 7 business days.
+    expected_sources: [shipping-policy]
+    expected_facts: ["standard"]
+    tags: [single_turn, paraphrase]

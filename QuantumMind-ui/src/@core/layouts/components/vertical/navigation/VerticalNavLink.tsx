@@ -176,7 +176,7 @@ const VerticalNavLink = ({
                     '&.active': {
                       backgroundColor: mode === 'light' ? 'primary.main' : 'primary.main',
                       '& .MuiTypography-root, & svg': {
-                        color: mode === 'light' ? 'primary.main' : 'common.white'
+                        color: 'common.white'
                       },
                       '&.active.Mui-focusVisible': {
                         '&, &:hover': {
@@ -212,7 +212,7 @@ const VerticalNavLink = ({
               }}
             >
               <Typography
-                style={{
+                sx={{
                   fontWeight:'900',
                   color: mode === 'semi-dark' ? `rgba(${theme.palette.customColors.dark}, 0.6)` : 'text.secondary'
                 }}

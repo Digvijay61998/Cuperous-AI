@@ -2,3 +2,6 @@
 
 # Testing
 pytest==8.3.4
+
+# Evaluation harness (eval/) — reads the golden dataset
+pyyaml==6.0.2

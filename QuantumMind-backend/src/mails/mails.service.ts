@@ -27,7 +27,7 @@ export class MailsService {
 
       return await this.mailerService.sendMail({
         to: email,
-        subject: 'Greeting from Engage Bot',
+        subject: 'Greeting from JarCube',
         template: './mail-transcript.template.hbs',
         context: {
           name: name,

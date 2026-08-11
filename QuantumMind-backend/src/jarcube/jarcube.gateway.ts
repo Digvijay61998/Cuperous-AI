@@ -17,7 +17,7 @@ import { MessageResponseDto } from "src/message-handler/dto/message-response.dto
 import { generateId } from "src/util";
 import { FeedbackForEnum } from "src/feedback/enums/feedback-for.enum";
 import { FeedbackService } from "src/feedback/feedback.service";
-import { EngageService } from "./engage.service";
+import { JarCubeService } from "./jarcube.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 
 @UseInterceptors(RedisPropagatorInterceptor)
@@ -25,16 +25,16 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
   cors: {
     origin: "*",
   },
-  path: "/socket.io/engage",
+  path: "/socket.io/jarcube",
   // transports: ['websocket'],
 })
-export class EngageGateway implements OnGatewayConnection {
+export class JarCubeGateway implements OnGatewayConnection {
   constructor(
     private readonly messageHandlerService: MessageHandlerService,
     private readonly socketStateService: SocketStateService,
     private readonly conversationService: ConversationService,
     private readonly feedbackService: FeedbackService,
-    private readonly engageService: EngageService,
+    private readonly jarcubeService: JarCubeService,
     private readonly eventEmmitter: EventEmitter2
   ) {}
 
@@ -47,8 +47,13 @@ export class EngageGateway implements OnGatewayConnection {
   ): Promise<Observable<any>> {
     const { userId, role } = client.auth;
 
+    console.log(
+      `\n>>> [GATEWAY] events received | userId=${userId} role=${role} event=${data?.event} type=${data?.data?.type} message=${JSON.stringify(data?.data?.message).slice(0, 120)}`
+    );
+
     const userData = this.socketStateService.getUserData(userId);
     if (!userData) {
+      console.log(`>>> [GATEWAY] NO userData for ${userId} — returning session expired`);
       // Socket state was evicted (conversation ended, disconnect race, etc.)
       // — nothing to do; the client will reconnect and re-initialize.
       return of({ event: "error", data: { message: "Session expired" } });
@@ -143,7 +148,7 @@ export class EngageGateway implements OnGatewayConnection {
   @SubscribeMessage("end-conversation")
   async handleEndConversation(client: AuthenticatedSocket, data: any) {
     if (data.data.conversationId)
-      return await this.engageService.handleEndConversationByAgent(
+      return await this.jarcubeService.handleEndConversationByAgent(
         data.data.conversationId,
         data.data.visitorId
       );
@@ -152,7 +157,7 @@ export class EngageGateway implements OnGatewayConnection {
   @SubscribeMessage("report-conversation")
   async handleReportConversation(client: AuthenticatedSocket, data: any) {
     if (data.data.conversationId) {
-      return await this.engageService.ReportConversation(
+      return await this.jarcubeService.ReportConversation(
         data.data.conversationId,
         data.data.visitorId
       );
@@ -161,7 +166,7 @@ export class EngageGateway implements OnGatewayConnection {
 
   @SubscribeMessage("publish")
   async handlePublish(client: AuthenticatedSocket, data: any) {
-    return await this.engageService.PublishOfferOrAdvertisement(
+    return await this.jarcubeService.PublishOfferOrAdvertisement(
       data.data.visitorId,
       data.data
     );
@@ -169,7 +174,7 @@ export class EngageGateway implements OnGatewayConnection {
 
   @SubscribeMessage("send-transcript")
   async handleSendTranscript(client: AuthenticatedSocket, data: any) {
-    return await this.engageService.sendTranscriptToVisitor(data.data);
+    return await this.jarcubeService.sendTranscriptToVisitor(data.data);
   }
 
   async handleConnection(client: AuthenticatedSocket, ...args: any[]) {

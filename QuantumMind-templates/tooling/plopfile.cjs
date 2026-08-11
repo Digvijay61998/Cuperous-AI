@@ -4,7 +4,7 @@
  */
 module.exports = function (plop) {
   plop.setGenerator('template', {
-    description: 'Create a new QuantumMind template',
+    description: 'Create a new JarCube template',
     prompts: [
       {
         type: 'input',

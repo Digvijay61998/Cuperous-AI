@@ -131,12 +131,12 @@ const ChatContent = (props: any) => {
                 >
                   <MuiAvatar
                     src={avatar || '/logo.jpeg'}
-                    alt={'Engage Bot'}
+                    alt={'JarCube'}
                     sx={{ width: '2.375rem', height: '2.375rem' }}
                   />
                   <Box sx={{ display: 'flex', flexDirection: 'column', }}>
                     <Typography sx={{ fontWeight: 500, fontSize: '0.875rem',  color: headerTextColor || "undefined" }}>
-                     {botName || "Engage Bot"}
+                     {botName || "JarCube"}
                     </Typography>
                     <Typography
                       variant="caption"

@@ -13,6 +13,17 @@ const DefaultPalette = (mode: PaletteMode, skin: Skin) => {
   const darkPaperBgColor = '#2B2C40'
   const mainColor = mode === 'light' ? lightColor : darkColor
 
+  // ** JarCube brand colours, sampled from public/logo.png.
+  // The logo is a linear gradient running left-to-right across the mark:
+  //   far-left speed lines  #C700FF  (violet)
+  //   body of the cube      #8A00FF  (purple — the single most common pixel colour)
+  //   top-right facet       #48A5FE  (sky blue)
+  const brandViolet = '#C700FF'
+  const brandPurple = '#8A00FF'
+  const brandPurpleDark = '#6E00D6'
+  const brandBlue = '#48A5FE'
+  const brandGradient = `linear-gradient(90deg, ${brandViolet} 0%, ${brandPurple} 55%, ${brandBlue} 100%)`
+
   const defaultBgColor = () => {
     if (skin === 'bordered' && mode === 'light') {
       return whiteColor
@@ -36,7 +47,14 @@ const DefaultPalette = (mode: PaletteMode, skin: Skin) => {
       bodyBg: mode === 'light' ? '#F5F5F9' : '#232333', // Same as palette.background.default but doesn't consider bordered skin
       trackBg: mode === 'light' ? '#EBEEF0' : '#444463',
       tooltipBg: mode === 'light' ? '#233446' : '#6b6c9d',
-      tableHeaderBg: mode === 'light' ? '#F3F4F6' : '#353649'
+      tableHeaderBg: mode === 'light' ? '#F3F4F6' : '#353649',
+
+      // ** Brand gradient, sampled directly from the JarCube logo (public/logo.png).
+      // The mark is a left-to-right ramp: violet #C700FF -> purple #8A00FF -> sky blue #48A5FE.
+      logoGradientStart: brandViolet,
+      logoGradientMid: brandPurple,
+      logoGradientEnd: brandBlue,
+      logoGradient: brandGradient
     },
     botColor:{
       purple: '#00a7ff',
@@ -58,10 +76,14 @@ const DefaultPalette = (mode: PaletteMode, skin: Skin) => {
       dark: '#fff',
       contrastText: whiteColor
     },
+    // ** Secondary is the JarCube brand colour, taken from the logo gradient.
+    // Previously this was the blue '##2241FF' — note the double '#', which made it an
+    // invalid CSS colour, so every `secondary.main` consumer silently fell back to the
+    // MUI default purple. Now it resolves to the logo's dominant purple.
     secondary: {
-      light: '#97A2B1',
-      main: '##2241FF',
-      dark: '#fff',
+      light: brandViolet,
+      main: brandPurple,
+      dark: brandPurpleDark,
       contrastText: whiteColor
     },
     error: {

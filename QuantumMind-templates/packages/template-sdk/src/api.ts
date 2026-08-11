@@ -2,7 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 import { getContext } from './context';
 
 /**
- * Shared axios instance pointed at the QuantumMind backend. The base URL is
+ * Shared axios instance pointed at the JarCube backend. The base URL is
  * injected at build time via VITE_API_BASE_URL so the same build works across
  * environments.
  *

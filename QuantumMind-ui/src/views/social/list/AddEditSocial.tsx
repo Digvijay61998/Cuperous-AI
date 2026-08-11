@@ -78,7 +78,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
   const [name, setName] = useState<string>('');
   const [platformField, setPlatformField] = useState<string>('');
   const [botId, setBotId] = useState<string>('');
-  const [engageBot, setEngageBot] = useState<string>('');
+  const [jarcubeBot, setJarcubeBot] = useState<string>('');
   const [accessTokenField, setAccessTokenField] = useState<string>('');
   const [phoneNumberId, setPhoneNumberId] = useState<number>(0);
   const [type, setType] = useState<string>('');
@@ -93,7 +93,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
       setName(data?.name);
       setPlatformField(data?.platform);
       setBotId(data?.botId);
-      setEngageBot(data?.engageBot?._id || data?.engageBot?.id);
+      setJarcubeBot(data?.jarcubeBot?._id || data?.jarcubeBot?.id);
       setAccessTokenField(data?.accessToken);
       setOldAccessToken(data?.accessToken);
       setType(data?.type || '');
@@ -118,7 +118,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
           name: name,
           platform: platformField,
           botId: botId,
-          engageBot: engageBot,
+          jarcubeBot: jarcubeBot,
           accessToken: accessTokenField,
           ...extraDataByPlatform,
         }),
@@ -132,7 +132,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
               name: name,
               platform: platformField,
               botId: botId,
-              engageBot: engageBot,
+              jarcubeBot: jarcubeBot,
               accessToken: accessTokenField,
               ...extraDataByPlatform,
             },
@@ -146,7 +146,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
               name: name,
               platform: platformField,
               botId: botId,
-              engageBot: engageBot,
+              jarcubeBot: jarcubeBot,
               ...extraDataByPlatform,
             },
           }),
@@ -155,7 +155,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
     }
     setName('');
     setBotId('');
-    setEngageBot('');
+    setJarcubeBot('');
     setPlatformField('');
     setAccessTokenField('');
     toggle();
@@ -164,7 +164,7 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
   const handleClose = () => {
     setName('');
     setBotId('');
-    setEngageBot('');
+    setJarcubeBot('');
     setPlatformField('');
     setAccessTokenField('');
     toggle();
@@ -212,23 +212,23 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
           </FormControl>
           <FormControl required fullWidth sx={{ mb: 6 }} size="small">
             <InputLabel id="select-single-chip-label">
-              Select Engage Bot
+              Select JarCube Bot
             </InputLabel>
 
             <Select
               required
               labelId="select-single-chip-label"
               id="select-single-bots"
-              value={engageBot}
+              value={jarcubeBot}
               size="small"
-              onChange={(e: any) => setEngageBot(e.target.value)}
+              onChange={(e: any) => setJarcubeBot(e.target.value)}
               input={
                 <OutlinedInput
                   id="select-single-chip"
-                  label="Select Engage Bot"
+                  label="Select JarCube Bot"
                 />
               }
-              inputProps={{ placeholder: 'Select Engage Bot' }}
+              inputProps={{ placeholder: 'Select JarCube Bot' }}
               // renderValue={(selected) => (
               //   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
               //     {selected.map((value:any) => {

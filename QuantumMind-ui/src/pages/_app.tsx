@@ -144,12 +144,14 @@ const App = (props: ExtendedAppProps) => {
     <Provider store={store}>
       <CacheProvider value={emotionCache}>
         <Head>
-          <title>{`${themeConfig.templateName} `}</title>
+          {/* Favicon/manifest tags live in src/pages/_document.tsx so they are
+              emitted once for every page. */}
+          <title>{`${themeConfig.templateName}`}</title>
           <meta
             name="description"
             content={`${themeConfig.templateName} – A customer management, customer onboarding, financial chatbot`}
           />
-          <meta name="keywords" content="Chatbot, Engage, AI Chatbot," />
+          <meta name="keywords" content="Chatbot, JarCube, AI Chatbot," />
           <meta name="viewport" content="initial-scale=1, width=device-width" />
         </Head>
 

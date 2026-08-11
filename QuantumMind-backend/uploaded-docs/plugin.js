@@ -26302,7 +26302,7 @@ const EB = (e) => {
       timeout: 5e3,
       maximumAge: 0
     }) : ie();
-  }, b = (re = document == null ? void 0 : document.getElementById("bizbot-widget")) == null ? void 0 : re.clientHeight, C = kh(), [E, R] = x.exports.useState({
+  }, b = (re = document == null ? void 0 : document.getElementById("jarcube-widget")) == null ? void 0 : re.clientHeight, C = kh(), [E, R] = x.exports.useState({
     name: "",
     email: "",
     phone: 0
@@ -26847,7 +26847,7 @@ const EB = (e) => {
       },
       children: ["Powered by ", /* @__PURE__ */ S("a", {
         href: "#",
-        children: "bizbot.works"
+        children: "JarCube"
       })]
     }), /* @__PURE__ */ S(kB, {
       open: le,
@@ -28242,7 +28242,7 @@ Object.assign(zl, {
 function gy(e, t, n) {
   if (document.hasFocus())
     return;
-  const r = new Notification("New message from BizBot Chatbot", {
+  const r = new Notification("New message from JarCube", {
     icon: n === "image" ? e : n === "audio" ? "/images/icons/audio.png" : n === "video" ? "/images/icons/video.png" : n === "location" ? "/images/icons/location.png" : n === "ads" || n === "offer" ? "/images/icons/ads.png" : n === "gallery" ? "/images/icons/gallery.png" : n === "feedback" ? "/images/icons/feedback.png" : "/images/icons/msg.png",
     body: `${t}: ${e}`
   });
@@ -28295,7 +28295,7 @@ function m6(e) {
       const H = window.baseUrl;
       c(f);
       const W = zl(H, {
-        path: "/socket.io/engage",
+        path: "/socket.io/jarcube",
         auth: {
           token: f
         }
@@ -28414,7 +28414,7 @@ function m6(e) {
     isLocation: p
   };
   return /* @__PURE__ */ S("div", {
-    id: "bizbot-widget",
+    id: "jarcube-widget",
     children: y && (Object == null ? void 0 : Object.keys(y).length) > 0 && (Object == null ? void 0 : Object.keys(h)) && /* @__PURE__ */ S(RB, {
       ...e,
       ...le
@@ -28440,18 +28440,18 @@ const y6 = () => {
     let n = document.createElement("div");
     n.id = "root", document.body.appendChild(n);
   }
-  if (document == null ? void 0 : document.getElementById("bizbot-widget-root"))
-    return Fs.createRoot(document.getElementById("bizbot-widget-root")).render(/* @__PURE__ */ S(Et, {
+  if (document == null ? void 0 : document.getElementById("jarcube-widget-root"))
+    return Fs.createRoot(document.getElementById("jarcube-widget-root")).render(/* @__PURE__ */ S(Et, {
       children: /* @__PURE__ */ S(kp, {})
     }));
   {
     let n = document.createElement("div");
-    return n.id = "bizbot-widget-root", document.body.appendChild(n), Fs.createRoot(document.getElementById("bizbot-widget-root")).render(/* @__PURE__ */ S(Et, {
+    return n.id = "jarcube-widget-root", document.body.appendChild(n), Fs.createRoot(document.getElementById("jarcube-widget-root")).render(/* @__PURE__ */ S(Et, {
       children: /* @__PURE__ */ S(kp, {})
     }));
   }
 };
-window.botId = "6486ea455a160902ee8b1a3f";
+window.botId = "6a57ca1368c861f4cbccd254";
 window.baseUrl = "http://localhost:4000";
 window.isOpenChat = !0;
 Fs.createRoot(document.getElementById("root")).render(/* @__PURE__ */ S(Et, {

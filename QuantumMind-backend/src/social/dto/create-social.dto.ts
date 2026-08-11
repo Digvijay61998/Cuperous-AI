@@ -21,5 +21,5 @@ export class CreateSocialDto {
 
   @IsString()
   @IsOptional()
-  engageBot: string;
+  jarcubeBot: string;
 }

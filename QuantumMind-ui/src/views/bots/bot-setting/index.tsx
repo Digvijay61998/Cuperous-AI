@@ -357,17 +357,17 @@ const BotSetting = () => {
     opacity: 0.5,
   };
   const getDynamicScript = (lang : string) => {
-    return lang === "JAVASCRIPT" ? `<!-- Start of  Engage Bot code -->
+    return lang === "JAVASCRIPT" ? `<!-- Start of JarCube code -->
     <script type='module'>
     window.botId =  '${botId}';
     window.baseUrl = '${env.baseurl}';
     window.isOpenChat = false;
-    import engage from '${env.baseurl}/api/file/plugin.js';
-    engage();
+    import jarcube from '${env.baseurl}/api/file/plugin.js';
+    jarcube();
   </script>
-    <!-- End of Engage Bot code -->
+    <!-- End of JarCube code -->
 ` : lang === "REACTJS" ? `<!-- Add The Following Code in whatever component you want the chatbot To be -->
-<!-- Start of  Engage Bot code -->
+<!-- Start of JarCube code -->
 React.useEffect(() => {
   window.botId = '${botId}';
   window.baseUrl = '${env.baseurl}';
@@ -380,9 +380,9 @@ React.useEffect(() => {
       // Handle any errors
     });
 }, []);
-<!-- End of Engage Bot code -->` 
+<!-- End of JarCube code -->` 
   : lang === "VUEJS" ? `<!-- Add The Following Code in whatever component you want the chatbot To be -->
-  <!-- Start of  Engage Bot code -->
+  <!-- Start of JarCube code -->
   <script>
   export default {
     mounted() {
@@ -396,23 +396,23 @@ React.useEffect(() => {
       window.baseUrl = '${env.baseurl}';
       window.isOpenChat = false;
   
-      // Optional: Call the engage function manually if needed
-      window.engage();
+      // Optional: Call the jarcube function manually if needed
+      window.jarcube();
     }
   }
   </script>
-  <!-- End of Engage Bot code -->`
+  <!-- End of JarCube code -->`
   : lang === "ANGULAR" ? `
   <!-- In the component's HTML template file, add the following code snippet within the <script> tag. Angular will automatically execute the code when the template is rendered -->
-  <!-- Start of  Engage Bot code -->
+  <!-- Start of JarCube code -->
   <script type="module">
   window.botId = '${botId}';
   window.baseUrl = '${env.baseurl}';
   window.isOpenChat = false;
-  import engage from '${env.baseurl}/api/file/plugin.js';
-  engage();
+  import jarcube from '${env.baseurl}/api/file/plugin.js';
+  jarcube();
 </script>
-<!-- End of Engage Bot code -->`
+<!-- End of JarCube code -->`
   : "Working On It"
 
   };

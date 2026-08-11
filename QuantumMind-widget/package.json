@@ -9,7 +9,7 @@
   "files": [
     "dist"
   ],
-  "author": "bizbot",
+  "author": "JarCube",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

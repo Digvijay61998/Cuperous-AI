@@ -1,15 +1,15 @@
 export const UserInputValidationEnum = {
-  EMAIL: "engage.email",
-  PHONE: "engage.phone_number",
-  NUMBER: "engage.number",
-  DATE: "engage.date",
-  ALPHANUMERIC: "engage.alphanumeric",
-  ANY: "engage.any",
-  COUNTRY: "engage.country",
-  TEXT: "engage.text",
-  YES_NO: "engage.yes_no",
-  YES: "engage.yes",
-  NO: "engage.no",
+  EMAIL: "jarcube.email",
+  PHONE: "jarcube.phone_number",
+  NUMBER: "jarcube.number",
+  DATE: "jarcube.date",
+  ALPHANUMERIC: "jarcube.alphanumeric",
+  ANY: "jarcube.any",
+  COUNTRY: "jarcube.country",
+  TEXT: "jarcube.text",
+  YES_NO: "jarcube.yes_no",
+  YES: "jarcube.yes",
+  NO: "jarcube.no",
 } as const;
 
 export type UserInputValidationEnum =

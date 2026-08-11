@@ -53,12 +53,12 @@ async function bootstrap() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   const options = new DocumentBuilder()
-    .setTitle("Engage Bot")
-    .setDescription("Engage Bot APIs")
+    .setTitle("JarCube")
+    .setDescription("JarCube APIs")
     .setVersion("1.0.0")
     .addBearerAuth()
     .setContact("Help", "", "help@engage.com")
-    .setTitle("Engage Bot API")
+    .setTitle("JarCube API")
     .build();
 
   const document = SwaggerModule.createDocument(app, options);

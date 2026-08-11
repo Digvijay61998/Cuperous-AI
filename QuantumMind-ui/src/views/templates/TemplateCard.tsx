@@ -97,7 +97,7 @@ const TemplateCard = (props: Props) => {
             <Chip
               size="small"
               label={humanize(item.industry)}
-              sx={{ fontSize: 11, backgroundColor: '#2241FF', color: 'white' }}
+              sx={{ fontSize: 11, backgroundColor: 'secondary.main', color: 'white' }}
             />
           )}
           {item?.category && (

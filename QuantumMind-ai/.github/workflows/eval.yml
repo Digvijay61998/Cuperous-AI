@@ -1,0 +1,154 @@
+# RAG quality gate (PLAN.md Phase 0.4)
+#
+# Runs the deterministic evaluation harness on every push/PR and fails the build
+# if any metric regresses beyond tolerance against the committed baseline.
+#
+# Deterministic mode is used deliberately: no API key in CI, no per-build cost,
+# and reproducible numbers. It still requires a real LLM for answer generation,
+# so the job is skipped unless an OPENAI_API_KEY secret is configured.
+
+name: RAG Evaluation
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "app/**"
+      - "eval/**"
+      - "requirements*.txt"
+      - ".github/workflows/eval.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "eval/**"
+      - "requirements*.txt"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Scoring mode"
+        type: choice
+        options: [deterministic, judge]
+        default: deterministic
+      tolerance:
+        description: "Regression tolerance"
+        default: "0.02"
+
+jobs:
+  unit-tests:
+    name: Unit tests (no Milvus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests that need neither Milvus nor an API key
+        run: pytest tests/test_query.py tests/test_llm_factory.py tests/test_health.py -v
+
+  evaluate:
+    name: RAG quality gate
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    # Generation needs a real LLM. Skip rather than fail on forks/PRs without
+    # access to the secret.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    services:
+      etcd:
+        image: quay.io/coreos/etcd:v3.5.14
+        env:
+          ETCD_AUTO_COMPACTION_MODE: revision
+          ETCD_AUTO_COMPACTION_RETENTION: "1000"
+          ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+          ETCD_SNAPSHOT_COUNT: "50000"
+          ETCD_ADVERTISE_CLIENT_URLS: http://127.0.0.1:2379
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_DATA_DIR: /etcd
+        ports: ["2379:2379"]
+
+      minio:
+        image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+        env:
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+        ports: ["9000:9000"]
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Check for API key
+        id: key
+        run: |
+          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OPENAI_API_KEY not configured — skipping the quality gate."
+          fi
+
+      # The GitHub Actions `services:` block cannot express Milvus's dependency
+      # on etcd and MinIO, so Milvus runs as a plain container instead.
+      - name: Start Milvus
+        if: steps.key.outputs.present == 'true'
+        run: |
+          docker run -d --name milvus \
+            --network host \
+            -e ETCD_ENDPOINTS=localhost:2379 \
+            -e MINIO_ADDRESS=localhost:9000 \
+            milvusdb/milvus:v2.4.15 \
+            milvus run standalone
+
+          echo "Waiting for Milvus..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:9091/healthz >/dev/null 2>&1; then
+              echo "Milvus ready after ${i}0s"; exit 0
+            fi
+            sleep 10
+          done
+          echo "Milvus did not become ready"; docker logs milvus --tail 50; exit 1
+
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run evaluation and gate on regressions
+        if: steps.key.outputs.present == 'true'
+        env:
+          MILVUS_HOST: localhost
+          MILVUS_PORT: "19530"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_PROVIDER: openai
+          LLM_MODEL: gpt-4o-mini
+          AI_DEBUG_LOGS: "false"
+          AI_TRACING: "false"
+        run: |
+          python -m eval.runner \
+            --mode "${{ github.event.inputs.mode || 'deterministic' }}" \
+            --compare \
+            --tolerance "${{ github.event.inputs.tolerance || '0.02' }}"
+
+      - name: Upload evaluation results
+        if: always() && steps.key.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: eval/results/
+          retention-days: 30

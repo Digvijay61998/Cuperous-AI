@@ -22,7 +22,7 @@ import { MailsController } from './mails.controller';
           },
         },
         defaults: {
-          from: `"Engage" <${config.get('mail.from')}>`,
+          from: `"JarCube" <${config.get('mail.from')}>`,
         },
         template: {
           dir: join(__dirname + '/templates'),

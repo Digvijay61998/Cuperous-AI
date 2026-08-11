@@ -4,4 +4,4 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 @Module({
   imports: [EventEmitterModule.forRoot()],
 })
-export class EngageModule {}
+export class JarCubeModule {}

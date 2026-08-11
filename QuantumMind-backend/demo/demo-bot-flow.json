@@ -1,0 +1,788 @@
+{
+  "_README": [
+    "JarCube DEMO bot flow — exercises every NodeTypeEnum value.",
+    "Load with: PATCH /bots/:botId/flow   body = { nodes, edges, customAttributes }",
+    "BotFlowNode.id has a UNIQUE index across ALL bots, so load this file into ONE bot only.",
+    "Replace every REPLACE_ME_* placeholder with a real id from your environment before loading,",
+    "otherwise WEBHOOK / ADD_TO_SEGMENT / REMOVE_FROM_SEGMENT / OPEN_TEMPLATE take their failure route.",
+    "Runtime traversal uses BotFlowNode.next[], which BotsService.createNodes() derives from edges[].",
+    "startNode is derived by the service from the node whose nodeType is START_NODE."
+  ],
+  "customAttributes": [
+    "lead_name",
+    "lead_email",
+    "lead_phone",
+    "lead_city",
+    "issue_description",
+    "issue_attachment",
+    "ticket_summary",
+    "ticket_evidence"
+  ],
+  "nodes": [
+    {
+      "id": "demo_start",
+      "nodeType": "START_NODE",
+      "type": "start_node",
+      "title": "Start Point",
+      "data": { "label": "Start Point", "icon": "ant-design:home-filled", "title": "Start Point" },
+      "position": { "x": 40, "y": 520 },
+      "width": 157,
+      "height": 32,
+      "utterance": [],
+      "keywords": [],
+      "responses": [],
+      "payload": {}
+    },
+
+    {
+      "id": "demo_menu",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Main Menu",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Main Menu" },
+      "position": { "x": 320, "y": 380 },
+      "utterance": [],
+      "keywords": [],
+      "payload": {},
+      "responses": [
+        {
+          "type": "text",
+          "value": "Hi! I'm Nova, the JarCube demo assistant."
+        },
+        {
+          "type": "random_text",
+          "values": [
+            "What would you like to do today?",
+            "How can I help you right now?",
+            "Pick whatever you need help with."
+          ]
+        },
+        {
+          "type": "buttons",
+          "value": "1. Sales / new plan\n2. Report an issue\n3. Billing & payments\n4. FAQ\n5. Ask our AI anything\n6. Exit",
+          "buttons": [
+            { "title": "Sales", "value": "sales" },
+            { "title": "Support", "value": "support" },
+            { "title": "Billing", "value": "billing" },
+            { "title": "FAQ", "value": "faq" },
+            { "title": "Ask AI", "value": "ask ai" },
+            { "title": "Exit", "value": "exit" }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "demo_fallback",
+      "nodeType": "FALL_BACK",
+      "type": "custom_node",
+      "title": "Default Fall Back",
+      "data": { "label": "Fall Back", "icon": "pajamas:false-positive", "title": "Default Fall Back" },
+      "position": { "x": 320, "y": 1220 },
+      "utterance": [],
+      "keywords": [],
+      "responses": [],
+      "payload": {}
+    },
+
+    {
+      "id": "demo_in_sales",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose Sales",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose Sales" },
+      "position": { "x": 600, "y": 40 },
+      "keywords": ["sales", "1", "new connection", "new plan", "quote", "pricing"],
+      "utterance": [],
+      "responses": [],
+      "payload": {}
+    },
+    {
+      "id": "demo_in_support",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose Support",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose Support" },
+      "position": { "x": 600, "y": 300 },
+      "keywords": ["support", "2", "issue", "not working", "complaint", "broken", "slow"],
+      "utterance": [],
+      "responses": [],
+      "payload": {}
+    },
+    {
+      "id": "demo_in_billing",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose Billing",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose Billing" },
+      "position": { "x": 600, "y": 580 },
+      "keywords": ["billing", "3", "payment", "pay", "invoice", "bill", "kyc"],
+      "utterance": [],
+      "responses": [],
+      "payload": {}
+    },
+    {
+      "id": "demo_in_faq",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose FAQ",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose FAQ" },
+      "position": { "x": 600, "y": 800 },
+      "keywords": ["faq", "4", "common questions"],
+      "utterance": [],
+      "responses": [],
+      "payload": {}
+    },
+    {
+      "id": "demo_in_ai",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose Ask AI",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose Ask AI" },
+      "position": { "x": 600, "y": 960 },
+      "keywords": ["ask ai", "5", "ai"],
+      "utterance": [],
+      "responses": [],
+      "payload": {}
+    },
+    {
+      "id": "demo_in_bye",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Chose Exit",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Chose Exit" },
+      "position": { "x": 600, "y": 1100 },
+      "keywords": ["exit", "6", "bye", "quit", "goodbye"],
+      "utterance": ["that is all thanks", "nothing else for now"],
+      "responses": [],
+      "payload": {}
+    },
+
+    {
+      "id": "demo_q_lead",
+      "nodeType": "QUESTIONS",
+      "type": "custom_node",
+      "title": "Lead Capture Questionnaire",
+      "data": { "label": "Questionnaire", "icon": "akar-icons:question-fill", "title": "Lead Capture Questionnaire" },
+      "position": { "x": 880, "y": 20 },
+      "utterance": [],
+      "keywords": [],
+      "responses": [],
+      "payload": {
+        "elements": [
+          {
+            "prompt": "Great — let's get you a quote. What's your full name?",
+            "entity": "jarcube.text",
+            "alias": "lead_name",
+            "lifespan": 2,
+            "actionOnFailure": "continue",
+            "secure": false
+          },
+          {
+            "prompt": "Thanks! What's the best email to send the quote to?",
+            "entity": "jarcube.email",
+            "alias": "lead_email",
+            "lifespan": 2,
+            "actionOnFailure": "fallback",
+            "secure": false
+          },
+          {
+            "prompt": "Almost done — your 10-digit mobile number?",
+            "entity": "jarcube.phone_number",
+            "alias": "lead_phone",
+            "lifespan": 2,
+            "actionOnFailure": "fallback",
+            "secure": true
+          },
+          {
+            "prompt": "Which city should we serve you from?",
+            "entity": "jarcube.any",
+            "alias": "lead_city",
+            "lifespan": 1,
+            "actionOnFailure": "continue",
+            "secure": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "demo_q_ok",
+      "nodeType": "SUCCESS",
+      "type": "custom_node",
+      "title": "All Answers Valid",
+      "data": { "label": "Success", "icon": "akar-icons:circle-check-fill", "title": "All Answers Valid" },
+      "position": { "x": 1140, "y": -60 },
+      "utterance": [], "keywords": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_q_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "Answer Attempts Exhausted",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "Answer Attempts Exhausted" },
+      "position": { "x": 1140, "y": 120 },
+      "utterance": [], "keywords": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_seg_add",
+      "nodeType": "ADD_TO_SEGMENT",
+      "type": "custom_node",
+      "title": "Tag as Sales Lead",
+      "data": { "label": "Add To Segment", "icon": "bx:pie-chart-alt", "title": "Tag as Sales Lead" },
+      "position": { "x": 1400, "y": -60 },
+      "utterance": [], "keywords": [], "responses": [],
+      "payload": { "segmentId": "REPLACE_ME_SEGMENT_ID_SALES_LEADS" }
+    },
+    {
+      "id": "demo_hook_crm",
+      "nodeType": "WEBHOOK",
+      "type": "custom_node",
+      "title": "Push Lead to CRM",
+      "data": { "label": "Webhook", "icon": "tabler:fish-hook", "title": "Push Lead to CRM" },
+      "position": { "x": 1660, "y": -60 },
+      "utterance": [], "keywords": [], "responses": [],
+      "payload": {
+        "webhookId": "REPLACE_ME_WEBHOOK_ID_CRM",
+        "eventField": "demo.lead.created",
+        "secure": false
+      }
+    },
+    {
+      "id": "demo_hook_ok",
+      "nodeType": "SUCCESS",
+      "type": "custom_node",
+      "title": "CRM Accepted",
+      "data": { "label": "Success", "icon": "akar-icons:circle-check-fill", "title": "CRM Accepted" },
+      "position": { "x": 1920, "y": -140 },
+      "utterance": [], "keywords": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_hook_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "CRM Unreachable",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "CRM Unreachable" },
+      "position": { "x": 1920, "y": -20 },
+      "utterance": [], "keywords": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_lead_done",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Lead Confirmation",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Lead Confirmation" },
+      "position": { "x": 2180, "y": -140 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "You're all set. A plan specialist will call you within 30 minutes." },
+        { "type": "image", "value": "https://cdn.example.com/jarcube/demo/plan-comparison.png" },
+        { "type": "text", "value": "Here's the plan sheet in the meantime." }
+      ]
+    },
+    {
+      "id": "demo_close_sales",
+      "nodeType": "CLOSE_CHAT",
+      "type": "end_node",
+      "title": "Close After Lead",
+      "data": { "label": "Close Chat", "icon": "akar-icons:chat-error", "title": "Close After Lead" },
+      "position": { "x": 2440, "y": -140 },
+      "utterance": [], "keywords": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_hook_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "CRM Failure Notice",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "CRM Failure Notice" },
+      "position": { "x": 2180, "y": -20 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "I couldn't file that request just now, but I've kept your details. Let's try something else." }
+      ]
+    },
+    {
+      "id": "demo_r_q_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Questionnaire Failure Notice",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Questionnaire Failure Notice" },
+      "position": { "x": 1400, "y": 120 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "No problem, we can do this later. Taking you back to the menu." }
+      ]
+    },
+    {
+      "id": "demo_goto_menu_1",
+      "nodeType": "GO_TO_STEP",
+      "type": "custom_node",
+      "title": "Back to Menu (Sales)",
+      "data": { "label": "Go To Step", "icon": "icon-park-solid:transfer", "title": "Back to Menu (Sales)" },
+      "position": { "x": 2440, "y": 60 },
+      "utterance": [], "keywords": [], "responses": [],
+      "payload": { "blockId": "demo_menu" }
+    },
+
+    {
+      "id": "demo_r_support_ask",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Ask For Issue",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Ask For Issue" },
+      "position": { "x": 880, "y": 300 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Sorry about that. Describe the issue in a line or two and I'll log it." }
+      ]
+    },
+    {
+      "id": "demo_in_issue",
+      "nodeType": "USER_INPUT",
+      "type": "custom_node",
+      "title": "Capture Issue Text",
+      "data": { "label": "User Input", "icon": "bxs:user", "title": "Capture Issue Text" },
+      "position": { "x": 1140, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": { "alias": "issue_description", "entity": "jarcube.any", "secure": false }
+    },
+    {
+      "id": "demo_r_ask_file",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Ask For Attachment",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Ask For Attachment" },
+      "position": { "x": 1400, "y": 300 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Got it. Attach a photo or screenshot if you have one — or type 'skip'." }
+      ]
+    },
+    {
+      "id": "demo_file",
+      "nodeType": "FILE_ATTACHMENT",
+      "type": "custom_node",
+      "title": "Evidence Upload",
+      "data": { "label": "Attachment Input", "icon": "eva:attach-fill", "title": "Evidence Upload" },
+      "position": { "x": 1660, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": { "alias": "issue_attachment" }
+    },
+    {
+      "id": "demo_setattr",
+      "nodeType": "SET_ATTRIBUTES",
+      "type": "custom_node",
+      "title": "Map Attributes for Ticket",
+      "data": { "label": "Set Attributes", "icon": "bi:braces-asterisk", "title": "Map Attributes for Ticket" },
+      "position": { "x": 1920, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": {
+        "attributes": [
+          { "set": "issue_description", "to": "ticket_summary" },
+          { "set": "issue_attachment", "to": "ticket_evidence" }
+        ]
+      }
+    },
+    {
+      "id": "demo_ticket",
+      "nodeType": "TICKET",
+      "type": "custom_node",
+      "title": "Raise Service Request",
+      "data": { "label": "Create Service Request", "icon": "bx:git-pull-request", "title": "Raise Service Request" },
+      "position": { "x": 2180, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": { "ticketSubject": "Connectivity issue reported via demo bot" }
+    },
+    {
+      "id": "demo_r_ticket_done",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Handing Over Notice",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Handing Over Notice" },
+      "position": { "x": 2440, "y": 300 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "I've logged that. Connecting you to a human engineer now." }
+      ]
+    },
+    {
+      "id": "demo_agent",
+      "nodeType": "TRANSFER_TO_AGENT",
+      "type": "custom_node",
+      "title": "Transfer To Engineer",
+      "data": { "label": "Transfer To Agent", "icon": "bx:transfer", "title": "Transfer To Engineer" },
+      "position": { "x": 2700, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_agent_ok",
+      "nodeType": "SUCCESS",
+      "type": "custom_node",
+      "title": "Agent Assigned",
+      "data": { "label": "Success", "icon": "akar-icons:circle-check-fill", "title": "Agent Assigned" },
+      "position": { "x": 2960, "y": 220 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_agent_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "No Agent Available",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "No Agent Available" },
+      "position": { "x": 2960, "y": 380 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_agent_back",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Bot Resumes After Agent",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Bot Resumes After Agent" },
+      "position": { "x": 3220, "y": 220 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Thanks for chatting with our engineer. Anything else I can note before we wrap up?" }
+      ]
+    },
+    {
+      "id": "demo_r_agent_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Agents Busy Notice",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Agents Busy Notice" },
+      "position": { "x": 3220, "y": 380 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "All engineers are busy, but your service request is already in the queue. We'll call you back." }
+      ]
+    },
+    {
+      "id": "demo_close_agent",
+      "nodeType": "CLOSE_CHAT",
+      "type": "end_node",
+      "title": "Close After Support",
+      "data": { "label": "Close Chat", "icon": "akar-icons:chat-error", "title": "Close After Support" },
+      "position": { "x": 3480, "y": 300 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+
+    {
+      "id": "demo_tpl_kyc",
+      "nodeType": "OPEN_TEMPLATE",
+      "type": "custom_node",
+      "title": "Open Billing Form",
+      "data": { "label": "Open Template", "icon": "material-symbols-light:web-sharp", "title": "Open Billing Form" },
+      "position": { "x": 880, "y": 580 },
+      "keywords": [], "utterance": [],
+      "responses": [
+        { "type": "text", "value": "Payments happen on a secure page, not in chat. Tap below — it's pre-filled with your details." }
+      ],
+      "payload": {
+        "templateId": "REPLACE_ME_TEMPLATE_ID_BILLING",
+        "buttonText": "Open billing form",
+        "buttonIcon": "material-symbols:lock",
+        "variableMappings": [
+          { "templateKey": "customer_name", "source": "attribute", "value": "lead_name" },
+          { "templateKey": "customer_email", "source": "attribute", "value": "lead_email" },
+          { "templateKey": "product", "source": "static", "value": "jarcube-demo-plan" }
+        ],
+        "callbackEvent": "demo.billing.submitted",
+        "timeoutMinutes": 10,
+        "sessionExpiryMinutes": 30,
+        "analyticsEnabled": true
+      }
+    },
+    {
+      "id": "demo_tpl_ok",
+      "nodeType": "SUCCESS",
+      "type": "custom_node",
+      "title": "Form Submitted",
+      "data": { "label": "Success", "icon": "akar-icons:circle-check-fill", "title": "Form Submitted" },
+      "position": { "x": 1140, "y": 500 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_tpl_timeout",
+      "nodeType": "TIMEOUT",
+      "type": "custom_node",
+      "title": "Opened But Abandoned",
+      "data": { "label": "Timeout", "icon": "mdi:timer-sand", "title": "Opened But Abandoned" },
+      "position": { "x": 1140, "y": 580 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_tpl_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "Never Opened / Expired",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "Never Opened / Expired" },
+      "position": { "x": 1140, "y": 660 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_tpl_ok",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Payment Receipt",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Payment Receipt" },
+      "position": { "x": 1400, "y": 500 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Payment received. The receipt is on its way to your email." },
+        { "type": "file", "value": "https://cdn.example.com/jarcube/demo/receipt-sample.pdf" }
+      ]
+    },
+    {
+      "id": "demo_seg_remove",
+      "nodeType": "REMOVE_FROM_SEGMENT",
+      "type": "custom_node",
+      "title": "Untag Pending Dues",
+      "data": { "label": "Delete from Segment", "icon": "ep:remove-filled", "title": "Untag Pending Dues" },
+      "position": { "x": 1660, "y": 500 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": { "segmentId": "REPLACE_ME_SEGMENT_ID_PENDING_DUES" }
+    },
+    {
+      "id": "demo_close_billing",
+      "nodeType": "CLOSE_CHAT",
+      "type": "end_node",
+      "title": "Close After Payment",
+      "data": { "label": "Close Chat", "icon": "akar-icons:chat-error", "title": "Close After Payment" },
+      "position": { "x": 1920, "y": 500 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_tpl_timeout",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Abandoned Form Nudge",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Abandoned Form Nudge" },
+      "position": { "x": 1400, "y": 600 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Looks like the form is still half-filled. The link stays live for 30 minutes if you want to finish." }
+      ]
+    },
+    {
+      "id": "demo_r_tpl_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Expired Form Notice",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Expired Form Notice" },
+      "position": { "x": 1400, "y": 700 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "That payment link expired. I can generate a fresh one whenever you're ready." }
+      ]
+    },
+    {
+      "id": "demo_goto_menu_2",
+      "nodeType": "GO_TO_STEP",
+      "type": "custom_node",
+      "title": "Back to Menu (Shared)",
+      "data": { "label": "Go To Step", "icon": "icon-park-solid:transfer", "title": "Back to Menu (Shared)" },
+      "position": { "x": 1920, "y": 660 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": { "blockId": "demo_menu" }
+    },
+
+    {
+      "id": "demo_faq",
+      "nodeType": "FAQ",
+      "type": "custom_node",
+      "title": "Question Bank Lookup",
+      "data": { "label": "FaQ", "icon": "ph:chats-fill", "title": "Question Bank Lookup" },
+      "position": { "x": 880, "y": 800 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_faq",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "FAQ Highlights",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "FAQ Highlights" },
+      "position": { "x": 1140, "y": 800 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Top questions:\n• Installation takes 48 hours\n• Billing cycle starts on activation day\n• You can pause service for up to 60 days" },
+        {
+          "type": "maps",
+          "value": "Nearest experience centre — Baner, Pune",
+          "location": { "latitude": 18.5596, "longitude": 73.7797 }
+        }
+      ]
+    },
+
+    {
+      "id": "demo_ai_menu",
+      "nodeType": "AI_NODE",
+      "type": "custom_node",
+      "title": "Ask AI (menu route)",
+      "data": { "label": "AI Node", "icon": "streamline:computer-robot-cyborg-artificial-robotics-robot-intelligence-machine-technology-android", "title": "Ask AI (menu route)" },
+      "position": { "x": 880, "y": 960 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": {
+        "clientId": "REPLACE_ME_AI_CLIENT_ID",
+        "companyName": "JarCube Demo"
+      }
+    },
+    {
+      "id": "demo_ai_ok",
+      "nodeType": "SUCCESS",
+      "type": "custom_node",
+      "title": "AI Answered Confidently",
+      "data": { "label": "Success", "icon": "akar-icons:circle-check-fill", "title": "AI Answered Confidently" },
+      "position": { "x": 1140, "y": 880 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_ai_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "AI Not Confident",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "AI Not Confident" },
+      "position": { "x": 1140, "y": 1040 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_ai_more",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Anything Else",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Anything Else" },
+      "position": { "x": 1400, "y": 880 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "Hope that helped." }
+      ]
+    },
+    {
+      "id": "demo_r_ai_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "AI Gave Up",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "AI Gave Up" },
+      "position": { "x": 1400, "y": 1040 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "That one is outside what I've been trained on. Let me get a human." }
+      ]
+    },
+
+    {
+      "id": "demo_close_bye",
+      "nodeType": "CLOSE_CHAT",
+      "type": "end_node",
+      "title": "Close On Exit",
+      "data": { "label": "Close Chat", "icon": "akar-icons:chat-error", "title": "Close On Exit" },
+      "position": { "x": 880, "y": 1100 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+
+    {
+      "id": "demo_ai_fallback",
+      "nodeType": "AI_RESPONSE",
+      "type": "custom_node",
+      "title": "AI Fallback (catch-all)",
+      "data": { "label": "AI Node", "icon": "streamline:computer-robot-cyborg-artificial-robotics-robot-intelligence-machine-technology-android", "title": "AI Fallback (catch-all)" },
+      "position": { "x": 600, "y": 1220 },
+      "keywords": [], "utterance": [], "responses": [],
+      "payload": {
+        "clientId": "REPLACE_ME_AI_CLIENT_ID",
+        "companyName": "JarCube Demo"
+      }
+    },
+    {
+      "id": "demo_aif_fail",
+      "nodeType": "FAILURE",
+      "type": "custom_node",
+      "title": "Fallback AI Not Confident",
+      "data": { "label": "Failure", "icon": "entypo:circle-with-cross", "title": "Fallback AI Not Confident" },
+      "position": { "x": 880, "y": 1220 },
+      "keywords": [], "utterance": [], "responses": [], "payload": {}
+    },
+    {
+      "id": "demo_r_aif_fail",
+      "nodeType": "BOT_RESPONSE",
+      "type": "custom_node",
+      "title": "Fallback Apology",
+      "data": { "label": "Bot Response", "icon": "bi:send-fill", "title": "Fallback Apology" },
+      "position": { "x": 1140, "y": 1220 },
+      "utterance": [], "keywords": [], "payload": {},
+      "responses": [
+        { "type": "text", "value": "I couldn't find that in our knowledge base. Here's what I can definitely help with:" }
+      ]
+    }
+  ],
+
+  "edges": [
+    { "id": "demo_e01", "source": "demo_start", "target": "demo_menu" },
+    { "id": "demo_e02", "source": "demo_start", "target": "demo_fallback" },
+
+    { "id": "demo_e03", "source": "demo_menu", "target": "demo_in_sales" },
+    { "id": "demo_e04", "source": "demo_menu", "target": "demo_in_support" },
+    { "id": "demo_e05", "source": "demo_menu", "target": "demo_in_billing" },
+    { "id": "demo_e06", "source": "demo_menu", "target": "demo_in_faq" },
+    { "id": "demo_e07", "source": "demo_menu", "target": "demo_in_ai" },
+    { "id": "demo_e08", "source": "demo_menu", "target": "demo_in_bye" },
+
+    { "id": "demo_e09", "source": "demo_in_sales", "target": "demo_q_lead" },
+    { "id": "demo_e10", "source": "demo_q_lead", "target": "demo_q_ok" },
+    { "id": "demo_e11", "source": "demo_q_lead", "target": "demo_q_fail" },
+    { "id": "demo_e12", "source": "demo_q_ok", "target": "demo_seg_add" },
+    { "id": "demo_e13", "source": "demo_seg_add", "target": "demo_hook_crm" },
+    { "id": "demo_e14", "source": "demo_hook_crm", "target": "demo_hook_ok" },
+    { "id": "demo_e15", "source": "demo_hook_crm", "target": "demo_hook_fail" },
+    { "id": "demo_e16", "source": "demo_hook_ok", "target": "demo_r_lead_done" },
+    { "id": "demo_e17", "source": "demo_r_lead_done", "target": "demo_close_sales" },
+    { "id": "demo_e18", "source": "demo_hook_fail", "target": "demo_r_hook_fail" },
+    { "id": "demo_e19", "source": "demo_r_hook_fail", "target": "demo_goto_menu_1" },
+    { "id": "demo_e20", "source": "demo_q_fail", "target": "demo_r_q_fail" },
+    { "id": "demo_e21", "source": "demo_r_q_fail", "target": "demo_goto_menu_1" },
+
+    { "id": "demo_e22", "source": "demo_in_support", "target": "demo_r_support_ask" },
+    { "id": "demo_e23", "source": "demo_r_support_ask", "target": "demo_in_issue" },
+    { "id": "demo_e24", "source": "demo_in_issue", "target": "demo_r_ask_file" },
+    { "id": "demo_e25", "source": "demo_r_ask_file", "target": "demo_file" },
+    { "id": "demo_e26", "source": "demo_file", "target": "demo_setattr" },
+    { "id": "demo_e27", "source": "demo_setattr", "target": "demo_ticket" },
+    { "id": "demo_e28", "source": "demo_ticket", "target": "demo_r_ticket_done" },
+    { "id": "demo_e29", "source": "demo_r_ticket_done", "target": "demo_agent" },
+    { "id": "demo_e30", "source": "demo_agent", "target": "demo_agent_ok" },
+    { "id": "demo_e31", "source": "demo_agent", "target": "demo_agent_fail" },
+    { "id": "demo_e32", "source": "demo_agent_ok", "target": "demo_r_agent_back" },
+    { "id": "demo_e33", "source": "demo_r_agent_back", "target": "demo_close_agent" },
+    { "id": "demo_e34", "source": "demo_agent_fail", "target": "demo_r_agent_fail" },
+    { "id": "demo_e35", "source": "demo_r_agent_fail", "target": "demo_close_agent" },
+
+    { "id": "demo_e36", "source": "demo_in_billing", "target": "demo_tpl_kyc" },
+    { "id": "demo_e37", "source": "demo_tpl_kyc", "target": "demo_tpl_ok" },
+    { "id": "demo_e38", "source": "demo_tpl_kyc", "target": "demo_tpl_timeout" },
+    { "id": "demo_e39", "source": "demo_tpl_kyc", "target": "demo_tpl_fail" },
+    { "id": "demo_e40", "source": "demo_tpl_ok", "target": "demo_r_tpl_ok" },
+    { "id": "demo_e41", "source": "demo_r_tpl_ok", "target": "demo_seg_remove" },
+    { "id": "demo_e42", "source": "demo_seg_remove", "target": "demo_close_billing" },
+    { "id": "demo_e43", "source": "demo_tpl_timeout", "target": "demo_r_tpl_timeout" },
+    { "id": "demo_e44", "source": "demo_r_tpl_timeout", "target": "demo_goto_menu_2" },
+    { "id": "demo_e45", "source": "demo_tpl_fail", "target": "demo_r_tpl_fail" },
+    { "id": "demo_e46", "source": "demo_r_tpl_fail", "target": "demo_goto_menu_2" },
+
+    { "id": "demo_e47", "source": "demo_in_faq", "target": "demo_faq" },
+    { "id": "demo_e48", "source": "demo_faq", "target": "demo_r_faq" },
+    { "id": "demo_e49", "source": "demo_r_faq", "target": "demo_goto_menu_2" },
+
+    { "id": "demo_e50", "source": "demo_in_ai", "target": "demo_ai_menu" },
+    { "id": "demo_e51", "source": "demo_ai_menu", "target": "demo_ai_ok" },
+    { "id": "demo_e52", "source": "demo_ai_menu", "target": "demo_ai_fail" },
+    { "id": "demo_e53", "source": "demo_ai_ok", "target": "demo_r_ai_more" },
+    { "id": "demo_e54", "source": "demo_r_ai_more", "target": "demo_goto_menu_2" },
+    { "id": "demo_e55", "source": "demo_ai_fail", "target": "demo_r_ai_fail" },
+    { "id": "demo_e56", "source": "demo_r_ai_fail", "target": "demo_agent" },
+
+    { "id": "demo_e57", "source": "demo_in_bye", "target": "demo_close_bye" },
+
+    { "id": "demo_e58", "source": "demo_fallback", "target": "demo_ai_fallback" },
+    { "id": "demo_e59", "source": "demo_ai_fallback", "target": "demo_aif_fail" },
+    { "id": "demo_e60", "source": "demo_aif_fail", "target": "demo_r_aif_fail" },
+    { "id": "demo_e61", "source": "demo_r_aif_fail", "target": "demo_goto_menu_2" }
+  ]
+}

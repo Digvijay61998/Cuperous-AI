@@ -1,7 +1,7 @@
-# QuantumMind AI Service
+# JarCube AI Service
 
 A standalone RAG (Retrieval-Augmented Generation) microservice that gives the
-QuantumMind chatbot **context-aware answers** instead of static, predefined
+JarCube chatbot **context-aware answers** instead of static, predefined
 replies. It ingests each client's website / knowledge-base content, stores it in
 a multi-tenant vector database, and answers end-user questions grounded in that
 client's own data.
@@ -87,8 +87,21 @@ Open the interactive API docs at **http://localhost:8000/docs**.
 To stop:
 ```bash
 docker compose down          # keep data
-docker compose down -v       # also remove Milvus data (./volumes)
+docker compose down -v       # also remove all Milvus data
 ```
+
+> **Where the data lives.** etcd, MinIO, and Milvus each persist to a
+> **Docker-managed named volume** (`etcd_data`, `minio_data`, `milvus_data`), not
+> to a folder in the repo. This is deliberate: MinIO writes its erasure-coding
+> metadata with `O_DIRECT`, which Docker Desktop's file-sharing layer rejects on
+> host bind mounts, and the resulting write failures panic Milvus on every flush.
+> Named volumes live inside the Docker VM where `O_DIRECT` works.
+>
+> `docker compose down -v` removes all three. If you have a leftover
+> `volumes.broken.*` directory from an older checkout, it is dead data and safe
+> to delete.
+
+There is a `Makefile` wrapping all of this — run `make help`.
 
 ### Running only Milvus (e.g. to run the app from an IDE)
 ```bash
@@ -147,8 +160,12 @@ See `.env.example` for the full list. Key settings:
 | `LLM_MODEL` | `gpt-4o-mini` | Model name for the chosen provider. |
 | `OPENAI_API_KEY` | — | Required when `LLM_PROVIDER=openai`. |
 | `RETRIEVAL_TOP_K` | `5` | Chunks retrieved per query. |
-| `MIN_SIMILARITY_SCORE` | `0.30` | Cosine threshold below which the answer is treated as "not confident". |
+| `MIN_SIMILARITY_SCORE` | `0.15` | Cosine threshold below which the answer is treated as "not confident". Tuned for `all-MiniLM-L6-v2`, which yields low cosine scores even for clearly relevant matches. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `500` / `50` | Text-splitting parameters. |
+| `AI_TRACING` | `true` | Per-stage spans with latency, tokens, and cost. See Observability below. |
+| `EMBEDDING_MAX_TOKENS` | `256` | Token budget used for the truncation warning. Matches `all-MiniLM-L6-v2`. |
+| `EVAL_JUDGE_MODEL` | `gpt-4o-mini` | Model used by `make eval-judge`, independent of the model under test. |
+| `EVAL_DATASET_PATH` / `EVAL_RESULTS_DIR` | `eval/golden/dataset.yaml` / `eval/results` | Where the harness reads and writes. |
 
 ---
 
@@ -171,20 +188,60 @@ flow takes the failure/fallback branch.
 Tests use pytest. Integration tests need a running Milvus.
 
 ```bash
-# Start Milvus
-docker compose up -d etcd minio milvus
+make up-storage    # start etcd + MinIO + Milvus, wait for health
+make test          # run the suite inside the service image
+```
 
-# Run the suite inside the service image (has all deps + the embedding model)
+Or the raw form. Note `MILVUS_HOST` is the **container** name: plain `docker run`
+resolves container names but not compose service aliases.
+
+```bash
 docker run --rm --network quantummind-ai \
-  -e MILVUS_HOST=milvus -e MILVUS_PORT=19530 \
-  -v "$PWD":/app -w /app quantummind-ai:local \
-  bash -c "pip install --quiet pytest && pytest -v"
+  -e MILVUS_HOST=milvus-standalone -e MILVUS_PORT=19530 \
+  -v "$PWD":/app -w /app quantummind-ai-ai-service:latest \
+  bash -c "pip install --quiet pytest pyyaml && pytest -v"
 ```
 
 The suite covers the vector store (incl. tenant isolation), ingestion, the LLM
-provider factory, the query engine's confidence gating, and an end-to-end HTTP
-flow. The query tests use a fake LLM provider, so **no API key is needed to run
-the tests.**
+provider factory, the query engine's confidence gating, tracing, the eval
+metrics, and an end-to-end HTTP flow. The query tests use a fake LLM provider, so
+**no API key is needed to run the tests.**
+
+---
+
+## Evaluation
+
+Retrieval quality is measured, not guessed. `eval/` holds a golden dataset and a
+harness that drives the real query pipeline in an isolated Milvus collection.
+
+```bash
+make eval             # score the golden set (deterministic, reproducible)
+make eval-baseline    # ...and save it as the regression baseline
+make eval-compare     # ...and exit non-zero if anything regressed
+make eval-judge       # LLM-as-judge scoring instead of lexical (costs money)
+```
+
+Nine metrics across three layers — retriever (context recall, context
+precision), generator (faithfulness, answer relevancy, answer correctness, fact
+coverage), and the confidence gate (accuracy, false negative rate, false
+positive rate) — plus latency, tokens, and estimated cost. Results land in
+`eval/results/`, and CI runs the comparison on every push.
+
+Details: `eval/README.md`. Current numbers and roadmap: `PLAN.md`.
+
+---
+
+## Observability
+
+Tracing is on by default (`AI_TRACING=true`). Each request emits one span per
+pipeline stage — retrieval, confidence gate, prompt build, generation — with
+latency, token counts, and an estimated cost, plus a `stages=` summary on the
+request log line. Spans reuse the same `x-request-id` the HTTP layer already
+sets, so traces correlate with logs for free.
+
+It is stdlib-only: no OpenTelemetry dependency, no collector to run. Tracing
+failures are swallowed by design — a missing span is an observability gap, never
+a failed request. Set `AI_TRACING=false` to silence it.
 
 ---
 
@@ -206,7 +263,50 @@ app/
     openai_provider.py # OpenAI + Moonshot (OpenAI-compatible)
     anthropic_provider.py
     factory.py         # picks provider from config
+  tracing.py           # per-stage spans: latency, tokens, cost
+eval/
+  golden/dataset.yaml  # golden questions + expectations
+  metrics.py           # retrieval / generation / gate metrics
+  runner.py            # harness CLI
+  results/             # baseline.json, latest.json, history.jsonl
 tests/                 # unit + integration + e2e
+Makefile               # every common command — run `make help`
 Dockerfile
 docker-compose.yml
+PLAN.md                # improvement roadmap + task tracker
+CLAUDE.md              # context primer for AI coding assistants
+docs/RESEARCH.md       # research papers & benchmarks behind the roadmap
+docs/PHASE0_IMPLEMENTATION.md  # what the eval harness does and what it measured
 ```
+
+---
+
+## Development roadmap
+
+This service implements a **naive RAG** pipeline, and we are improving it in
+measured phases. Progress is tracked in **[PLAN.md](PLAN.md)** with the
+supporting research in **[docs/RESEARCH.md](docs/RESEARCH.md)**.
+
+- **Phase 0 — done.** Eval harness, tracing, CI regression gate, committed
+  baseline. Write-up: **[docs/PHASE0_IMPLEMENTATION.md](docs/PHASE0_IMPLEMENTATION.md)**.
+- **Phase 1 — next.** Query rewriting so chat history reaches retrieval. Today a
+  follow-up like "what about weekends?" is embedded literally and retrieves
+  nothing; the harness measures this at 0.500 recall on multi-turn cases.
+- Then: reranking, hybrid search (BM25 + RRF), contextual chunk enrichment,
+  and production hardening (auth, CORS, rate limits, real healthcheck).
+
+If you are an AI coding assistant, start with **[CLAUDE.md](CLAUDE.md)**.
+
+
+Clean build Docker compose
+cd /media/jay/427EF9697EF9565F/Digvijay-projects/Cuperous-AI/QuantumMind-ai
+
+# Stop and clean
+docker compose down
+docker volume rm quantummind-ai_milvus_cache quantummind-ai_etcd_data 2>/dev/null
+
+# Start fresh
+docker compose up -d
+
+# Wait ~90 seconds then check
+sleep 90 && docker logs milvus-standalone 2>&1 | head -30

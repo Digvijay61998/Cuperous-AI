@@ -65,7 +65,7 @@ const TableHeader = (props: TableHeaderProps) => {
         />
         <Button
           onClick={handleSearchQuestion}
-          sx={{ ml: 1, backgroundColor : "#2241FF" }}
+          sx={{ ml: 1, backgroundColor : 'secondary.main' }}
           // size="small"
           variant="contained"
           startIcon={<Icon icon="ic:round-search" />}
@@ -77,10 +77,10 @@ const TableHeader = (props: TableHeaderProps) => {
       <Box
         sx={{ gap: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}
       >
-        <Button onClick={toggleBulk} variant="contained" sx={{ backgroundColor : "#2241FF" }}>
+        <Button onClick={toggleBulk} variant="contained" sx={{ backgroundColor : 'secondary.main' }}>
           Add Bulk Q&A
         </Button>
-        <Button onClick={toggle} variant="contained" sx={{ backgroundColor : "#2241FF" }}>
+        <Button onClick={toggle} variant="contained" sx={{ backgroundColor : 'secondary.main' }}>
 
           Add Q&A
         </Button>

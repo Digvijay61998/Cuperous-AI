@@ -1,4 +1,4 @@
-// Public surface of the QuantumMind template SDK.
+// Public surface of the JarCube template SDK.
 export * from './context';
 export * from './api';
 export * from './config';

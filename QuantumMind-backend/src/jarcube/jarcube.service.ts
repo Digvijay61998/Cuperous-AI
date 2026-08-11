@@ -8,7 +8,7 @@ import { MessageHandlerService } from 'src/message-handler/message-handler.servi
 import { AuthenticatedSocket } from 'src/socket/socket.adaptor';
 
 @Injectable()
-export class EngageService {
+export class JarCubeService {
   constructor(
     private readonly offerService: OfferService,
     private readonly advertisementService: AdvertisementService,

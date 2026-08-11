@@ -43,12 +43,18 @@ class AnthropicProvider(LLMProvider):
         text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         ).strip()
-        tokens = 0
+        prompt_tokens = 0
+        completion_tokens = 0
         if getattr(response, "usage", None):
-            tokens = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+            prompt_tokens = response.usage.input_tokens or 0
+            completion_tokens = response.usage.output_tokens or 0
+        tokens = prompt_tokens + completion_tokens
         return LLMResult(
             text=text,
             tokens_used=tokens,
             model=self.model,
             provider=self.name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            finish_reason=getattr(response, "stop_reason", None),
         )

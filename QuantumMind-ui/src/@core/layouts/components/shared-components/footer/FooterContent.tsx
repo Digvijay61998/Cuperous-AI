@@ -5,6 +5,9 @@ import { Theme } from '@mui/material/styles'
 import Typography from '@mui/material/Typography'
 import useMediaQuery from '@mui/material/useMediaQuery'
 
+// ** Config
+import themeConfig from 'src/configs/themeConfig'
+
 const FooterContent = () => {
   // ** Var
   const hidden = useMediaQuery((theme: Theme) => theme.breakpoints.down('md'))
@@ -14,7 +17,7 @@ const FooterContent = () => {
       <Typography sx={{ mr: 2 }}>
         {`Copyright © `}
         <Link target='_blank' href='#'>
-          BizBot 
+          {themeConfig.templateName}
         </Link>
        <span> </span> {new Date().getFullYear()}
       </Typography>

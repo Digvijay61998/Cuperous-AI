@@ -556,7 +556,7 @@ const QAList = () => {
                                           label={word}
                                           size="small"
                                           // color=""
-                                          sx={{backgroundColor : "#2241FF", color : "white"}}
+                                          sx={{backgroundColor : 'secondary.main', color : "white"}}
                                           className='chip-class'
                                           style={{
                                             margin: '2px',
@@ -591,7 +591,7 @@ const QAList = () => {
                                           label={obj}
                                           size="small"
                                           // color="primary"
-                                          sx={{backgroundColor : "#2241FF", color : "white"}}
+                                          sx={{backgroundColor : 'secondary.main', color : "white"}}
                                           style={{
                                             margin: '2px',
                                             fontSize: '11px',

@@ -26,7 +26,7 @@ const ListItems = styled('li')(({ theme }) => ({
   margin: theme.spacing(0.5),
 }));
 const keywordsToottip = `Keywords is a matching system in ChatBot. It works great when you want a unique phrase or a word to trigger a bot response.`;
-const userSaysToottip = `User says is a matching system in ChatBot. This system analyzes the full user query to pair it with the engage bot response that matches the best.`;
+const userSaysToottip = `User says is a matching system in ChatBot. This system analyzes the full user query to pair it with the JarCube bot response that matches the best.`;
 
 type BotFAQUserInputProps = {
   groupList: any,

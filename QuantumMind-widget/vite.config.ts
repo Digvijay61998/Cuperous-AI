@@ -12,7 +12,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: "src/main.tsx",
-      name: "bizbot",
+      name: "jarcube",
       fileName: "plugin",
     },
     outDir: "dist",
