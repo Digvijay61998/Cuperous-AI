@@ -1,0 +1,188 @@
+{
+  "name": "Beauty Services Catalog",
+  "description": "A modern, animated 5-step booking flow for beauty services with category-first browsing, circular icon grids, card-based service selection, and smooth CSS transitions. Optimised for WhatsApp WebView.",
+  "industry": "beauty",
+  "category": "appointment",
+  "tags": ["beauty", "services", "booking", "catalog"],
+  "supportedLanguages": ["en"],
+  "supportsDarkMode": true,
+  "estimatedDuration": "2 minutes",
+  "templateConfig": [
+    {
+      "key": "business_name",
+      "type": "text",
+      "label": "Business Name",
+      "defaultValue": "Glow Beauty Studio",
+      "group": "Branding"
+    },
+    {
+      "key": "business_logo",
+      "type": "image",
+      "label": "Business Logo",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_image",
+      "type": "image",
+      "label": "Hero Background Image",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_title",
+      "type": "text",
+      "label": "Hero Title",
+      "defaultValue": "Book Your Beauty Experience",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_subtitle",
+      "type": "text",
+      "label": "Hero Subtitle",
+      "defaultValue": "Choose from our premium beauty services and book your appointment in minutes.",
+      "group": "Branding"
+    },
+    {
+      "key": "primary_color",
+      "type": "color",
+      "label": "Primary Color",
+      "defaultValue": "#E91E63",
+      "group": "Theme"
+    },
+    {
+      "key": "secondary_color",
+      "type": "color",
+      "label": "Secondary Color",
+      "defaultValue": "#9C27B0",
+      "group": "Theme"
+    },
+    {
+      "key": "accent_color",
+      "type": "color",
+      "label": "Accent Color",
+      "defaultValue": "#FF5722",
+      "group": "Theme"
+    },
+    {
+      "key": "text_color",
+      "type": "color",
+      "label": "Text Color",
+      "defaultValue": "#1A1A2E",
+      "group": "Theme"
+    },
+    {
+      "key": "background_color",
+      "type": "color",
+      "label": "Background Color",
+      "defaultValue": "#FAFAFA",
+      "group": "Theme"
+    },
+    {
+      "key": "font_family",
+      "type": "text",
+      "label": "Font Family",
+      "defaultValue": "system-ui, -apple-system, sans-serif",
+      "group": "Theme"
+    },
+    {
+      "key": "dark_mode",
+      "type": "boolean",
+      "label": "Enable Dark Mode",
+      "defaultValue": false,
+      "group": "Theme"
+    },
+    {
+      "key": "categories",
+      "type": "json",
+      "label": "Service Categories",
+      "defaultValue": [],
+      "group": "Services"
+    },
+    {
+      "key": "services",
+      "type": "json",
+      "label": "Services List",
+      "defaultValue": [],
+      "group": "Services"
+    },
+    {
+      "key": "working_hours",
+      "type": "json",
+      "label": "Working Hours",
+      "defaultValue": {
+        "monday": { "open": "09:00", "close": "18:00" },
+        "tuesday": { "open": "09:00", "close": "18:00" },
+        "wednesday": { "open": "09:00", "close": "18:00" },
+        "thursday": { "open": "09:00", "close": "18:00" },
+        "friday": { "open": "09:00", "close": "18:00" },
+        "saturday": { "open": "09:00", "close": "18:00" },
+        "sunday": null
+      },
+      "group": "Scheduling"
+    },
+    {
+      "key": "time_slot_interval",
+      "type": "number",
+      "label": "Time Slot Interval (minutes)",
+      "defaultValue": 30,
+      "group": "Scheduling"
+    },
+    {
+      "key": "advance_booking_days",
+      "type": "number",
+      "label": "Advance Booking Days",
+      "defaultValue": 14,
+      "group": "Scheduling"
+    },
+    {
+      "key": "currency",
+      "type": "text",
+      "label": "Currency Code",
+      "defaultValue": "USD",
+      "group": "Pricing"
+    },
+    {
+      "key": "success_message",
+      "type": "text",
+      "label": "Success Message",
+      "defaultValue": "Your appointment is confirmed!",
+      "group": "Content"
+    },
+    {
+      "key": "success_cta_text",
+      "type": "text",
+      "label": "Success CTA Text",
+      "defaultValue": "Return to Chat",
+      "group": "Content"
+    },
+    {
+      "key": "labels",
+      "type": "json",
+      "label": "UI Labels",
+      "defaultValue": {
+        "start_booking": "Start Booking",
+        "browse_services": "Browse Services",
+        "select_date_time": "Select Date & Time",
+        "your_details": "Your Details",
+        "confirmation": "Confirmation",
+        "back": "Back",
+        "continue": "Continue",
+        "add": "Add",
+        "remove": "Remove",
+        "full_name": "Full Name",
+        "phone_number": "Phone Number",
+        "notes": "Notes (optional)",
+        "confirm_booking": "Confirm Booking",
+        "no_services": "No services available in this category",
+        "no_availability": "No availability for this date",
+        "booking_error": "Booking could not be completed. Please try again.",
+        "services_selected": "{count} services",
+        "total": "Total",
+        "retry": "Retry",
+        "select_different_date": "Please select a different date"
+      },
+      "group": "Content"
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "name": "Food Order App",
+  "description": "A configurable 4-step food ordering flow for WhatsApp WebView with category browsing, search filtering, cart management, and checkout. Dark theme with orange accent, optimised for mobile.",
+  "industry": "food",
+  "category": "ordering",
+  "tags": ["food", "order", "delivery", "restaurant"],
+  "supportedLanguages": ["en"],
+  "supportsDarkMode": true,
+  "estimatedDuration": "3 minutes",
+  "templateConfig": [
+    {
+      "key": "brand_name",
+      "type": "text",
+      "label": "Brand Name",
+      "defaultValue": "Foodgo",
+      "group": "Branding"
+    },
+    {
+      "key": "brand_logo",
+      "type": "image",
+      "label": "Brand Logo",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_image",
+      "type": "image",
+      "label": "Hero Background Image",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "primary_color",
+      "type": "color",
+      "label": "Primary Color",
+      "defaultValue": "#FF6B00",
+      "group": "Theme"
+    },
+    {
+      "key": "secondary_color",
+      "type": "color",
+      "label": "Secondary Color",
+      "defaultValue": "#FF8C42",
+      "group": "Theme"
+    },
+    {
+      "key": "accent_color",
+      "type": "color",
+      "label": "Accent Color",
+      "defaultValue": "#FF6B00",
+      "group": "Theme"
+    },
+    {
+      "key": "text_color",
+      "type": "color",
+      "label": "Text Color",
+      "defaultValue": "#FFFFFF",
+      "group": "Theme"
+    },
+    {
+      "key": "background_color",
+      "type": "color",
+      "label": "Background Color",
+      "defaultValue": "#2D2D3A",
+      "group": "Theme"
+    },
+    {
+      "key": "font_family",
+      "type": "text",
+      "label": "Font Family",
+      "defaultValue": "system-ui, -apple-system, sans-serif",
+      "group": "Theme"
+    },
+    {
+      "key": "dark_mode",
+      "type": "boolean",
+      "label": "Enable Dark Mode",
+      "defaultValue": true,
+      "group": "Theme"
+    },
+    {
+      "key": "categories",
+      "type": "json",
+      "label": "Menu Categories",
+      "defaultValue": [],
+      "group": "Menu"
+    },
+    {
+      "key": "menu_items",
+      "type": "json",
+      "label": "Menu Items",
+      "defaultValue": [],
+      "group": "Menu"
+    },
+    {
+      "key": "delivery_fee",
+      "type": "number",
+      "label": "Delivery Fee",
+      "defaultValue": 1.5,
+      "group": "Pricing"
+    },
+    {
+      "key": "tax_rate",
+      "type": "number",
+      "label": "Tax Rate (decimal)",
+      "defaultValue": 0.1,
+      "group": "Pricing"
+    },
+    {
+      "key": "estimated_delivery_time",
+      "type": "text",
+      "label": "Estimated Delivery Time",
+      "defaultValue": "24 mins",
+      "group": "Delivery"
+    },
+    {
+      "key": "currency",
+      "type": "text",
+      "label": "Currency Code",
+      "defaultValue": "USD",
+      "group": "Pricing"
+    },
+    {
+      "key": "success_message",
+      "type": "text",
+      "label": "Success Message",
+      "defaultValue": "Your order has been placed successfully!",
+      "group": "Content"
+    },
+    {
+      "key": "success_cta_text",
+      "type": "text",
+      "label": "Success CTA Text",
+      "defaultValue": "Go Back",
+      "group": "Content"
+    },
+    {
+      "key": "labels",
+      "type": "json",
+      "label": "UI Labels",
+      "defaultValue": {
+        "intro_tagline": "Delicious food delivered to your door",
+        "get_started": "Order Now",
+        "home_greeting": "Order your favourite food!",
+        "search_placeholder": "Search food...",
+        "no_items": "No menu items available",
+        "no_search_results": "No items match your search",
+        "order_summary": "Order Summary",
+        "subtotal_label": "Subtotal",
+        "tax_label": "Tax",
+        "delivery_label": "Delivery Fee",
+        "total_label": "Total",
+        "delivery_time_label": "Estimated Delivery",
+        "place_order": "Place Order",
+        "order_error": "Order could not be placed. Please try again.",
+        "full_name": "Full Name",
+        "phone_number": "Phone Number",
+        "notes": "Notes (optional)",
+        "success_heading": "Success!",
+        "back": "Back",
+        "continue": "Continue",
+        "add": "Add",
+        "remove": "Remove",
+        "items_in_cart": "{count} items"
+      },
+      "group": "Content"
+    }
+  ]
+}

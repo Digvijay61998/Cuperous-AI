@@ -41,7 +41,7 @@ export const showReturnToChatScreen = (options: ReturnToChatOptions = {}) => {
   const ctx = getContext();
   const platform = options.platform || ctx.platform;
   const label = platformLabel(platform);
-  const color = options.color || '#2241ff';
+  const color = options.color || '#8A00FF';
   const title = options.title || 'All done!';
   const message =
     options.message ||

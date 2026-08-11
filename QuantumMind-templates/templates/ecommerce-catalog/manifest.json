@@ -1,0 +1,204 @@
+{
+  "name": "eCommerce Catalog",
+  "description": "A configurable 5-step eCommerce product catalog for WhatsApp WebView with product browsing, detail view, cart, and checkout. Light theme with pink accent.",
+  "industry": "ecommerce",
+  "category": "ordering",
+  "tags": ["ecommerce", "catalog", "shopping", "products"],
+  "supportedLanguages": ["en"],
+  "supportsDarkMode": true,
+  "estimatedDuration": "3 minutes",
+  "templateConfig": [
+    {
+      "key": "brand_name",
+      "type": "text",
+      "label": "Brand Name",
+      "defaultValue": "Stylish",
+      "group": "Branding"
+    },
+    {
+      "key": "brand_logo",
+      "type": "image",
+      "label": "Brand Logo",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_image",
+      "type": "image",
+      "label": "Hero Background Image",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "tagline",
+      "type": "text",
+      "label": "Tagline",
+      "defaultValue": "You want Authentic, here you go!",
+      "group": "Branding"
+    },
+    {
+      "key": "subtitle",
+      "type": "text",
+      "label": "Subtitle",
+      "defaultValue": "Find it here, buy it now!",
+      "group": "Branding"
+    },
+    {
+      "key": "primary_color",
+      "type": "color",
+      "label": "Primary Color",
+      "defaultValue": "#F83758",
+      "group": "Theme"
+    },
+    {
+      "key": "secondary_color",
+      "type": "color",
+      "label": "Secondary Color",
+      "defaultValue": "#FF4B6E",
+      "group": "Theme"
+    },
+    {
+      "key": "accent_color",
+      "type": "color",
+      "label": "Accent Color",
+      "defaultValue": "#F83758",
+      "group": "Theme"
+    },
+    {
+      "key": "text_color",
+      "type": "color",
+      "label": "Text Color",
+      "defaultValue": "#000000",
+      "group": "Theme"
+    },
+    {
+      "key": "background_color",
+      "type": "color",
+      "label": "Background Color",
+      "defaultValue": "#FFFFFF",
+      "group": "Theme"
+    },
+    {
+      "key": "font_family",
+      "type": "text",
+      "label": "Font Family",
+      "defaultValue": "system-ui, -apple-system, sans-serif",
+      "group": "Theme"
+    },
+    {
+      "key": "dark_mode",
+      "type": "boolean",
+      "label": "Enable Dark Mode",
+      "defaultValue": false,
+      "group": "Theme"
+    },
+    {
+      "key": "categories",
+      "type": "json",
+      "label": "Product Categories",
+      "defaultValue": [],
+      "group": "Catalog"
+    },
+    {
+      "key": "products",
+      "type": "json",
+      "label": "Products",
+      "defaultValue": [],
+      "group": "Catalog"
+    },
+    {
+      "key": "delivery_fee",
+      "type": "number",
+      "label": "Delivery Fee",
+      "defaultValue": 0,
+      "group": "Pricing"
+    },
+    {
+      "key": "tax_rate",
+      "type": "number",
+      "label": "Tax Rate (decimal)",
+      "defaultValue": 0,
+      "group": "Pricing"
+    },
+    {
+      "key": "estimated_delivery_time",
+      "type": "text",
+      "label": "Estimated Delivery Time",
+      "defaultValue": "1 within Hour",
+      "group": "Delivery"
+    },
+    {
+      "key": "currency",
+      "type": "text",
+      "label": "Currency Code",
+      "defaultValue": "USD",
+      "group": "Pricing"
+    },
+    {
+      "key": "success_message",
+      "type": "text",
+      "label": "Success Message",
+      "defaultValue": "Payment done successfully.",
+      "group": "Content"
+    },
+    {
+      "key": "success_cta_text",
+      "type": "text",
+      "label": "Success CTA Text",
+      "defaultValue": "Continue",
+      "group": "Content"
+    },
+    {
+      "key": "labels",
+      "type": "json",
+      "label": "UI Labels",
+      "defaultValue": {
+        "intro_tagline": "You want Authentic, here you go!",
+        "intro_subtitle": "Find it here, buy it now!",
+        "get_started": "Get Started",
+        "search_placeholder": "Search any Product..",
+        "no_products": "No products available",
+        "no_search_results": "No products match your search",
+        "all_featured": "All Featured",
+        "deal_of_the_day": "Deal of the Day",
+        "special_offers": "Special Offers",
+        "view_all": "View all",
+        "sort": "Sort",
+        "filter": "Filter",
+        "shop_now": "Shop Now",
+        "add_to_cart": "Add to Cart",
+        "go_to_cart": "Go to cart",
+        "buy_now": "Buy Now",
+        "size_label": "Size:",
+        "product_details": "Product Details",
+        "similar_to": "Similar To",
+        "view_similar": "View Similar",
+        "add_to_compare": "Add to Compare",
+        "delivery_in": "Delivery in",
+        "delivery_address": "Delivery Address",
+        "shopping_list": "Shopping List",
+        "order_payment_details": "Order Payment Details",
+        "order_amounts": "Order Amounts",
+        "convenience": "Convenience",
+        "know_more": "Know More",
+        "apply_coupon": "Apply Coupon",
+        "delivery_fee_label": "Delivery Fee",
+        "order_total": "Order Total",
+        "emi_available": "EMI Available",
+        "details": "Details",
+        "proceed_to_payment": "Proceed to Payment",
+        "subtotal_label": "Subtotal",
+        "total_label": "Total",
+        "full_name": "Full Name",
+        "phone_number": "Phone Number",
+        "order_error": "Order could not be placed. Please try again.",
+        "success_heading": "Success!",
+        "back": "Back",
+        "continue": "Continue",
+        "items_in_cart": "{count} items",
+        "free": "Free"
+      },
+      "group": "Content"
+    }
+  ]
+}

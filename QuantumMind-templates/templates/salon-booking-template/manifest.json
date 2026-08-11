@@ -1,0 +1,184 @@
+{
+  "name": "Salon Booking",
+  "description": "Configurable, mobile-first appointment booking flow for salons, spas, clinics, gyms, and other service businesses. Optimised for WhatsApp WebView.",
+  "industry": "salon",
+  "category": "appointment",
+  "tags": ["appointment", "booking", "salon", "spa", "services"],
+  "supportedLanguages": ["en", "ar", "he", "fa", "ur"],
+  "supportsDarkMode": true,
+  "estimatedDuration": "1 minute",
+  "templateConfig": [
+    {
+      "key": "business_name",
+      "type": "text",
+      "label": "Business Name",
+      "defaultValue": "Glow Beauty Studio",
+      "group": "Branding"
+    },
+    {
+      "key": "business_logo",
+      "type": "image",
+      "label": "Business Logo",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_image",
+      "type": "image",
+      "label": "Hero Image",
+      "defaultValue": "",
+      "group": "Branding"
+    },
+    {
+      "key": "hero_title",
+      "type": "text",
+      "label": "Hero Title",
+      "defaultValue": "Book your appointment",
+      "group": "Header"
+    },
+    {
+      "key": "hero_subtitle",
+      "type": "text",
+      "label": "Hero Subtitle",
+      "defaultValue": "Pick a service, choose a time, and you're all set.",
+      "group": "Header"
+    },
+    {
+      "key": "primary_color",
+      "type": "color",
+      "label": "Primary Color",
+      "defaultValue": "#7A5CFF",
+      "group": "Theme"
+    },
+    {
+      "key": "secondary_color",
+      "type": "color",
+      "label": "Secondary Color",
+      "defaultValue": "#FF6BA8",
+      "group": "Theme"
+    },
+    {
+      "key": "text_color",
+      "type": "color",
+      "label": "Text Color",
+      "defaultValue": "#1A1D29",
+      "group": "Theme"
+    },
+    {
+      "key": "background_color",
+      "type": "color",
+      "label": "Background Color",
+      "defaultValue": "#F5F6FA",
+      "group": "Theme"
+    },
+    {
+      "key": "font_family",
+      "type": "text",
+      "label": "Font Family",
+      "defaultValue": "",
+      "group": "Theme"
+    },
+    {
+      "key": "dark_mode",
+      "type": "boolean",
+      "label": "Enable Dark Mode",
+      "defaultValue": false,
+      "group": "Theme"
+    },
+    {
+      "key": "services",
+      "type": "json",
+      "label": "Services",
+      "defaultValue": [],
+      "group": "Catalog"
+    },
+    {
+      "key": "staff",
+      "type": "json",
+      "label": "Staff",
+      "defaultValue": [],
+      "group": "Catalog"
+    },
+    {
+      "key": "categories",
+      "type": "json",
+      "label": "Service Categories",
+      "defaultValue": [],
+      "group": "Catalog"
+    },
+    {
+      "key": "working_hours",
+      "type": "json",
+      "label": "Working Hours",
+      "defaultValue": {},
+      "group": "Scheduling"
+    },
+    {
+      "key": "time_slot_interval",
+      "type": "number",
+      "label": "Time Slot Interval (minutes)",
+      "defaultValue": 30,
+      "group": "Scheduling"
+    },
+    {
+      "key": "show_staff_selection",
+      "type": "boolean",
+      "label": "Show Staff Selection",
+      "defaultValue": true,
+      "group": "Features"
+    },
+    {
+      "key": "show_reviews",
+      "type": "boolean",
+      "label": "Show Reviews",
+      "defaultValue": true,
+      "group": "Features"
+    },
+    {
+      "key": "reviews",
+      "type": "json",
+      "label": "Reviews",
+      "defaultValue": [],
+      "group": "Features"
+    },
+    {
+      "key": "booking_settings",
+      "type": "json",
+      "label": "Booking Settings",
+      "defaultValue": {
+        "allow_multiple_services": true,
+        "require_notes": false,
+        "advance_booking_days": 14
+      },
+      "group": "Booking"
+    },
+    {
+      "key": "success_message",
+      "type": "text",
+      "label": "Success Message",
+      "defaultValue": "Your appointment is confirmed!",
+      "group": "Content"
+    },
+    {
+      "key": "success_cta_text",
+      "type": "text",
+      "label": "Success CTA Text",
+      "defaultValue": "Return to chat",
+      "group": "Content"
+    },
+    {
+      "key": "currency",
+      "type": "text",
+      "label": "Currency Code (ISO 4217)",
+      "defaultValue": "USD",
+      "group": "Booking"
+    },
+    {
+      "key": "labels",
+      "type": "json",
+      "label": "UI Labels",
+      "defaultValue": {},
+      "group": "Content"
+    }
+  ]
+}
