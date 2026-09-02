@@ -73,7 +73,7 @@ health:
 
 # ------------------------------------------------------------------ quality
 test:
-	$(DRUN) bash -c "pip install --quiet pytest pyyaml 2>/dev/null; pytest -v"
+	$(DRUN) bash -c "pip install --quiet pytest pyyaml hypothesis 2>/dev/null; pytest -v"
 
 eval:
 	$(DRUN) bash -c "pip install --quiet pyyaml 2>/dev/null; python -m eval.runner"

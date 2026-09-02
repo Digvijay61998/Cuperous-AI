@@ -5,6 +5,7 @@ All settings can be overridden via a `.env` file (see `.env.example`).
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -102,6 +103,58 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "ap-south-1"
+    # ---- Query rewriting (PLAN.md Phase 1) ----
+    # Turns a context-dependent follow-up ("What about weekends?") into a
+    # self-contained search string before retrieval. Fixes finding L1.
+    #
+    # Default `none` in EVERY environment — deliberately no app_env, CI or
+    # test-runner inspection here. Sniffing the environment would make the
+    # active strategy depend on something other than configuration, which
+    # breaks hard rule 8, and would mean tests exercise a different code path
+    # than production. Turning the feature on is a config value, not a code
+    # edit. It looks like an omission; it is not.
+    rewriter_strategy: Literal["none", "llm"] = "none"
+
+    # Rewriter provider/model/sampling are separate from the generation ones so
+    # the cheap rewrite stage can be pointed at a different backend without
+    # touching the answer backend. `None` is a sentinel meaning "not
+    # configured" — the validator below fills it from `llm_provider`.
+    rewriter_provider: Literal["openai", "moonshot", "anthropic"] | None = None
+    rewriter_model: str = Field("gpt-4o-mini", min_length=1, max_length=100)
+    # Rewriting is an extraction task with a single right answer; creative
+    # variation is pure downside, so greedy decoding by default.
+    rewriter_temperature: float = Field(0.0, ge=0.0, le=1.0)
+    # A standalone query is a dozen words. 64 completion tokens is generous
+    # headroom and makes a runaway response structurally impossible rather
+    # than merely unlikely.
+    rewriter_max_tokens: int = Field(64, ge=16, le=256)
+    # Most recent chat turns sent to the rewrite prompt. Matches the 6-turn cap
+    # the generation prompt already applies.
+    rewriter_history_turns: int = Field(6, ge=1, le=20)
+    # Second, independent bound on the rewrite: `rewriter_max_tokens` limits
+    # what the provider *can* return, this limits what we *accept*.
+    rewriter_max_query_chars: int = Field(500, ge=20, le=1000)
+    # Wall-clock bound on the single rewrite provider call. The rewrite is an
+    # optimisation, so it must never hold a request open for long.
+    rewriter_timeout_seconds: float = Field(5.0, ge=0.5, le=30.0)
+    # Cost lever: skip the rewrite when the question already looks standalone.
+    # Off for Phase 1 acceptance, because the heuristic can skip a genuinely
+    # context-dependent question that happens to contain no listed pronoun.
+    rewriter_skip_self_contained: bool = False
+
+    @model_validator(mode="after")
+    def _default_rewriter_provider(self) -> "Settings":
+        """`rewriter_provider` has a *dynamic* default: the configured
+        `llm_provider`. Pydantic class-level defaults are evaluated without
+        access to sibling field values, so the `None` sentinel is resolved
+        here — after `llm_provider` has been read from the environment and
+        validated. `object.__setattr__` bypasses assignment validation, which
+        a model validator on a possibly-frozen settings model must not
+        re-enter.
+        """
+        if self.rewriter_provider is None:
+            object.__setattr__(self, "rewriter_provider", self.llm_provider)
+        return self
 
     # ---- Evaluation (PLAN.md Phase 0) ----
     # Model used by the eval harness as LLM-as-judge for faithfulness and answer

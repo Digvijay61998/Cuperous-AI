@@ -21,11 +21,17 @@ class AnthropicProvider(LLMProvider):
         temperature: float,
         max_tokens: int,
         api_key: str,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(model, temperature, max_tokens)
         if not api_key:
             raise ValueError("anthropic provider selected but ANTHROPIC_API_KEY is not set")
-        self._client = Anthropic(api_key=api_key)
+        # Omitted rather than passed as None when not requested: `timeout=None`
+        # means "wait forever" to the SDK, which is not the current behaviour.
+        client_kwargs: dict = {"api_key": api_key}
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        self._client = Anthropic(**client_kwargs)
 
     def generate(self, messages: list[dict]) -> LLMResult:
         # Extract the system prompt; Anthropic takes it as a top-level arg.

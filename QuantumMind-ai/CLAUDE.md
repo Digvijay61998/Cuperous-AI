@@ -160,6 +160,14 @@ file back to `./volumes/*`. Finding **L24**, decision **D6**.
 regressed something. Record the delta in `PLAN.md` §7. This is the entire point
 of Phase 0.
 
+**Judge retrieval work on recall and precision.** The gate applies two
+tolerances: `0.02` to retriever and gate metrics, `0.08` to faithfulness /
+answer relevancy / answer correctness. Generator metrics are scored against text
+the LLM wrote and move ~0.06 run to run on *identical* code; retriever and gate
+metrics never touch the LLM and are stable to the digit. Do not tighten the
+generator tolerance without re-measuring across at least five runs. Finding
+**L26**, decision **D12**.
+
 ### 12. Tracing must never break a request
 `app/tracing.py` swallows its own errors by design. Keep it that way. A span that
 fails to record is an observability gap, not a 500.

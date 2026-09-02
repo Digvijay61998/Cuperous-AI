@@ -21,38 +21,38 @@ def _settings(**overrides) -> Settings:
 
 
 def test_openai_provider_is_default():
-    provider = build_provider(_settings(llm_provider="openai"))
+    s = _settings(llm_provider="openai")
+    provider = build_provider(s.llm_provider, s.llm_model, s.llm_temperature, s.llm_max_tokens, s)
     assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.name == "openai"
     assert provider.model == "gpt-4o-mini"
 
 
 def test_moonshot_uses_openai_compatible_client_with_moonshot_host():
-    provider = build_provider(
-        _settings(llm_provider="moonshot", llm_model="moonshot-v1-8k")
-    )
+    s = _settings(llm_provider="moonshot", llm_model="moonshot-v1-8k")
+    provider = build_provider(s.llm_provider, s.llm_model, s.llm_temperature, s.llm_max_tokens, s)
     assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.name == "moonshot"
     assert str(provider._client.base_url).startswith("https://api.moonshot.cn")
 
 
 def test_anthropic_provider_selected():
-    provider = build_provider(
-        _settings(llm_provider="anthropic", llm_model="claude-3-5-haiku-latest")
-    )
+    s = _settings(llm_provider="anthropic", llm_model="claude-3-5-haiku-latest")
+    provider = build_provider(s.llm_provider, s.llm_model, s.llm_temperature, s.llm_max_tokens, s)
     assert isinstance(provider, AnthropicProvider)
     assert provider.name == "anthropic"
 
 
 def test_missing_api_key_raises():
+    s = _settings(llm_provider="openai", openai_api_key="")
     with pytest.raises(ValueError):
-        build_provider(_settings(llm_provider="openai", openai_api_key=""))
+        build_provider(s.llm_provider, s.llm_model, s.llm_temperature, s.llm_max_tokens, s)
 
 
 def test_unknown_provider_raises():
-    # The Literal type blocks bad values at construction, so mutate afterwards to
-    # exercise the factory's defensive branch.
+    # The provider name is now an explicit argument rather than a Settings
+    # field, so the unknown value is passed straight in to exercise the
+    # factory's defensive branch — no post-construction mutation needed.
     s = _settings(llm_provider="openai")
-    s.llm_provider = "llama"
     with pytest.raises(ValueError):
-        build_provider(s)
+        build_provider("llama", s.llm_model, s.llm_temperature, s.llm_max_tokens, s)

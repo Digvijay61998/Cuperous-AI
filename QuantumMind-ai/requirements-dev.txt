@@ -3,5 +3,8 @@
 # Testing
 pytest==8.3.4
 
+# Property-based testing (tests/ only) — nothing under app/ imports this
+hypothesis==6.122.3
+
 # Evaluation harness (eval/) — reads the golden dataset
 pyyaml==6.0.2

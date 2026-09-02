@@ -83,6 +83,7 @@ reference to an ID.
 | L22 | 🟡 | No conversation memory beyond the last 6 turns passed in by the caller. No summarization, no persistence. | `services/query.py` | P7 |
 | L23 | 🟡 | **Golden corpus is too small to discriminate.** 5 documents → 5 chunks, and `top_k=5` retrieves nearly the whole corpus, so context recall is trivially 1.0 for every in-scope single-turn case. Measured at baseline: the `exact_match` cases (SKUs, error codes) **passed**, contradicting the predicted dense-retrieval failure. They cannot validate Phase 3 until the corpus grows to many competing near-duplicate chunks. | `eval/golden/dataset.yaml` | P3 |
 | L25 | 🔴 | ✅ *found and fixed during P0 review.* **The eval harness was dropping the production collection.** `runner.py` used `os.environ.setdefault("MILVUS_COLLECTION", ...)`, which is a no-op whenever the variable is already set — and it always is, because `.env` sets it and the Makefile passes `--env-file .env`. So every run ingested the golden corpus into `quantummind_knowledge` and **dropped it in teardown**. Fixed with a forced assignment plus a teardown guard that refuses to drop any collection other than the run's own. | `eval/runner.py` | P0 |
+| L26 | 🟠 | ✅ *found and fixed during P1.* **The CI regression gate failed on sampling noise.** `--compare` applied one 0.02 tolerance to all nine metrics. That tolerance came from three P0 runs; two further runs on *identical* code gave faithfulness 0.816 then 0.757 (spread 0.059) and correctness 0.626 then 0.603. So the gate reported a regression when nothing had changed — which trains everyone to ignore it, the worst outcome for a gate. Fixed by splitting the tolerance per metric layer: 0.02 for retriever and gate metrics (computed without the LLM, stable to the digit), 0.08 for the three generator metrics (scored against LLM-written text). | `eval/runner.py` | P1 |
 | L24 | 🔵 | **MinIO cannot use a host bind mount under Docker Desktop.** It writes `xl.meta` with `O_DIRECT`; the file-sharing layer rejects that with `invalid argument`, which panics Milvus on every flush and produces an endless crash loop. Fixed in P0 by moving etcd/MinIO/Milvus to Docker-managed named volumes. | `docker-compose.yml` | P0 (done) |
 
 ---
@@ -375,12 +376,22 @@ Full baseline, run `1ff70e1e` — `eval/results/baseline.json`:
 | latency p50 / p95 | ops | 1910 ms / 2636 ms |
 | tokens / est. cost | ops | 5 743 / $0.00086 |
 
-**Run-to-run variance.** Three deterministic runs gave faithfulness 0.828 /
-0.809 / 0.815 and correctness 0.634 / 0.629 / 0.653. The *metrics* are
-deterministic; the LLM's wording is not, so generator scores move ±0.02 while
-retriever and gate metrics are rock-steady at identical values. That is why
-`--compare` defaults to a 0.02 tolerance. Retrieval changes should be judged on
-recall and precision, which do not drift.
+**Run-to-run variance.** ⚠️ **The ±0.02 figure below was wrong — corrected in P1,
+see finding L26.** Three deterministic P0 runs gave faithfulness 0.828 / 0.809 /
+0.815 and correctness 0.634 / 0.629 / 0.653, which looked like ±0.02. Two further
+runs during Phase 1, on *identical* code, gave faithfulness 0.816 then 0.757 — a
+spread of 0.059, roughly triple the original estimate. Three samples were simply
+too few.
+
+The *metrics* are deterministic; the LLM's wording is not. Retriever and gate
+metrics are rock-steady at identical values because they are computed from source
+names and similarity scores without involving the LLM at all. Generator metrics
+are scored against text the model wrote and move regardless of temperature.
+
+`--compare` therefore uses **two** tolerances: `0.02` for retriever and gate
+metrics, `0.08` for faithfulness / answer relevancy / answer correctness
+(`--generator-tolerance`). Retrieval changes should still be judged on recall and
+precision, which do not drift.
 
 By tag (recall · precision · confidence):
 
@@ -434,6 +445,7 @@ relitigate settled questions.
 | D8 | 2026-07-30 | Implement the metrics ourselves instead of depending on RAGAS | RAGAS pulls a large LangChain-adjacent dependency tree into a service whose whole shape is small and pinned, and it requires an LLM for every metric — which breaks the free/no-key property. Our four core metrics are ~200 lines. Revisit if we need the full RAGAS metric catalogue. |
 | D9 | 2026-07-30 | Tracing is stdlib-only (`ContextVar` spans), not OpenTelemetry | Zero new dependencies, no collector to run, and it reuses the existing `x-request-id` correlation. If we later need distributed traces across the NestJS backend, swap in OTel behind the same `span()` API. |
 | D10 | 2026-07-30 | The harness drives the real `QueryService`, not a simplified copy | A reimplemented pipeline would measure the harness. Each run gets its own collection (`eval_<hex>`) and client id, dropped in teardown, so isolation comes from namespacing rather than from mocking. |
+| D12 | 2026-08-05 | The regression gate uses **two tolerances**, split by metric layer: 0.02 for retriever and gate metrics, 0.08 for generator metrics | The nine metrics are not equally stable, and treating them as if they were made the gate useless. Retriever and gate metrics never touch the LLM — they come from source names and similarity scores — and were byte-identical across five runs. Generator metrics are scored against LLM-written text and moved 0.059 between two runs of unchanged code. One tolerance either fails on noise (at 0.02) or goes blind to real retrieval regressions (at 0.08). Two tolerances keep it strict where strictness is meaningful. The 0.08 figure is empirical, not derived: re-measure it if the corpus or judge model changes. Prompted by finding L26. |
 | D11 | 2026-07-30 | Teardown verifies its target instead of trusting config | Teardown is the harness's only destructive operation. It now refuses to drop any collection whose name is not this run's `eval_<hex>`. A mis-resolved setting should cost a leaked eval collection, never production data. Prompted by finding L25. |
 
 ---
@@ -452,6 +464,7 @@ relitigate settled questions.
 | MinIO `O_DIRECT` fails on host bind mounts | Keep etcd/MinIO/Milvus on **named volumes**. If someone reverts to `./volumes/*`, Milvus crash-loops with `invalid argument` on flush. See L24 / D6. |
 | Golden corpus too small to discriminate | 5 docs make recall trivially 1.0 and precision artificially low. Grow the corpus before trusting Phase 2/3 deltas. See L23. |
 | Deterministic metrics are lexical proxies | Good for regression detection, bad as absolutes. Confirm any headline claim with `make eval-judge`. |
+| Generator metrics drift more than they look like they do | Measured spread is ~0.06 on identical code, not the ±0.02 three P0 runs suggested. The gate uses a separate 0.08 generator tolerance (D12). Do not tighten it back without re-measuring across at least five runs. |
 | Eval runs make live LLM calls | ~$0.001 per deterministic run on `gpt-4o-mini`. Budget accordingly if the corpus grows 10×. |
 | Eval teardown is destructive | It drops a collection. The guard added for L25 only drops `eval_<hex>`. Never relax that check, and never point the harness at a production collection to "test with real data". |
 | Docker network state can desync | Seen during P0: `milvus-standalone` was healthy but had no IP on the compose network, so container-to-container DNS failed while the healthcheck passed (it probes localhost). `docker compose down` then `make up-storage` fixes it. Do not hand-patch with `docker network connect` — Milvus loses its etcd lease and exits. |

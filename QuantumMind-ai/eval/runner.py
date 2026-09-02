@@ -133,11 +133,15 @@ class EvalRunner:
             from app.llm.factory import build_provider
 
             settings = get_settings()
-            # Judge with eval_judge_model, independent of the model under test.
-            judge_settings = settings.model_copy(
-                update={"llm_model": settings.eval_judge_model, "llm_temperature": 0.0}
+            # Judge with eval_judge_model at temperature 0, independent of the
+            # model under test. The four configuration values are passed
+            # explicitly, so no copy of Settings is needed to carry them.
+            self._judge = build_provider(
+                settings.llm_provider,
+                settings.eval_judge_model,
+                0.0,
+                settings.llm_max_tokens,
             )
-            self._judge = build_provider(judge_settings)
             logger.info("[EVAL] judge model: %s", settings.eval_judge_model)
         return self._judge
 
@@ -342,7 +346,7 @@ class EvalRunner:
         settings = get_settings()
 
         logger.info("=" * 72)
-        logger.info("JarCube AI — evaluation run")
+        logger.info("QuantumMind AI — evaluation run")
         logger.info("=" * 72)
         logger.info("  run id          : %s", _RUN_ID)
         logger.info("  collection      : %s", settings.milvus_collection)
@@ -534,16 +538,63 @@ _HIGHER_IS_BETTER = [
 ]
 _LOWER_IS_BETTER = ["false_negative_rate", "false_positive_rate"]
 
+# Generator metrics are scored against text the LLM wrote, so they move run to
+# run even with identical code, an identical corpus and temperature 0. Retriever
+# and gate metrics are computed from source names and similarity scores, which do
+# not involve the LLM at all, so they are stable to the digit.
+#
+# MEASURED, and this is why the split exists. Two consecutive runs of *identical*
+# code at rewriter_strategy=none during Phase 1 gave:
+#
+#   faithfulness        0.816  then  0.757   (spread 0.059)
+#   answer_correctness  0.626  then  0.603   (spread 0.050)
+#   answer_relevancy    0.463  then  0.507   (spread 0.044)
+#   context_recall      0.895  then  0.895   (identical)
+#   context_precision   0.588  then  0.588   (identical)
+#   confidence_accuracy 0.913  then  0.913   (identical)
+#
+# PLAN.md §7 originally recorded generator drift as ±0.02 from three Phase 0
+# runs. That sample was too small: the real spread is roughly triple it. A single
+# 0.02 tolerance across all nine metrics therefore fails the build on sampling
+# noise, which trains everyone to ignore the gate — the worst possible outcome
+# for a regression gate.
+#
+# So the tolerance is per-layer: strict where the numbers are deterministic,
+# loose enough on generator metrics to clear observed noise. Judge retrieval work
+# on recall and precision, which is what Phase 1 onwards actually targets.
+_GENERATOR_METRICS = frozenset(
+    {"faithfulness", "answer_relevancy", "answer_correctness"}
+)
+
+#: Default for retriever and gate metrics. These are stable, so a real move here
+#: is signal and should fail the build.
+DEFAULT_TOLERANCE = 0.02
+
+#: Default for generator metrics. Above the 0.059 worst case measured above, with
+#: a little headroom. Deliberately not derived from a formula — it is an empirical
+#: bound and should be re-derived if the corpus or the judge model changes.
+DEFAULT_GENERATOR_TOLERANCE = 0.08
+
+
+def tolerance_for(metric: str, tolerance: float, generator_tolerance: float) -> float:
+    """Per-layer tolerance. See the _GENERATOR_METRICS comment for the reasoning."""
+    return generator_tolerance if metric in _GENERATOR_METRICS else tolerance
+
 
 def compare_to_baseline(
     report: dict[str, Any],
     results_dir: Path,
     tolerance: float,
+    generator_tolerance: float = DEFAULT_GENERATOR_TOLERANCE,
 ) -> bool:
     """Compare against baseline.json. Returns True if acceptable.
 
     Tolerance exists because LLM output is non-deterministic; without it CI would
-    flap on noise. It does not apply in deterministic mode where runs are stable.
+    flap on noise. Two tolerances, because the nine metrics are not equally
+    stable: ``tolerance`` governs the retriever and gate metrics, which are
+    computed without the LLM and are stable to the digit, and
+    ``generator_tolerance`` governs the three metrics scored against LLM-written
+    text, which are not.
     """
     base_path = results_dir / "baseline.json"
     if not base_path.exists():
@@ -557,41 +608,50 @@ def compare_to_baseline(
     print("=" * 72)
     print(f"COMPARISON vs BASELINE  ({base['timestamp'][:19]})")
     print("=" * 72)
-    print(f"  {'METRIC':<24} {'BASE':>8} {'NOW':>8} {'DELTA':>9}")
-    print("  " + "-" * 54)
+    print(f"  {'METRIC':<24} {'BASE':>8} {'NOW':>8} {'DELTA':>9} {'TOL':>6}")
+    print("  " + "-" * 61)
 
     regressions: list[str] = []
 
     for key in _HIGHER_IS_BETTER:
         b, c = bs.get(key, 0.0), cs.get(key, 0.0)
+        tol = tolerance_for(key, tolerance, generator_tolerance)
         delta = c - b
         flag = ""
-        if delta < -tolerance:
+        if delta < -tol:
             flag = "  REGRESSION"
-            regressions.append(f"{key}: {b:.3f} -> {c:.3f}")
-        elif delta > tolerance:
+            regressions.append(f"{key}: {b:.3f} -> {c:.3f} (tol {tol:.3f})")
+        elif delta > tol:
             flag = "  improved"
-        print(f"  {key:<24} {b:>8.3f} {c:>8.3f} {delta:>+9.3f}{flag}")
+        print(f"  {key:<24} {b:>8.3f} {c:>8.3f} {delta:>+9.3f} {tol:>6.3f}{flag}")
 
     for key in _LOWER_IS_BETTER:
         b, c = bs.get(key, 0.0), cs.get(key, 0.0)
+        tol = tolerance_for(key, tolerance, generator_tolerance)
         delta = c - b
         flag = ""
-        if delta > tolerance:
+        if delta > tol:
             flag = "  REGRESSION"
-            regressions.append(f"{key}: {b:.3f} -> {c:.3f}")
-        elif delta < -tolerance:
+            regressions.append(f"{key}: {b:.3f} -> {c:.3f} (tol {tol:.3f})")
+        elif delta < -tol:
             flag = "  improved"
-        print(f"  {key:<24} {b:>8.3f} {c:>8.3f} {delta:>+9.3f}{flag}")
+        print(f"  {key:<24} {b:>8.3f} {c:>8.3f} {delta:>+9.3f} {tol:>6.3f}{flag}")
 
     print()
+    print(
+        f"  tolerance: {tolerance:.3f} retriever/gate · "
+        f"{generator_tolerance:.3f} generator (faithfulness, relevancy, correctness)"
+    )
+    print("  generator metrics are scored against LLM-written text and move run to")
+    print("  run; retriever and gate metrics do not involve the LLM and are stable.")
+    print()
     if regressions:
-        print(f"  {len(regressions)} REGRESSION(S) (tolerance {tolerance:.3f}):")
+        print(f"  {len(regressions)} REGRESSION(S):")
         for r in regressions:
             print(f"    - {r}")
         print("=" * 72)
         return False
-    print(f"  No regressions beyond tolerance {tolerance:.3f}.")
+    print("  No regressions beyond tolerance.")
     print("=" * 72)
     return True
 
@@ -601,7 +661,7 @@ def compare_to_baseline(
 # ---------------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="JarCube AI evaluation harness (PLAN.md Phase 0)"
+        description="QuantumMind AI evaluation harness (PLAN.md Phase 0)"
     )
     parser.add_argument(
         "--mode",
@@ -616,7 +676,21 @@ def main() -> int:
     parser.add_argument("--case", nargs="*", default=None, help="only these case ids")
     parser.add_argument("--baseline", action="store_true", help="write baseline.json")
     parser.add_argument("--compare", action="store_true", help="diff vs baseline; exit 1 on regression")
-    parser.add_argument("--tolerance", type=float, default=0.02)
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_TOLERANCE,
+        help="regression tolerance for retriever and gate metrics, which are "
+             f"computed without the LLM and are stable (default {DEFAULT_TOLERANCE})",
+    )
+    parser.add_argument(
+        "--generator-tolerance",
+        type=float,
+        default=DEFAULT_GENERATOR_TOLERANCE,
+        help="regression tolerance for faithfulness, answer relevancy and answer "
+             "correctness, which are scored against LLM-written text and drift "
+             f"run to run (default {DEFAULT_GENERATOR_TOLERANCE})",
+    )
     parser.add_argument("--keep-collection", action="store_true", help="skip teardown (debugging)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -653,7 +727,13 @@ def main() -> int:
     print()
 
     if args.compare:
-        return 0 if compare_to_baseline(report, results_dir, args.tolerance) else 1
+        ok = compare_to_baseline(
+            report,
+            results_dir,
+            args.tolerance,
+            args.generator_tolerance,
+        )
+        return 0 if ok else 1
     return 0
 
 

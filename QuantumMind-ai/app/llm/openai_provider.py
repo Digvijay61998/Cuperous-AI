@@ -25,6 +25,7 @@ class OpenAICompatibleProvider(LLMProvider):
         api_key: str,
         base_url: str,
         provider_name: str = "openai",
+        timeout: float | None = None,
     ) -> None:
         super().__init__(model, temperature, max_tokens)
         if not api_key:
@@ -32,7 +33,14 @@ class OpenAICompatibleProvider(LLMProvider):
                 f"{provider_name} provider selected but its API key is not set"
             )
         self.name = provider_name
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        # A client-level timeout is the only mechanism that actually closes the
+        # socket. It is omitted entirely when not requested: passing
+        # `timeout=None` to the SDK means "wait forever", which is a behaviour
+        # change, not a no-op. Absent the kwarg the SDK keeps its own default.
+        client_kwargs: dict = {"api_key": api_key, "base_url": base_url}
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        self._client = OpenAI(**client_kwargs)
 
     def generate(self, messages: list[dict]) -> LLMResult:
         completion = self._client.chat.completions.create(
