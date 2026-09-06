@@ -1,8 +1,6 @@
-import { HttpService } from '@nestjs/axios';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
+import { Injectable, Logger } from '@nestjs/common';
 import { ChannelEnum, ProviderIdEnum } from '../enums/channel.enum';
+import { BaileysEngineService } from 'src/whatsapp-web/engine/baileys-engine.service';
 import {
   MessagingProvider,
   OutboundMessage,
@@ -12,110 +10,66 @@ import {
 } from '../interfaces/messaging-provider.interface';
 
 /**
- * OpenWA provider — talks to a self-hosted OpenWA gateway
- * (github.com/rmyndharis/OpenWA) which drives WhatsApp via the UNOFFICIAL
- * whatsapp-web.js/baileys protocol.
+ * WhatsApp Web provider — drives WhatsApp through the NATIVE in-process baileys
+ * engine (ported from OpenWA). Previously this called a self-hosted OpenWA
+ * gateway over HTTP; it now sends directly via {@link BaileysEngineService}, so
+ * no external service is required.
  *
- * WARNING: This automates a personal WhatsApp Web session. It violates
- * WhatsApp's Terms of Service and carries a real risk of the number being
- * banned. It exists ONLY as a development/QA provider so workflow logic can be
- * tested end-to-end before official Cloud API verification completes. It refuses
- * to run in production unless the operator explicitly opts in for a throwaway
- * number (WHATSAPP_ALLOW_OPENWA_PROD=true).
+ * The session to send from is carried on the conversation context
+ * (`ctx.whatsappWeb.sessionName`), set when the inbound message was routed.
+ *
+ * WARNING: this automates a personal WhatsApp Web session (unofficial protocol)
+ * and carries a real risk of the number being banned. It is intended for the
+ * self-linked numbers managed under Social Messengers → WhatsApp Web.
  */
 @Injectable()
-export class WhatsappOpenWaProvider implements MessagingProvider, OnModuleInit {
+export class WhatsappOpenWaProvider implements MessagingProvider {
   readonly channel = ChannelEnum.WHATSAPP;
   readonly providerId = ProviderIdEnum.WHATSAPP_OPENWA;
-  readonly displayName = 'WhatsApp (OpenWA — dev/testing only)';
+  readonly displayName = 'WhatsApp Web (baileys — self-linked number)';
   readonly productionSafe = false;
 
   private readonly logger = new Logger(WhatsappOpenWaProvider.name);
 
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly httpService: HttpService,
-  ) {}
-
-  onModuleInit() {
-    const env = this.configService.get('app.env') || process.env.NODE_ENV;
-    const allowInProd =
-      this.configService.get('whatsapp.allowOpenWaInProd') === true ||
-      process.env.WHATSAPP_ALLOW_OPENWA_PROD === 'true';
-    if (env === 'production' && !allowInProd) {
-      this.logger.error(
-        'WhatsappOpenWaProvider is registered in a production environment. ' +
-          'OpenWA is UNOFFICIAL and risks number bans. It will refuse to send ' +
-          'unless WHATSAPP_ALLOW_OPENWA_PROD=true is explicitly set.',
-      );
-    }
-  }
+  constructor(private readonly engine: BaileysEngineService) {}
 
   supportsFeature(feature: ProviderFeature): boolean {
-    // whatsapp-web.js cannot send native cta_url interactive buttons — the URL
-    // is sent as plain text instead (see sendMessage fallback).
+    // No reliable native interactive buttons; URLs/buttons degrade to text.
     return ['text', 'media'].includes(feature);
-  }
-
-  private get baseUrl(): string {
-    return (
-      this.configService.get('whatsapp.openwa.baseUrl') ||
-      'http://localhost:2785/api'
-    );
-  }
-  private get apiKey(): string {
-    return this.configService.get('whatsapp.openwa.apiKey') || '';
-  }
-  private get sessionId(): string {
-    return this.configService.get('whatsapp.openwa.sessionId') || 'default';
-  }
-
-  private guardProduction(): SendResult | null {
-    const env = this.configService.get('app.env') || process.env.NODE_ENV;
-    const allowInProd =
-      this.configService.get('whatsapp.allowOpenWaInProd') === true ||
-      process.env.WHATSAPP_ALLOW_OPENWA_PROD === 'true';
-    if (env === 'production' && !allowInProd) {
-      return {
-        status: 'failed',
-        error:
-          'OpenWA is disabled in production. Set WHATSAPP_ALLOW_OPENWA_PROD=true to override (not recommended).',
-      };
-    }
-    return null;
   }
 
   async sendMessage(
     recipient: string,
     message: OutboundMessage,
-    _ctx: ProviderContext,
+    ctx: ProviderContext,
   ): Promise<SendResult> {
-    const blocked = this.guardProduction();
-    if (blocked) return blocked;
+    const sessionName = ctx?.whatsappWeb?.sessionName;
+    const to = ctx?.whatsappWeb?.recipient || recipient;
+    if (!sessionName) {
+      return {
+        status: 'failed',
+        error: 'No WhatsApp Web session in context (ctx.whatsappWeb.sessionName)',
+      };
+    }
 
     try {
-      // OpenWA chatId format: <number>@c.us
-      const chatId = recipient.includes('@')
-        ? recipient
-        : `${recipient.replace(/\D/g, '')}@c.us`;
+      if (message.type === 'image' && message.mediaUrl) {
+        await this.engine.sendImage(sessionName, to, message.mediaUrl, message.caption);
+        return { status: 'success' };
+      }
 
       let text = message.text || '';
       if (message.type === 'cta_url' && message.cta) {
-        // No native CTA button — degrade to a labelled link.
         text = `${message.cta.displayText}: ${message.cta.url}`;
       }
-
-      await firstValueFrom(
-        this.httpService.post(
-          `${this.baseUrl}/sessions/${this.sessionId}/messages/send-text`,
-          { chatId, text },
-          { headers: { 'X-API-Key': this.apiKey } },
-        ),
-      );
+      if (!text) {
+        return { status: 'failed', error: 'Empty message' };
+      }
+      await this.engine.sendText(sessionName, to, text);
       return { status: 'success' };
     } catch (error) {
-      this.logger.error(`OpenWA send failed: ${error.message}`);
-      return { status: 'failed', error: error.message };
+      this.logger.error(`WhatsApp Web send failed: ${error?.message}`);
+      return { status: 'failed', error: error?.message };
     }
   }
 }

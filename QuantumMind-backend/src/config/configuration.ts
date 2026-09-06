@@ -20,7 +20,7 @@ export default () => ({
   },
   port: parseInt(process.env.PORT, 10) || 4000,
   database: {
-    url: process.env.MONGO_URI || "mongodb://localhost:27017/engage",
+    url: process.env.MONGO_URI,
   },
   aws: {
     enabled: process.env.AWS_ENABLED || false,
@@ -175,6 +175,15 @@ export default () => ({
     },
   },
 
+  // WhatsApp Web (baileys) — native in-process engine ported from OpenWA.
+  // Unlike the Meta Cloud API "whatsapp" platform, this drives a personal
+  // WhatsApp Web session via QR / phone-number pairing. `dataPath` is where each
+  // session's auth credentials are persisted (must be a stable, writable dir so
+  // linked numbers survive a restart).
+  whatsappWeb: {
+    dataPath: process.env.WHATSAPP_WEB_DATA_PATH || "./data/whatsapp-web",
+  },
+
   nlp: {
     url: process.env.NLP_URL || "http://localhost:5000",
   },
@@ -192,5 +201,23 @@ export default () => ({
   delay: {
     node: process.env.NODE_DELAY || 1000,
     message: process.env.MESSAGE_DELAY || 750,
+  },
+
+  // In-memory conversation state (SocketStateService) bounds.
+  //
+  // Social-platform conversations (WhatsApp/Telegram/Facebook) have no socket to
+  // signal their end, so without these bounds their state entries accumulate for
+  // the life of the process. An evicted entry is rebuilt from the bot's start
+  // node on the visitor's next message, so eviction costs mid-flow progress, not
+  // availability.
+  socketState: {
+    // How long an entry may sit untouched before it is eligible for eviction.
+    idleTtlMs:
+      parseInt(process.env.SOCKET_STATE_IDLE_TTL_MS, 10) || 2 * 60 * 60 * 1000,
+    // Hard cap; the least-recently-used entries are dropped beyond it.
+    maxEntries: parseInt(process.env.SOCKET_STATE_MAX_ENTRIES, 10) || 20000,
+    // How often the sweep runs.
+    sweepIntervalMs:
+      parseInt(process.env.SOCKET_STATE_SWEEP_INTERVAL_MS, 10) || 5 * 60 * 1000,
   },
 });

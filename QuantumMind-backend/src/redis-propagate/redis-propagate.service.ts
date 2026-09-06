@@ -58,13 +58,33 @@ export class RedisPropagatorService {
   private consumeSendEvent = (eventInfo: RedisSocketEventSendDTO): void => {
     const { userId, event, data, platform } = eventInfo;
     const userData = this.socketStateService.getUserData(userId);
-    if (!userData) return;
-    const { ctx } = userData;
+    // NOTE: absent conversation state is NOT fatal for a social channel.
+    //
+    // This used to `return` whenever `userData` was missing, which silently
+    // dropped every outbound message once the in-memory state had been evicted
+    // (idle TTL, LRU, or a restart) — the exact situation in which an agent is
+    // most likely to be replying to a WhatsApp customer. The channel handlers
+    // can recover the reply address from the durable ChannelThread, so they are
+    // given the chance to.
+    //
+    // The widget branch below genuinely does need the state, because the message
+    // is delivered over that visitor's live socket; it keeps its own guard.
+    const ctx = userData?.ctx;
 
     if (platform === PlatformEnum.WHATSAPP) {
       this.eventEmitter.emit("send-whatsapp-message", {
         ctx,
         message: data.message,
+      });
+    } else if (platform === PlatformEnum.WHATSAPP_WEB) {
+      // Delivered by WhatsappWebInboundService via the local baileys engine.
+      // `userId` is passed so the handler can recover the reply address from the
+      // durable ChannelThread when `ctx` is absent — which is the normal case
+      // after a restart or once idle conversation state has been evicted.
+      this.eventEmitter.emit("send-whatsapp-web-message", {
+        ctx,
+        message: data.message,
+        userId,
       });
     } else if (platform === PlatformEnum.FACEBOOK) {
       this.eventEmitter.emit("send-facebook-message", {
@@ -77,6 +97,9 @@ export class RedisPropagatorService {
         message: data.message,
       });
     } else {
+      // Widget / dashboard delivery: needs a live socket for this user, so an
+      // absent state entry really does mean there is nowhere to deliver.
+      if (!userData) return;
       const sockets = this.socketStateService.getSocket(userId);
 
       sockets &&

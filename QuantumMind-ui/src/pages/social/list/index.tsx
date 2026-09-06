@@ -40,6 +40,7 @@ import { Tooltip } from '@mui/material';
 import returnPlatformIcon from 'src/components/PlatforomIcons';
 import { fetchBotData } from 'src/store/apps/bots';
 import { deleteSocial, fetchSocialList, updateSocialStatus } from 'src/store/apps/social';
+import WhatsappWebActions from 'src/views/social/list/WhatsappWebActions';
 import { getSocialsCardStats } from 'src/store/apps/states';
 import DeleteDialog from 'src/views/social/DeleteDialog';
 import AddEditSocial from 'src/views/social/list/AddEditSocial';
@@ -310,6 +311,16 @@ console.log("filteredDatafilteredData",platform)
       headerName: 'Actions',
       headerClassName:'custom-header',
       renderCell: ({ row }: any) => {
+        if (row?.platform === 'whatsapp_web') {
+          return (
+            <WhatsappWebActions
+              row={row}
+              onChanged={() => dispatch(fetchSocialList({ platform, status, bot }))}
+              onEdit={() => toggleEditSocialDrawer({ method: 'edit', ...row })}
+            />
+          );
+        }
+
         return (
           <>
             <Tooltip placement='top' title="Edit" arrow>

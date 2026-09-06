@@ -37,6 +37,7 @@ import { JarCubeModule } from "./jarcube/jarcube.module";
 import { FacebookModule } from "./facebook/facebook.module";
 import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
+import { ChannelThreadModule } from "./channel-thread/channel-thread.module";
 import { VideoModule } from "./video/video.module";
 import { TemplateModule } from "./template/template.module";
 import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
@@ -44,6 +45,7 @@ import { MessagingModule } from "./messaging/messaging.module";
 import { TemplateSessionModule } from "./template-session/template-session.module";
 import { ScheduleModule } from "@nestjs/schedule";
 import { WhatsappModule } from "./whatsapp/whatsapp.module";
+import { WhatsappWebModule } from "./whatsapp-web/whatsapp-web.module";
 import { MailsModule } from "./mails/mails.module";
 import { SocialModule } from "./social/social.module";
 import { ScrapeModule } from "./scraper/scraper.module";
@@ -72,6 +74,7 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     TicketsModule,
     WebhookModule,
     ConversationModule,
+    ChannelThreadModule,
     RedisModule,
     SocketModule,
     RedisPropagateModule,
@@ -95,6 +98,7 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     TemplateSessionModule,
     ScheduleModule.forRoot(),
     WhatsappModule,
+    WhatsappWebModule,
     MailsModule,
     SocialModule,
   ],

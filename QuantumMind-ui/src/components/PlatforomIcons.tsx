@@ -5,6 +5,8 @@ export default function returnPlatformIcon(platform: string) {
       return <Icon icon={'logos:telegram'} fontSize='20'/>
     } else if(platform?.toLowerCase() === 'whatsapp') {
       return <Icon icon={'logos:whatsapp-icon'} fontSize='20'/>
+    } else if(platform?.toLowerCase() === 'whatsapp_web') {
+      return <Icon icon={'logos:whatsapp-icon'} fontSize='20'/>
     } else if(platform?.toLowerCase() === 'facebook') {
       return <Icon icon={'logos:facebook'} fontSize='20'/>
     } else if(platform?.toLowerCase() === 'widget') {

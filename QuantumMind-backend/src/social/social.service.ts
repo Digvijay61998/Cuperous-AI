@@ -4,7 +4,7 @@ import { UpdateSocialDto } from './dto/update-social.dto';
 import { SOCIAL_PROVIDER } from './constants';
 import { SocialDocument } from './entities/social.entity';
 import mongoose, { Model } from 'mongoose';
-import { SocialPlatformEnumList } from './enums/social-platform.enum';
+import { SocialPlatformEnum, SocialPlatformEnumList } from './enums/social-platform.enum';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, randomBytes, scrypt, createDecipheriv } from 'crypto';
 import { promisify } from 'util';
@@ -482,6 +482,64 @@ export class SocialService {
       return data;
     } catch (error) {
       this.logger.error(`Error getting stats: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  // ==========================================================================
+  // WhatsApp Web (baileys) helpers
+  //
+  // The WhatsApp Web platform has no access token (it links via QR / phone
+  // pairing), so it bypasses the encrypt-on-create path used by the token-based
+  // platforms. The Social row here is just the list representation of a session
+  // that the WhatsappWebModule owns; status flips to `published` on connect.
+  // ==========================================================================
+
+  async createWhatsappWebSocial(data: { name: string; jarcubeBot: string }) {
+    try {
+      const social = await this.socialModel.create({
+        name: data.name,
+        platform: SocialPlatformEnum.WHATSAPP_WEB,
+        jarcubeBot: data.jarcubeBot,
+        status: SocialStatusEnum.DRAFT,
+      });
+      return social;
+    } catch (error) {
+      this.logger.error(`Error creating WhatsApp Web social: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  async setStatusById(id: string, status: string) {
+    try {
+      return await this.socialModel.findByIdAndUpdate(
+        id,
+        { status },
+        { new: true },
+      );
+    } catch (error) {
+      this.logger.error(`Error updating social status: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  async updateWhatsappWebMeta(
+    id: string,
+    data: { sessionId?: string; sessionStatus?: string; status?: string },
+  ) {
+    try {
+      return await this.socialModel.findByIdAndUpdate(id, data, { new: true });
+    } catch (error) {
+      this.logger.error(`Error updating WhatsApp Web social meta: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  async deleteById(id: string) {
+    try {
+      return await this.socialModel.findByIdAndDelete(id);
+    } catch (error) {
+      this.logger.error(`Error deleting social: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }

@@ -1,6 +1,7 @@
 import { HttpModule } from '@nestjs/axios';
 import { Module, OnModuleInit } from '@nestjs/common';
 import { FeatureFlagsModule } from 'src/feature-flags/feature-flags.module';
+import { WhatsappWebEngineModule } from 'src/whatsapp-web/engine/whatsapp-web-engine.module';
 import { MessagingController } from './messaging.controller';
 import { MessagingProviderRegistry } from './messaging-provider.registry';
 import { FacebookProvider } from './providers/facebook.provider';
@@ -10,7 +11,7 @@ import { WhatsappOpenWaProvider } from './providers/whatsapp-openwa.provider';
 import { WidgetNativeProvider } from './providers/widget-native.provider';
 
 @Module({
-  imports: [HttpModule, FeatureFlagsModule],
+  imports: [HttpModule, FeatureFlagsModule, WhatsappWebEngineModule],
   controllers: [MessagingController],
   providers: [
     MessagingProviderRegistry,

@@ -92,8 +92,16 @@ export class JarCubeGateway implements OnGatewayConnection {
             time: new Date().toISOString(),
             id: generateId("message", 10),
           },
-        },
-        platform
+        }
+        // NOTE: the sender's `platform` is deliberately NOT passed here.
+        //
+        // `platform` above is read from the AGENT's own socket state, but this
+        // message is going to the VISITOR — so the transport must be the
+        // visitor's, not the agent's. Passing the agent's value meant a reply to
+        // a WhatsApp customer could be emitted on the wrong channel (or, for an
+        // agent whose state carried no platform, only worked by accident).
+        // Omitting it makes emitEventToUser resolve the platform from the
+        // recipient's own state, which is correct for every channel.
       );
     }
 

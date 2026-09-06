@@ -548,13 +548,26 @@ export class VisitorService {
     visitor: CreateVisitorDto
   ): Promise<string> {
     const username = visitor.username;
-    const visitorData = await this.visitorModel.findOne({ username });
+    const visitorData = await this.visitorModel.findOne({ username, bot: visitor.bot });
     if (visitorData) {
       return visitorData.id;
     }
 
-    const result = await this.visitorModel.create(visitor);
-    return result.id;
+    try {
+      const result = await this.visitorModel.create(visitor);
+      return result.id;
+    } catch (error) {
+      // E11000 = duplicate key from the unique (username, bot) index.
+      // Another concurrent request won the race — fetch their result.
+      if (error.code === 11000) {
+        const existing = await this.visitorModel.findOne({
+          username,
+          bot: visitor.bot,
+        });
+        if (existing) return existing.id;
+      }
+      throw error;
+    }
   }
   async getHandledByAgentReport(query: ReportParamsDto) {
     return await this.conversationService.getDateWiseConversations(query, true);

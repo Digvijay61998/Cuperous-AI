@@ -40,6 +40,15 @@ export class Social {
     default: SocialStatusEnum.DRAFT,
   })
   status: string;
+
+  // WhatsApp Web only: link back to the WhatsappWebSession this row represents,
+  // and a denormalised copy of its live status so the list can drive the
+  // OpenWA-style session action buttons without a second lookup.
+  @Prop()
+  sessionId: string;
+
+  @Prop()
+  sessionStatus: string;
 }
 
 export const SocialSchema = SchemaFactory.createForClass(Social);

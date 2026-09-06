@@ -95,12 +95,16 @@ interface UserInputMatch {
 @Injectable()
 export class MessageHandlerService {
   private readonly logger = new Logger(MessageHandlerService.name);
-  private user: AuthenticatedSocket;
-  private language: string;
 
-  private ctx: any;
-  private chatId: string;
-  private delay: Record<string, number> = {};
+  // NOTE: this service is a singleton and every method below runs concurrently
+  // for different visitors. Per-conversation values (the visitor, the turn's
+  // language, the current chat row, the send-delay baseline, the channel ctx)
+  // therefore must NOT be stored on `this` — they live in SocketStateService,
+  // keyed by visitor id, or are passed as arguments. They used to be instance
+  // fields, which meant a visitor's message arriving during another's `await`
+  // overwrote them and the first flow resumed with the second's values: replies
+  // addressed to the wrong WhatsApp number, and PII masking applied to the wrong
+  // chat row. See SocketState's "per-conversation turn context" block.
   constructor(
     private readonly botsService: BotsService,
     private readonly socketStateService: SocketStateService,
@@ -138,8 +142,7 @@ export class MessageHandlerService {
     this.logger.debug(`[FLOW] ${step}${detail ? ` :: ${detail}` : ""}`);
   }
 
-  async handleBlockedContent() {
-    const userId = this.user.auth.userId;
+  async handleBlockedContent(userId: string) {
     return await this.sendBotMessage(userId, [
       {
         type: "text",
@@ -155,10 +158,7 @@ export class MessageHandlerService {
     language = "english",
     ctx?: any
   ): Promise<any> {
-    this.user = user;
-    this.language = language;
-    const userId = this.user.auth.userId;
-    this.ctx = ctx;
+    const userId = user?.auth?.userId;
 
     console.log(
       `\n>>> [handleMessage] ENTER | userId=${userId} type=${type} message=${JSON.stringify(message).slice(0, 150)}`
@@ -179,12 +179,24 @@ export class MessageHandlerService {
       `>>> [handleMessage] currentNode=${currentNode.nodeType} id=${currentNode.id} conv=${conversationId}`
     );
 
-    // Fresh node-traversal budget for this inbound message (loop protection).
-    this.socketStateService.updateUserData(userId, { nodeHops: 0 });
+    // Fresh node-traversal budget for this inbound message (loop protection),
+    // plus this turn's context. Stored per visitor rather than on `this` so
+    // concurrent conversations cannot overwrite each other's values (see the
+    // note on the class). Written only AFTER the guards above, so a message for
+    // an unknown visitor never creates an entry.
+    this.socketStateService.updateUserData(userId, {
+      nodeHops: 0,
+      visitorName: user?.auth?.name,
+      language,
+      // The channel context (how to reply) belongs to the conversation. Only
+      // overwrite it when this turn actually carries one — the widget path
+      // passes none and must not clear a social channel's ctx.
+      ...(ctx ? { ctx } : {}),
+    });
 
     // Reset the per-conversation send-delay baseline for every inbound message.
-    // `this.delay` lives on a singleton service and is keyed by conversationId;
-    // sendBotMessage only ever INCREASES it (by ~nodeDelay per call) and it was
+    // The baseline lives in this visitor's conversation state; sendBotMessage
+    // only ever INCREASES it (by ~nodeDelay per call) and it was
     // never zeroed between turns. Left unreset it climbs unbounded, so later
     // bot messages get scheduled (via setTimeout) many seconds into the future
     // and appear to "never arrive" — which is exactly how the static flow broke
@@ -192,7 +204,7 @@ export class MessageHandlerService {
     // Zeroing here makes each turn schedule from "now" while still staggering
     // multiple messages within the same turn.
     if (conversationId) {
-      this.delay[conversationId] = 0;
+      this.socketStateService.updateUserData(userId, { messageDelay: 0 });
     }
 
     this.trace(
@@ -205,7 +217,7 @@ export class MessageHandlerService {
 
     if (mode !== ModeEnum.preview && conversationId && message) {
       const chatId = generateId("chat", 10);
-      this.chatId = chatId;
+      this.socketStateService.updateUserData(userId, { currentChatId: chatId });
       this.eventEmitter.emit("create.new.chat", {
         sender: userId,
         message: message,
@@ -220,7 +232,7 @@ export class MessageHandlerService {
         ?.blockedContent || [];
     const isBlocked = blockedContent.some((content: string) => {
       if (message && message.toLowerCase().includes(content.toLowerCase())) {
-        return this.handleBlockedContent();
+        return this.handleBlockedContent(userId);
       }
     });
 
@@ -292,9 +304,9 @@ export class MessageHandlerService {
 
     const list: string[] = [NodeTypeEnum.QUESTIONS, NodeTypeEnum.USER_INPUT];
     if (list.includes(currentNode.nodeType)) {
-      this.delay[conversationId] = parseInt(
-        this.configService.get("delay.node")
-      );
+      this.socketStateService.updateUserData(userId, {
+        messageDelay: parseInt(this.configService.get("delay.node")),
+      });
     }
 
     await this.handleNode(currentNode, message, userId, language);
@@ -621,7 +633,10 @@ export class MessageHandlerService {
           BotNodeStateEnum.AWAITING_USER_INPUT
         );
 
-        const response = await this.findAnswerFromQuestionBank(message);
+        const response = await this.findAnswerFromQuestionBank(
+          message,
+          this.socketStateService.getUserData(userId)?.language
+        );
         if (response) {
           return await this.sendBotMessage(userId, [
             {
@@ -1031,7 +1046,13 @@ export class MessageHandlerService {
   ): void {
     const { alias, secure } = node.payload || {};
     if (secure) {
-      this.eventEmitter.emit("mask.chat", this.chatId);
+      // Mask THIS visitor's current chat row. Read per visitor: a singleton
+      // field here masked whichever conversation last ran, leaving the actual
+      // secret in plaintext and redacting an unrelated message.
+      this.eventEmitter.emit(
+        "mask.chat",
+        this.socketStateService.getUserData(userId)?.currentChatId
+      );
     }
     if (!alias) return;
     this.socketStateService.updateUserData(userId, {
@@ -1054,7 +1075,10 @@ export class MessageHandlerService {
   }
 
   async defaultFallback(message: any, node: BotFlowNode, userId: string | any) {
-    const response = await this.findAnswerFromQuestionBank(message);
+    const response = await this.findAnswerFromQuestionBank(
+      message,
+      this.socketStateService.getUserData(userId)?.language
+    );
 
     if (response) {
       return await this.sendBotMessage(userId, [
@@ -1332,7 +1356,7 @@ if (!webhookId) {
   }
 
   async TransferToAgent(message: any, node: BotFlowNode, userId: string | any) {
-    const { botId, mode, conversationId, botName } =
+    const { botId, mode, conversationId, botName, visitorName } =
       this.socketStateService.getUserData(userId);
 
     if (!node.next.length) {
@@ -1390,7 +1414,9 @@ if (!webhookId) {
       _id: conversationId,
       visitor: {
         _id: userId,
-        name: this.user.auth.name,
+        // Per visitor: a singleton field here showed the agent whichever
+        // visitor's name last passed through the handler.
+        name: visitorName,
       },
       bot: {
         _id: botId,
@@ -1522,7 +1548,11 @@ if (!webhookId) {
         }
 
         if (secure) {
-          this.eventEmitter.emit("mask.chat", this.chatId);
+          // Per visitor — see captureUserInput for why.
+          this.eventEmitter.emit(
+            "mask.chat",
+            this.socketStateService.getUserData(userId)?.currentChatId
+          );
         }
 
         if (currentQuestion + 1 >= elements.length) {
@@ -1857,7 +1887,7 @@ if (!webhookId) {
     return this.sendBotMessage(userId, [{ type: "text", value }]);
   }
 
-  async findAnswerFromQuestionBank(message: string, language = this.language) {
+  async findAnswerFromQuestionBank(message: string, language = "english") {
     const response = await this.questionsService.findAnswer(message, language);
     if (response) {
       return response;
@@ -1894,7 +1924,10 @@ if (!webhookId) {
     if (!userData) return;
     const { botId, conversationId, mode, platform, handledByAgent } = userData;
 
-    const messageDelay = this.delay[conversationId] || 0;
+    // Per visitor, not a service-level map keyed by conversationId: that map was
+    // never cleaned up, so it grew for the life of the process. Held in the
+    // conversation state, it is reclaimed with the rest of the entry.
+    const messageDelay = userData.messageDelay || 0;
 
     const nodeDelay = parseInt(this.configService.get("delay.node")) || 1000;
     const message_delay =
@@ -1934,6 +1967,11 @@ if (!webhookId) {
           type: ele.type,
           sender: botId,
           conversationId: conversationId,
+          // Correlation handle so a channel delivery handler (WhatsApp Web etc.)
+          // can find THIS row afterwards and stamp the channel's own message id
+          // and thread onto it. Without it an outbound row cannot be matched to
+          // its delivery receipt. Harmless for the widget, which ignores it.
+          chatId: messageResponse.id,
         });
       }
 
@@ -1953,8 +1991,12 @@ if (!webhookId) {
     // the length===0 case (already returned above, but defensive) producing a
     // negative offset. The baseline is zeroed again at the start of the next
     // inbound message in handleMessage.
-    this.delay[conversationId] =
-      messageDelay + Math.max(0, message.length - 1) * message_delay + nodeDelay;
+    this.socketStateService.updateUserData(userId, {
+      messageDelay:
+        messageDelay +
+        Math.max(0, message.length - 1) * message_delay +
+        nodeDelay,
+    });
   }
 
   async sendMessageToAgent(userId: string, message: any, visitor: SocketState) {
@@ -2007,7 +2049,7 @@ if (!webhookId) {
 
   async sendMessageToTelegram(
     messageResponse: MessageResponseDto | any,
-    ctx = this.ctx
+    ctx?: any
   ) {
     if (!ctx || !messageResponse) return;
 
@@ -2065,6 +2107,9 @@ if (!webhookId) {
         message: data.message.value,
         type: data.message.type,
         conversationId,
+        // See sendBotMessage: lets the channel delivery handler stamp the
+        // channel message id / thread onto this agent reply.
+        chatId: data.message.id,
       });
     }
 
@@ -2191,13 +2236,16 @@ if (!webhookId) {
 
   async sendFacebookMessage(
     messageResponse: MessageResponseDto | any,
-    ctx = this.ctx
+    ctx?: any
   ) {
     if (!ctx || !ctx.sender_psid) return;
     if (!messageResponse) return;
     const request_body = {
       recipient: {
-        id: this.ctx.sender_psid,
+        // Addressed from the ctx this call was given. Reading a singleton field
+        // here meant the recipient could belong to a different conversation than
+        // the one being validated two lines above.
+        id: ctx.sender_psid,
       },
       message: {},
     };
@@ -2292,26 +2340,31 @@ if (!webhookId) {
     }
   }
 
-  async sendWhatsappMessage(messageResponse: any, ctx = this.ctx) {
+  async sendWhatsappMessage(messageResponse: any, ctx?: any) {
     try {
       if (!ctx || !ctx.recipient) return;
       if (!messageResponse) return;
 
+      // Every recipientPhone below comes from the ctx passed in. These used to
+      // read `this.ctx.recipient` on the singleton — validated against the
+      // caller's ctx but SENT to whichever conversation last touched the
+      // service, so under concurrency one tenant's reply could be delivered to
+      // another tenant's customer.
       if (messageResponse.type === ChatTypeEnum.TEXT) {
         await ctx.Whatsapp.sendText({
-          recipientPhone: this.ctx.recipient,
+          recipientPhone: ctx.recipient,
           message: messageResponse.value,
         });
       }
       if (messageResponse.type === ChatTypeEnum.IMAGE) {
         await ctx.Whatsapp.sendImage({
-          recipientPhone: this.ctx.recipient,
+          recipientPhone: ctx.recipient,
           url: messageResponse.value,
         });
       }
       if (messageResponse.type === ChatTypeEnum.BUTTONS) {
         await ctx.Whatsapp.sendSimpleButtons({
-          recipientPhone: this.ctx.recipient,
+          recipientPhone: ctx.recipient,
           text: messageResponse.value,
           buttons: messageResponse.buttons.map((ele: any) => {
             return {

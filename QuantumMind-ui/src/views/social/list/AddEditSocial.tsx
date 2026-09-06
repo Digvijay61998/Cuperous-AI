@@ -22,7 +22,8 @@ import Icon from 'src/@core/components/icon';
 import { useDispatch, useSelector } from 'react-redux';
 import { AppDispatch, RootState } from 'src/store';
 import toast from 'react-hot-toast';
-import { addNewSocial, updateSocial } from 'src/store/apps/social';
+import { addNewSocial, fetchSocialList, updateSocial } from 'src/store/apps/social';
+import WhatsappWebConnect from './WhatsappWebConnect';
 
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
@@ -268,6 +269,26 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
             </Select>
           </FormControl>
 
+          {platformField === 'whatsapp_web' && (
+            <WhatsappWebConnect
+              name={name}
+              jarcubeBot={jarcubeBot}
+              existingSession={
+                data?.method === 'edit' && data?.sessionId
+                  ? ({
+                      id: data.sessionId,
+                      name: name,
+                      status: data.sessionStatus || 'created',
+                    } as any)
+                  : null
+              }
+              onDone={() => {
+                dispatch(fetchSocialList());
+                handleClose();
+              }}
+            />
+          )}
+
           {(platformField === 'facebook' ||
             platformField === 'instagram' ||
             platformField === 'telegram') && (
@@ -383,38 +404,38 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
             </FormControl>
           )}
 
-          <FormControl required fullWidth sx={{ mb: 6 }}>
-            <TextField
-              required
-              size="small"
-              value={accessTokenField}
-              label="Access Token"
-              // inputProps={{
-              //   maxLength: 60,
-              // }}
-              onChange={(e: any) => setAccessTokenField(e.target.value)}
-              // placeholder='maximum 60 characters'
-            />
-          </FormControl>
+          {platformField !== 'whatsapp_web' && (
+            <FormControl required fullWidth sx={{ mb: 6 }}>
+              <TextField
+                required
+                size="small"
+                value={accessTokenField}
+                label="Access Token"
+                onChange={(e: any) => setAccessTokenField(e.target.value)}
+              />
+            </FormControl>
+          )}
 
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Button
-              size="large"
-              type="submit"
-              variant="contained"
-              sx={{ mr: 3 }}
-            >
-              Submit
-            </Button>
-            <Button
-              size="large"
-              variant="outlined"
-              color="secondary"
-              onClick={handleClose}
-            >
-              Cancel
-            </Button>
-          </Box>
+          {platformField !== 'whatsapp_web' && (
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Button
+                size="large"
+                type="submit"
+                variant="contained"
+                sx={{ mr: 3 }}
+              >
+                Submit
+              </Button>
+              <Button
+                size="large"
+                variant="outlined"
+                color="secondary"
+                onClick={handleClose}
+              >
+                Cancel
+              </Button>
+            </Box>
+          )}
         </form>
       </Box>
     </Drawer>

@@ -10,8 +10,7 @@ export const databaseProviders = [
     useFactory: async (
       configService: ConfigService
     ): Promise<typeof mongoose> => {
-      const uri = 'mongodb+srv://digvijaykadam61998_db_Cuprous:Nikks%401209@cluster0.qogssqu.mongodb.net/Cuprous?retryWrites=true&w=majority'
-      // const uri = configService.get("database.url");\
+      const uri = configService.get("database.url");
       mongoose.set("strictQuery", false);
       return await mongoose.connect(uri, {
         useUnifiedTopology: true,

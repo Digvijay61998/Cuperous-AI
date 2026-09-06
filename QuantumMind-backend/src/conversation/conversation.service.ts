@@ -28,6 +28,11 @@ import { ReportParamsDto } from "src/util/report-params.dto";
 import { ConversationActivitiesDocument } from "./entities/conversation-activities.entity";
 import { ConversationStatusEnum } from "./enums/conversation-status.enum";
 import { PlatformEnum } from "./enums/platform.enum";
+import {
+  allowedPreviousStatuses,
+  ChatStatusEnum,
+} from "./enums/chat-status.enum";
+import { ChatDirectionEnum } from "./enums/chat-direction.enum";
 
 @Injectable()
 export class ConversationService {
@@ -87,12 +92,228 @@ export class ConversationService {
       if (!createChatDto.conversationId) return;
       const chat = await this.chatModel.create({
         ...createChatDto,
-        time: new Date(),
+        // Channel messages carry their own timestamp (a history backfill must
+        // keep the ORIGINAL time, not "now", or months-old messages sort to the
+        // bottom of the thread). Widget/bot chats pass none and still get now.
+        time: createChatDto.time || new Date(),
       });
       await this.pushChatToConversation(createChatDto.conversationId, chat._id);
       return chat;
     } catch (error) {
+      // A duplicate key here is the dedup index doing its job: the engine
+      // re-fired a message we already stored (reconnect replay, history overlap
+      // with a live message). That is an expected, benign outcome — swallow it
+      // instead of logging an error and rethrowing into the event emitter,
+      // where a rejection would be an unhandled promise.
+      if (this.isDuplicateKeyError(error)) {
+        this.logger.debug(
+          `Skipped duplicate chat ${createChatDto.externalMessageId} on thread ${createChatDto.channelThread}`
+        );
+        return null;
+      }
       this.logger.error(`Error in creating chat ${error.message}`);
+      throw error;
+    }
+  }
+
+  /** Mongo duplicate-key (E11000) — raised by the sparse unique dedup index. */
+  private isDuplicateKeyError(error: any): boolean {
+    return error?.code === 11000 || error?.code === 11001;
+  }
+
+  /**
+   * Persist a channel (WhatsApp/Telegram/...) message and return the stored row.
+   *
+   * Unlike the fire-and-forget `create.new.chat` event, callers of this need the
+   * outcome: whether the row was newly created (so the message may be published
+   * onward and fed to the bot) or was a duplicate re-fire (so it must not be).
+   * That distinction is what keeps "persist, then publish exactly once" honest.
+   *
+   * Returns `{ chat, created }`; `created: false` means a row already existed.
+   */
+  async saveChannelMessage(
+    dto: CreateChatDto
+  ): Promise<{ chat: ChatDocument | null; created: boolean }> {
+    if (!dto.conversationId) return { chat: null, created: false };
+    try {
+      const chat = await this.chatModel.create({
+        ...dto,
+        time: dto.time || new Date(),
+      });
+      await this.pushChatToConversation(
+        dto.conversationId,
+        chat._id as unknown as string
+      );
+      return { chat, created: true };
+    } catch (error) {
+      if (this.isDuplicateKeyError(error)) {
+        const existing = dto.externalMessageId
+          ? await this.chatModel.findOne({
+              channelThread: dto.channelThread,
+              externalMessageId: dto.externalMessageId,
+            })
+          : null;
+        return { chat: existing, created: false };
+      }
+      this.logger.error(`Error saving channel message: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Advance the delivery status of an outbound channel message (the double-tick
+   * ladder), refusing any move that would go backwards.
+   *
+   * The guard lives in the query (`status: { $in: allowedPrevious }`) rather
+   * than in a read-then-write, so concurrent receipts cannot interleave into a
+   * downgrade: WhatsApp replays receipts after a reconnect, so a `delivered`
+   * can legitimately arrive after `read`.
+   *
+   * Returns the updated row, or null when nothing advanced (unknown message, or
+   * the status was already at/ahead of the target).
+   */
+  async advanceChannelMessageStatus(
+    externalMessageId: string,
+    status: string,
+    threadId?: string
+  ): Promise<ChatDocument | null> {
+    if (!externalMessageId || !status) return null;
+    const allowedPrevious = allowedPreviousStatuses(status);
+    if (!allowedPrevious.length) return null;
+
+    const filter: Record<string, any> = {
+      externalMessageId,
+      // An unset status (inbound rows, legacy widget rows) must not be advanced;
+      // only rows already on the ladder are eligible.
+      status: { $in: allowedPrevious },
+    };
+    if (threadId) filter.channelThread = threadId;
+
+    return this.chatModel.findOneAndUpdate(
+      filter,
+      { $set: { status } },
+      { new: true }
+    );
+  }
+
+  /**
+   * Read a channel thread's history, newest-first, optionally paging backwards
+   * from a timestamp cursor.
+   *
+   * Reads by `channelThread` rather than by conversation on purpose: a WhatsApp
+   * thread outlives any single Conversation (the 2-hourly cron expires those),
+   * so scoping to one conversation would truncate the history an agent sees
+   * mid-thread.
+   */
+  async getThreadMessages(
+    threadId: string,
+    options: { limit?: number; before?: Date } = {}
+  ) {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    const filter: Record<string, any> = { channelThread: threadId };
+    if (options.before) {
+      filter.time = { $lt: options.before };
+    }
+    const messages = await this.chatModel
+      .find(filter)
+      .sort({ time: -1 })
+      .limit(limit);
+    // Hand back oldest-first so the UI can append without reversing.
+    return messages.reverse();
+  }
+
+  /**
+   * Just the status of one conversation.
+   *
+   * Exists so the per-message inbound path does not have to call
+   * `getConversationById`, which populates chats, visitor, bot, feedbacks and
+   * activities — an expensive multi-join to answer a one-field question, paid on
+   * every single incoming message.
+   */
+  async getConversationStatus(id: string): Promise<string | null> {
+    const conversation = await this.conversationModel.findById(id, {
+      status: 1,
+    });
+    return conversation?.status ?? null;
+  }
+
+  /** Oldest stored message on a thread — the cursor for on-demand history. */
+  async getOldestThreadMessage(threadId: string): Promise<ChatDocument | null> {
+    return this.chatModel
+      .findOne({ channelThread: threadId })
+      .sort({ time: 1 });
+  }
+
+  /**
+   * Attach channel identity to an outbound row that the bot/agent path already
+   * wrote, matching on the correlation id both sides share (`Chat.chatId`).
+   *
+   * WHY A CORRELATION ID
+   * --------------------
+   * An outbound message is written by one path (the generic
+   * `create.new.chat` event, which knows the text but not the WhatsApp id) and
+   * actually sent by another (the channel delivery handler, which learns the
+   * WhatsApp id only from the send result). They meet on the message id that
+   * MessageHandlerService generates, which is carried into `Chat.chatId`.
+   *
+   * Without this link the row would have no `channelThread`, so it would be
+   * missing from the thread history the agent reads, and no `externalMessageId`,
+   * so no delivery receipt could ever match it.
+   *
+   * Upserts deliberately: the send can complete before the row is written (the
+   * two paths are independent async listeners), so a missing row is created
+   * rather than losing the message.
+   */
+  async linkOutboundChannelMessage(params: {
+    correlationId?: string;
+    threadId?: string;
+    externalMessageId: string;
+    conversationId?: string;
+    message?: string;
+    type?: string;
+    sender?: string;
+    time?: Date;
+  }): Promise<ChatDocument | null> {
+    const { correlationId, threadId, externalMessageId } = params;
+    if (!externalMessageId) return null;
+
+    const set: Record<string, any> = {
+      externalMessageId,
+      direction: ChatDirectionEnum.OUTBOUND,
+      status: ChatStatusEnum.SENT,
+    };
+    if (threadId) set.channelThread = threadId;
+
+    if (correlationId) {
+      const updated = await this.chatModel.findOneAndUpdate(
+        // Never overwrite a row that already carries an external id — that would
+        // be a different message that happens to share a correlation id.
+        { chatId: correlationId, externalMessageId: { $exists: false } },
+        { $set: set },
+        { new: true }
+      );
+      if (updated) return updated;
+    }
+
+    // The row is not there (yet). Only create one if we know where it belongs.
+    if (!params.conversationId) return null;
+    try {
+      const chat = await this.chatModel.create({
+        conversationId: params.conversationId,
+        message: params.message ?? "",
+        sender: params.sender,
+        type: params.type,
+        chatId: correlationId,
+        time: params.time || new Date(),
+        ...set,
+      });
+      await this.pushChatToConversation(
+        params.conversationId,
+        chat._id as unknown as string
+      );
+      return chat;
+    } catch (error) {
+      if (this.isDuplicateKeyError(error)) return null;
       throw error;
     }
   }

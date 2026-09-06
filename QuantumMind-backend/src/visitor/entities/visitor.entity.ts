@@ -118,6 +118,13 @@ VisitorSchema.index({
   phone: "text",
 });
 
+// Unique constraint: one visitor per (username, bot) pair.
+// Prevents duplicate visitors for the same WhatsApp contact.
+VisitorSchema.index(
+  { username: 1, bot: 1 },
+  { unique: true, sparse: true },
+);
+
 VisitorSchema.virtual("details").get(function () {
   if (!this.visitorDetails || this.visitorDetails.length === 0) return null;
 
