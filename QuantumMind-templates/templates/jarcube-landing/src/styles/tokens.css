@@ -1,0 +1,186 @@
+/* ==========================================================================
+   JarCube design tokens
+
+   Every colour, font, spacing, radius and shadow value in the site resolves
+   through one of these custom properties. Nothing declares a literal colour
+   or font outside this file and its fallback stacks.
+   ========================================================================== */
+
+:root {
+  /* --- Core palette ---------------------------------------------------- */
+  --jc-ink: #0F172A;
+  --jc-surface: #F8FAFC;
+  --jc-primary: #4338CA;
+  --jc-primary-hover: #3730A3;
+  --jc-primary-soft: #EEF2FF;
+  --jc-accent: #F59E0B;
+  --jc-accent-soft: #FEF3C7;
+  --jc-success: #10B981;
+  --jc-success-soft: #ECFDF5;
+  --jc-danger: #DC2626;
+  --jc-danger-soft: #FEF2F2;
+
+  /* --- Neutral ramp --------------------------------------------------- */
+  --jc-n0: #FFFFFF;
+  --jc-n50: #F8FAFC;
+  --jc-n100: #F1F5F9;
+  --jc-n200: #E2E8F0;
+  --jc-n300: #CBD5E1;
+  --jc-n400: #94A3B8;
+  --jc-n500: #64748B;
+  --jc-n600: #475569;
+  --jc-n700: #334155;
+  --jc-n800: #1E293B;
+  --jc-n900: #0F172A;
+
+  /* --- Semantic surfaces ---------------------------------------------- */
+  --jc-bg: var(--jc-surface);
+  --jc-bg-raised: var(--jc-n0);
+  --jc-bg-sunken: var(--jc-n100);
+  --jc-bg-inverse: var(--jc-n900);
+  --jc-border: var(--jc-n200);
+  --jc-border-strong: var(--jc-n300);
+
+  /* --- Semantic text -------------------------------------------------- */
+  --jc-text: var(--jc-n900);
+  --jc-text-muted: var(--jc-n600);
+  --jc-text-subtle: var(--jc-n500);
+  --jc-text-inverse: var(--jc-n0);
+  --jc-text-on-primary: var(--jc-n0);
+
+  /* --- Typography ----------------------------------------------------- */
+  --jc-font-head: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+  --jc-font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
+  --jc-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  /* Type scale — fluid, clamped so it stays sane at both extremes */
+  --jc-fs-xs: 0.75rem;
+  --jc-fs-sm: 0.875rem;
+  --jc-fs-base: 1rem;
+  --jc-fs-lg: 1.125rem;
+  --jc-fs-xl: clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem);
+  --jc-fs-2xl: clamp(1.5rem, 1.3rem + 1vw, 2rem);
+  --jc-fs-3xl: clamp(1.875rem, 1.5rem + 1.8vw, 2.75rem);
+  --jc-fs-4xl: clamp(2.25rem, 1.7rem + 2.8vw, 3.75rem);
+
+  --jc-lh-tight: 1.15;
+  --jc-lh-snug: 1.3;
+  --jc-lh-normal: 1.6;
+  --jc-lh-relaxed: 1.75;
+
+  --jc-fw-regular: 400;
+  --jc-fw-medium: 500;
+  --jc-fw-semibold: 600;
+  --jc-fw-bold: 700;
+  --jc-fw-extrabold: 800;
+
+  --jc-tracking-tight: -0.02em;
+  --jc-tracking-wide: 0.08em;
+
+  /* --- Spacing scale (4px base) --------------------------------------- */
+  --jc-s1: 0.25rem;
+  --jc-s2: 0.5rem;
+  --jc-s3: 0.75rem;
+  --jc-s4: 1rem;
+  --jc-s5: 1.25rem;
+  --jc-s6: 1.5rem;
+  --jc-s8: 2rem;
+  --jc-s10: 2.5rem;
+  --jc-s12: 3rem;
+  --jc-s16: 4rem;
+  --jc-s20: 5rem;
+  --jc-s24: 6rem;
+
+  /* Vertical rhythm between page sections */
+  --jc-section-y: clamp(3.5rem, 2rem + 6vw, 6.5rem);
+
+  /* --- Radii ---------------------------------------------------------- */
+  --jc-r-sm: 8px;
+  --jc-r-md: 12px;
+  --jc-r-lg: 20px;
+  --jc-r-xl: 28px;
+  --jc-r-full: 9999px;
+
+  /* --- Elevation ------------------------------------------------------ */
+  --jc-e1: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --jc-e2: 0 4px 6px -1px rgba(15, 23, 42, 0.07),
+    0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --jc-e3: 0 12px 20px -4px rgba(15, 23, 42, 0.1),
+    0 6px 10px -6px rgba(15, 23, 42, 0.06);
+  --jc-e-primary: 0 8px 20px -6px rgba(67, 56, 202, 0.35);
+
+  /* --- Layout --------------------------------------------------------- */
+  --jc-container: 1200px;
+  --jc-container-narrow: 780px;
+  --jc-nav-h: 68px;
+
+  /* --- Motion --------------------------------------------------------- */
+  --jc-dur-fast: 150ms;
+  --jc-dur-base: 250ms;
+  --jc-dur-slow: 400ms;
+  --jc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --jc-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- Focus ---------------------------------------------------------- */
+  /* Indigo on light backgrounds clears 3:1 against both surface and white. */
+  --jc-focus-ring: var(--jc-primary);
+  --jc-focus-width: 3px;
+  --jc-focus-offset: 2px;
+}
+
+/* ==========================================================================
+   Dark theme — same token names, remapped values
+   ========================================================================== */
+
+[data-theme='dark'] {
+  --jc-bg: #0B1120;
+  --jc-bg-raised: #151E31;
+  --jc-bg-sunken: #070C16;
+  --jc-bg-inverse: var(--jc-n0);
+  --jc-border: #26314A;
+  --jc-border-strong: #364259;
+
+  --jc-text: #E8EDF6;
+  --jc-text-muted: #A2AFC4;
+  --jc-text-subtle: #7C8AA3;
+  --jc-text-inverse: var(--jc-n900);
+
+  /* Lifted so they hold contrast against a dark background */
+  --jc-primary: #8B84F0;
+  --jc-primary-hover: #A29BF5;
+  --jc-primary-soft: #1C2444;
+  --jc-accent: #FBBF24;
+  --jc-accent-soft: #3A2E10;
+  --jc-success: #34D399;
+  --jc-success-soft: #0C2A21;
+  --jc-danger: #F87171;
+  --jc-danger-soft: #331616;
+
+  --jc-e1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --jc-e2: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.35);
+  --jc-e3: 0 12px 20px -4px rgba(0, 0, 0, 0.55), 0 6px 10px -6px rgba(0, 0, 0, 0.4);
+  --jc-e-primary: 0 8px 20px -6px rgba(139, 132, 240, 0.4);
+
+  --jc-focus-ring: #A29BF5;
+}
+
+/* ==========================================================================
+   Reduced motion
+
+   Clamps every animation and transition rather than relying on each component
+   to remember. Kept to 0.01ms instead of 0 so animationend still fires and
+   nothing waiting on that callback stalls.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

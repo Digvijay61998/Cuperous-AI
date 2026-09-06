@@ -1,0 +1,189 @@
+/* ==========================================================================
+   Layout primitives — containers, section rhythm, grid helpers
+   ========================================================================== */
+
+.jc-container {
+  width: 100%;
+  max-width: var(--jc-container);
+  margin-inline: auto;
+  padding-inline: var(--jc-s5);
+}
+
+.jc-container--narrow {
+  max-width: var(--jc-container-narrow);
+}
+
+@media (min-width: 768px) {
+  .jc-container {
+    padding-inline: var(--jc-s8);
+  }
+}
+
+/* --- Sections ---------------------------------------------------------- */
+
+.jc-section {
+  padding-block: var(--jc-section-y);
+}
+
+.jc-section--sunken {
+  background: var(--jc-bg-sunken);
+}
+
+.jc-section--inverse {
+  background: var(--jc-bg-inverse);
+  color: var(--jc-text-inverse);
+}
+
+.jc-section--inverse h1,
+.jc-section--inverse h2,
+.jc-section--inverse h3 {
+  color: var(--jc-text-inverse);
+}
+
+.jc-section--tight {
+  padding-block: var(--jc-s12);
+}
+
+/* Section heading block */
+.jc-section-head {
+  max-width: 42rem;
+  margin-bottom: var(--jc-s10);
+}
+
+.jc-section-head--center {
+  margin-inline: auto;
+  text-align: center;
+}
+
+.jc-section-head > p {
+  margin-top: var(--jc-s4);
+}
+
+/* --- Page shell ------------------------------------------------------- */
+
+.jc-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.jc-main {
+  flex: 1 0 auto;
+}
+
+/* --- Grid helpers ----------------------------------------------------- */
+/* auto-fit with minmax means these reflow with no breakpoint per column
+   count, which keeps them overflow-free from 320px up. */
+
+.jc-grid {
+  display: grid;
+  gap: var(--jc-s6);
+}
+
+.jc-grid--2 {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+}
+
+.jc-grid--3 {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.jc-grid--4 {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+
+/* --- Split (content beside visual) ----------------------------------- */
+
+.jc-split {
+  display: grid;
+  gap: var(--jc-s10);
+  align-items: center;
+}
+
+@media (min-width: 900px) {
+  .jc-split {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--jc-s16);
+  }
+
+  .jc-split--wide-start {
+    grid-template-columns: 1.15fr 0.85fr;
+  }
+}
+
+/* --- Flex helpers ---------------------------------------------------- */
+
+.jc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-s3);
+}
+
+.jc-row--wrap {
+  flex-wrap: wrap;
+}
+
+.jc-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-s4);
+}
+
+.jc-stack--tight {
+  gap: var(--jc-s2);
+}
+
+/* --- Horizontal scroller (mobile card rows) -------------------------- */
+
+.jc-scroller {
+  display: flex;
+  gap: var(--jc-s4);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-snap-type: x mandatory;
+  padding-bottom: var(--jc-s2);
+}
+
+.jc-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.jc-scroller > * {
+  scroll-snap-align: start;
+  flex: 0 0 auto;
+}
+
+/* --- Icon sizing ----------------------------------------------------- */
+
+.jc-icon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.jc-icon--lg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* Tinted square behind a feature or industry glyph */
+.jc-icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--jc-r-md);
+  background: var(--jc-primary-soft);
+  color: var(--jc-primary);
+}
+
+/* --- Divider --------------------------------------------------------- */
+
+.jc-divider {
+  height: 1px;
+  border: 0;
+  background: var(--jc-border);
+  margin-block: var(--jc-s8);
+}

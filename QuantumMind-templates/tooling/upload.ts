@@ -1,6 +1,6 @@
 /**
  * Convenience script for local testing: builds a template, zips it, and POSTs
- * it to the JarCube admin API (POST /template) so you skip the manual
+ * it to the QuantumMind admin API (POST /template) so you skip the manual
  * upload during development.
  *
  * Usage:
