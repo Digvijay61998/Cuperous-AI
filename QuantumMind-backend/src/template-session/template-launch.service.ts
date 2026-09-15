@@ -24,14 +24,18 @@ export class TemplateLaunchService {
     sessionId: string,
     token: string,
     templateId: string,
+    botId?: string,
   ): string {
     if (!hostedUrl) return '';
     const sep = hostedUrl.includes('?') ? '&' : '?';
     // sid = session id (path param), stk = session token (auth), tid = template id
-    return (
+    let url =
       `${hostedUrl}${sep}sid=${encodeURIComponent(sessionId)}` +
       `&stk=${encodeURIComponent(token)}` +
-      `&tid=${encodeURIComponent(templateId)}`
-    );
+      `&tid=${encodeURIComponent(templateId)}`;
+    // bid lets the template load this customer's config overrides rather than
+    // the shared catalog defaults.
+    if (botId) url += `&bid=${encodeURIComponent(botId)}`;
+    return url;
   }
 }

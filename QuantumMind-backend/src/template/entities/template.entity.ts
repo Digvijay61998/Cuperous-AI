@@ -120,11 +120,22 @@ export class Template {
     type: [
       {
         key: { type: String },
-        type: { type: String, default: 'text' }, // text | image | color | number | select | boolean
+        // text | richtext | image | color | number | currency | select |
+        // multiselect | boolean | date | time | url | list
+        type: { type: String, default: 'text' },
         label: { type: String },
         defaultValue: { type: mongoose.Schema.Types.Mixed },
         group: { type: String, default: 'General' },
-        options: { type: [String], default: [] }, // for select type
+        options: { type: [String], default: [] }, // for select/multiselect
+        helpText: { type: String, default: '' },
+        required: { type: Boolean, default: false },
+        min: { type: Number },
+        max: { type: Number },
+        maxLength: { type: Number },
+        maxItems: { type: Number },
+        // Row definition for `list` (repeater) fields. Stored as Mixed because
+        // it holds an array of the same field shape, one level deep.
+        itemSchema: { type: mongoose.Schema.Types.Mixed, default: undefined },
       },
     ],
     default: [],
@@ -136,9 +147,18 @@ export class Template {
     defaultValue: any;
     group: string;
     options: string[];
+    helpText?: string;
+    required?: boolean;
+    min?: number;
+    max?: number;
+    maxLength?: number;
+    maxItems?: number;
+    itemSchema?: Record<string, any>[];
   }[];
 
-  // ** Admin-overridden config values consumed by the template at runtime **
+  // ** Catalog-level default config values. **
+  // Per-customer overrides live on TemplateInstance keyed by botId; these are
+  // the defaults applied when a bot has no instance of its own.
   @Prop({
     type: mongoose.Schema.Types.Mixed,
     default: {},

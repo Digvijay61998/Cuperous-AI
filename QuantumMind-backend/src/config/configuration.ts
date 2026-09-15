@@ -20,7 +20,7 @@ export default () => ({
   },
   port: parseInt(process.env.PORT, 10) || 4000,
   database: {
-    url: process.env.MONGO_URI,
+    url: process.env.MONGO_URI || "mongodb://127.0.0.1:27017/Cuprous",
   },
   aws: {
     enabled: process.env.AWS_ENABLED || false,
@@ -153,7 +153,14 @@ export default () => ({
   ],
 
   template: {
-    storage: process.env.TEMPLATE_STORAGE || "local", // 'local' | 's3'
+    storage: process.env.TEMPLATE_STORAGE || "s3", // 'local' | 's3'
+    publicBaseUrl: process.env.TEMPLATE_PUBLIC_BASE_URL || '',
+  },
+  file: {
+    // Generic file/media uploads (UploadService). 'local' saves to
+    // uploaded-docs/ and serves via /api/file; 's3' uploads to AWS S3.
+    // Defaults to 'local' so dev never needs AWS credentials. See docs/STORAGE.md.
+    storage: process.env.FILE_STORAGE || "local", // 'local' | 's3'
   },
   encryption: {
     key: process.env.ENCRYPTION_KEY || "secretKey",
@@ -182,6 +189,20 @@ export default () => ({
   // linked numbers survive a restart).
   whatsappWeb: {
     dataPath: process.env.WHATSAPP_WEB_DATA_PATH || "./data/whatsapp-web",
+    // Outbound send cap per session, the single most important ban-risk control.
+    // baileys drives an unofficial personal session; a burst of automated sends
+    // (an agent holding Enter, a retry loop) is exactly what triggers a ban.
+    // Counted per rolling window, per session. Generous enough not to impede a
+    // fast human, tight enough to stop a runaway.
+    sendRateLimit:
+      parseInt(process.env.WHATSAPP_WEB_SEND_RATE_LIMIT, 10) || 30,
+    sendRateWindowMs:
+      parseInt(process.env.WHATSAPP_WEB_SEND_RATE_WINDOW_MS, 10) || 60_000,
+    // Cap on how many chats a single connect-time sync will materialise as inbox
+    // threads. A freshly paired account can push thousands; without a bound the
+    // event loop stalls hydrating them all. Newest-activity chats win the cap.
+    chatSyncMaxChats:
+      parseInt(process.env.WHATSAPP_WEB_CHAT_SYNC_MAX, 10) || 500,
   },
 
   nlp: {

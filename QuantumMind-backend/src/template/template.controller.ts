@@ -18,6 +18,7 @@ import { CurrentUser } from 'src/util';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { SearchTemplateDto } from './dto/search-template.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
+import { UpdateInstanceConfigDto } from './dto/update-instance-config.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { TemplateService } from './template.service';
 
@@ -71,12 +72,15 @@ export class TemplateController {
   }
 
   // Public runtime config for the hosted template (opened in WhatsApp WebView).
+  // `bid` is the botId the SDK reads from the launch URL; when present the
+  // response carries that customer's overrides instead of the catalog defaults.
   @Get(':id/config')
   @Public()
-  async getConfig(@Param('id') id: string) {
-    return await this.templateService.getConfig(id);
+  async getConfig(@Param('id') id: string, @Query('bid') botId?: string) {
+    return await this.templateService.getConfig(id, botId);
   }
 
+  // Catalog-wide defaults (admin only).
   @Patch(':id/config')
   async updateConfig(
     @Param('id') id: string,
@@ -84,6 +88,22 @@ export class TemplateController {
     @CurrentUser() user: JwtPayload,
   ) {
     return await this.templateService.updateConfig(id, dto.configValues, user);
+  }
+
+  // One customer's overrides for this template.
+  @Patch(':id/instance-config')
+  async updateInstanceConfig(
+    @Param('id') id: string,
+    @Body() dto: UpdateInstanceConfigDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.templateService.updateInstanceConfig(
+      id,
+      dto.botId,
+      dto.configValues,
+      dto.workspaceId,
+      user,
+    );
   }
 
   @Patch(':id')

@@ -1,7 +1,7 @@
 // ** React Imports
 
 // ** MUI Imports
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import MuiAvatar from "@mui/material/Avatar";
 import Badge from "@mui/material/Badge";
 import Box, { BoxProps } from "@mui/material/Box";
@@ -28,6 +28,7 @@ import AdsSlider from "../ads/Ads";
 import Offers from "../offers";
 import Form from "./components/Form";
 import Gallery from "./components/Gallery";
+import TemplatePanel from "./components/TemplatePanel";
 import Alert from "/sound/alert.mp3";
 
 import SendTranscriptDialog from "./components/SendTranscript";
@@ -388,6 +389,24 @@ const ChatContent = (props: any) => {
   const handleCloseSendTranscriptDialog = () => {
     setOpenSendTranscriptDialog(false);
   };
+
+  // Template currently covering the conversation, or null when the chat is
+  // visible. Only one can be open at a time — the bot pauses on the template
+  // node until it is submitted, so there is never a second one to show.
+  const [openTemplate, setOpenTemplate] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
+
+  const handleOpenTemplate = useCallback((url: string, title: string) => {
+    setOpenTemplate({ url, title });
+  }, []);
+
+  // Stable identity so TemplatePanel's postMessage listener isn't torn down and
+  // re-attached on every parent render.
+  const handleCloseTemplate = useCallback(() => {
+    setOpenTemplate(null);
+  }, []);
   const renderContent = () => {
     return (
       <Box
@@ -400,6 +419,9 @@ const ChatContent = (props: any) => {
           margin: "0 auto",
           // overflow: isShow.isShowAds ? "auto" : "hidden",
           overflow: "hidden",
+          // Anchors the template panel, which covers the conversation while a
+          // template is open.
+          position: "relative",
         }}
       >
         <Box
@@ -724,6 +746,7 @@ const ChatContent = (props: any) => {
               updatemyMessages={updatemyMessages}
               socket={socket}
               {...props}
+              onOpenTemplate={handleOpenTemplate}
             />
 
             <SendMsgForm
@@ -756,6 +779,14 @@ const ChatContent = (props: any) => {
           socket={socket}
           visitorId={visitorId}
         />
+        {openTemplate && (
+          <TemplatePanel
+            url={openTemplate.url}
+            title={openTemplate.title}
+            botStyles={botStyles}
+            onClose={handleCloseTemplate}
+          />
+        )}
       </Box>
     );
   };

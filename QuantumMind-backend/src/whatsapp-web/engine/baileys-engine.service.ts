@@ -48,6 +48,7 @@ import * as QRCode from 'qrcode';
 import { ChatTypeEnum } from 'src/conversation/enums/chat-type.enum';
 import {
   WA_WEB_ACK_EVENT,
+  WA_WEB_CHATS_EVENT,
   WA_WEB_HISTORY_EVENT,
   WA_WEB_INBOUND_EVENT,
   WA_WEB_STATUS_EVENT,
@@ -83,6 +84,25 @@ const silentLogger: any = {
   fatal: () => undefined,
   child: () => silentLogger,
 };
+
+/**
+ * One entry of the chat list WhatsApp pushes, normalised.
+ *
+ * Deliberately minimal: enough to create or label an inbox thread, and nothing
+ * that would make the feature layer depend on baileys' own Chat/Contact shapes.
+ */
+export interface WaWebChatSummary {
+  /** Normalised chat JID (device suffix stripped). */
+  jid: string;
+  /** E.164 digits when the JID exposes them. Absent for `@lid` chats. */
+  phone?: string;
+  /** Best display name known from the chat title or the contact book. */
+  name?: string;
+  /** WhatsApp's own unread count for the chat, when it reported one. */
+  unreadCount?: number;
+  /** The chat's last-activity clock, when the event carried one. */
+  lastActivityAt?: Date;
+}
 
 /** The neutral shape the feature layer consumes for one WhatsApp message. */
 export interface WaWebInboundMessage {
@@ -257,9 +277,21 @@ export class BaileysEngineService implements OnModuleDestroy {
       logger: silentLogger,
       browser: ['JarCube', 'Chrome', '1.0.0'],
       markOnlineOnConnect: false,
-      // Full history sync is a heavy, ban-risky bulk transfer. We deliberately
-      // keep it off and instead pull history on demand, per chat, when an agent
-      // actually opens the thread (see requestOlderHistory).
+      // Enable the initial sync WITHOUT enabling the full-archive download.
+      //
+      // This pair is load-bearing and easy to get wrong. baileys defaults
+      // `shouldSyncHistoryMessage` to `() => !!syncFullHistory`, so leaving it
+      // unset while `syncFullHistory: false` disables **all** history and
+      // app-state sync — no chats, no contacts, not even the recent-message
+      // window ever arrives. The symptom is an inbox that only ever shows
+      // conversations that happened to message us while the process was running,
+      // with nothing behind them.
+      //
+      // Returning true here asks WhatsApp for the RECENT window plus the
+      // contact/app-state snapshot; `syncFullHistory: false` still declines the
+      // entire message archive, which is the heavy, ban-risky transfer we do not
+      // want. Older pages remain on-demand per thread (see requestOlderHistory).
+      shouldSyncHistoryMessage: () => true,
       syncFullHistory: false,
     });
     rt.sock = sock;
@@ -283,7 +315,103 @@ export class BaileysEngineService implements OnModuleDestroy {
     // History: both the small sync WhatsApp pushes on connect and the pages we
     // explicitly request via requestOlderHistory land here.
     sock.ev.on('messaging-history.set', (payload: any) => {
+      // The connect-time sync carries the chat list and the contact book, not
+      // just messages. Publishing them is what lets the inbox show a thread that
+      // has not messaged us since the process started.
+      this.handleChatsSync(name, payload?.chats, payload?.contacts);
       this.handleHistorySet(name, payload);
+    });
+
+    // Chat list pushed outside the initial sync: a new conversation started on
+    // the phone, an archive/pin/unread change, a rename.
+    sock.ev.on('chats.upsert', (chats: any) => {
+      this.handleChatsSync(name, chats);
+    });
+
+    sock.ev.on('chats.update', (updates: any) => {
+      this.handleChatsSync(name, updates);
+    });
+
+    // Contacts arrive separately from chats and carry the saved display name,
+    // which is better than the pushName a message gives us.
+    sock.ev.on('contacts.upsert', (contacts: any) => {
+      this.handleChatsSync(name, undefined, contacts);
+    });
+
+    sock.ev.on('contacts.update', (contacts: any) => {
+      this.handleChatsSync(name, undefined, contacts);
+    });
+  }
+
+  /**
+   * Publish the chat list / contact book the socket just pushed.
+   *
+   * WHY THIS EXISTS
+   * ---------------
+   * Without it the inbox can only ever contain conversations that sent us a
+   * message while this process was running: threads are created by the inbound
+   * message path alone. WhatsApp separately tells us about every recent chat and
+   * every saved contact, and that is what makes the inbox look like WhatsApp on
+   * first connect rather than an empty list.
+   *
+   * Names are merged from two sources on purpose. A chat record's `name` is the
+   * conversation title; a contact record's `name`/`notify` is the address-book
+   * entry. For a 1:1 chat the contact book is usually the better label, but it
+   * arrives in a different event, so both are folded into one map keyed by JID.
+   *
+   * Groups, status broadcasts and newsletters are filtered here rather than
+   * downstream, so the feature layer never sees a chat it would have to reject.
+   */
+  private handleChatsSync(
+    name: string,
+    chats?: any[],
+    contacts?: any[],
+  ): void {
+    const byJid = new Map<string, WaWebChatSummary>();
+
+    const put = (rawJid: string, patch: Partial<WaWebChatSummary>) => {
+      if (!rawJid) return;
+      if (isUnsupportedChatJid(rawJid)) return;
+      if (!isIndividualJid(rawJid)) return;
+      const jid = normalizeJid(rawJid);
+      const existing = byJid.get(jid) ?? { jid, phone: jidToPhone(jid) };
+      // Only overwrite with values we actually received: a later event carrying
+      // no name must not blank a name an earlier one taught us.
+      byJid.set(jid, {
+        ...existing,
+        ...Object.fromEntries(
+          Object.entries(patch).filter(([, v]) => v !== undefined && v !== ''),
+        ),
+      });
+    };
+
+    for (const c of Array.isArray(chats) ? chats : []) {
+      put(c?.id, {
+        name: c?.name || undefined,
+        unreadCount:
+          typeof c?.unreadCount === 'number' && c.unreadCount > 0
+            ? c.unreadCount
+            : undefined,
+        // `conversationTimestamp` is the chat's last-activity clock. Absent on an
+        // update that only changed, say, the mute state.
+        lastActivityAt: c?.conversationTimestamp
+          ? toDate(c.conversationTimestamp)
+          : undefined,
+      });
+    }
+
+    for (const c of Array.isArray(contacts) ? contacts : []) {
+      put(c?.id, {
+        // `name` is the saved contact, `verifiedName` a business account, `notify`
+        // the pushName. That is the order of trustworthiness.
+        name: c?.name || c?.verifiedName || c?.notify || undefined,
+      });
+    }
+
+    if (!byJid.size) return;
+    this.eventEmitter.emit(WA_WEB_CHATS_EVENT, {
+      name,
+      chats: [...byJid.values()],
     });
   }
 
@@ -768,6 +896,77 @@ export class BaileysEngineService implements OnModuleDestroy {
     return {
       messageId: sent?.key?.id,
       timestamp: toDate(sent?.messageTimestamp),
+    };
+  }
+
+  /**
+   * Send a native "call to action" URL button.
+   *
+   * A plain link in a chat obeys the RECIPIENT's "open links in in-app browser"
+   * preference, so we cannot force the WhatsApp WebView from the sender side.
+   * A `cta_url` button does open in WhatsApp's in-app browser — that is the
+   * button WhatsApp Business/Cloud API sends.
+   *
+   * `sendMessage` cannot express it (baileys removed button support from
+   * `AnyRegularMessageContent`), so the interactive message is built by hand and
+   * pushed with `relayMessage`. The `viewOnceMessage` wrapper is required: an
+   * `interactiveMessage` sent bare is dropped by most clients.
+   *
+   * NOT guaranteed to render. Interactive messages are a business-account
+   * feature and a personal linked number may have them ignored by the
+   * recipient's client, so every caller must keep a plain-text fallback.
+   */
+  async sendCtaUrl(
+    name: string,
+    recipient: string,
+    options: { text: string; buttonText: string; url: string; footer?: string },
+  ): Promise<{ messageId?: string; timestamp: Date }> {
+    const sock = this.requireSock(name);
+    const baileys: any = await loadBaileys();
+    const { generateWAMessageFromContent, proto } = baileys;
+    const Interactive = proto?.Message?.InteractiveMessage;
+    if (!generateWAMessageFromContent || !Interactive?.NativeFlowMessage) {
+      throw new Error('Native flow buttons are unavailable in this baileys build');
+    }
+
+    const jid = this.toJid(recipient);
+    const content = proto.Message.fromObject({
+      viewOnceMessage: {
+        message: {
+          interactiveMessage: Interactive.create({
+            body: Interactive.Body.create({ text: options.text }),
+            footer: options.footer
+              ? Interactive.Footer.create({ text: options.footer })
+              : undefined,
+            nativeFlowMessage: Interactive.NativeFlowMessage.create({
+              buttons: [
+                {
+                  name: 'cta_url',
+                  buttonParamsJson: JSON.stringify({
+                    display_text: options.buttonText,
+                    url: options.url,
+                    // WhatsApp reads `merchant_url` when deciding to open the
+                    // in-app WebView rather than handing off to the OS browser.
+                    merchant_url: options.url,
+                  }),
+                },
+              ],
+            }),
+          }),
+        },
+      },
+    });
+
+    const generated = generateWAMessageFromContent(jid, content, {
+      userJid: sock.user?.id,
+    });
+    await sock.relayMessage(jid, generated.message, {
+      messageId: generated.key.id,
+    });
+
+    return {
+      messageId: generated.key?.id,
+      timestamp: toDate(generated.messageTimestamp),
     };
   }
 

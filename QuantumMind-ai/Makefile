@@ -12,6 +12,23 @@ IMAGE       := quantummind-ai-ai-service:latest
 NETWORK     := quantummind-ai
 MILVUS_HOST := milvus-standalone
 
+# --- Storage backend switch (see docs/STORAGE.md) -------------------------
+# Reads ENABLE_MILVUS_S3 from .env and derives the two compose knobs:
+#   false/unset -> local MinIO (profile "localstorage", user.local.yaml)
+#   true        -> AWS S3      (no profile,             user.yaml)
+ENABLE_MILVUS_S3 := $(shell grep -E '^ENABLE_MILVUS_S3=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+ifeq ($(ENABLE_MILVUS_S3),true)
+  export COMPOSE_PROFILES   :=
+  export MILVUS_USER_CONFIG := user.yaml
+  STORAGE_MODE     := AWS S3 (production bucket)
+  STORAGE_SERVICES := etcd milvus
+else
+  export COMPOSE_PROFILES   := localstorage
+  export MILVUS_USER_CONFIG := user.local.yaml
+  STORAGE_MODE     := local MinIO container
+  STORAGE_SERVICES := etcd minio milvus
+endif
+
 # Run a command inside the service image, wired to the compose network.
 # MILVUS_HOST is the *container* name, not the compose alias: plain `docker run`
 # resolves container names but not compose service aliases.
@@ -42,10 +59,12 @@ help:
 
 # ------------------------------------------------------------------ stack
 up:
+	@echo "Storage backend: $(STORAGE_MODE)"
 	docker compose up -d --build
 
 up-storage:
-	docker compose up -d etcd minio milvus
+	@echo "Storage backend: $(STORAGE_MODE)"
+	docker compose up -d $(STORAGE_SERVICES)
 	@echo "Waiting for Milvus to report healthy..."
 	@for i in $$(seq 1 40); do \
 		h=$$(docker inspect milvus-standalone --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null); \

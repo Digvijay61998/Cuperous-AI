@@ -22,6 +22,7 @@ import { BotFlowNode } from "src/bots/entities";
 import { NodeTypeEnum } from "src/bots/enums/node-type.enum";
 import { ConversationService } from "src/conversation/conversation.service";
 import { ChatTypeEnum } from "src/conversation/enums/chat-type.enum";
+import { PlatformEnum } from "src/conversation/enums/platform.enum";
 import { QuestionsService } from "src/questions/questions.service";
 import { RedisPropagatorService } from "src/redis-propagate/redis-propagate.service";
 import { SegmentsService } from "src/segments/segments.service";
@@ -857,9 +858,18 @@ export class MessageHandlerService {
 
     // Terminal: send one fallback message and reset to start node (NOT null,
     // which would silently drop all future messages from this user).
+    //
+    // Message selection, most specific first. "Sorry, I did not understand
+    // that" is the wrong thing to say when the AI understood perfectly well and
+    // simply has no matching knowledge — it blames the customer for our gap,
+    // and it invites them to rephrase a question that rephrasing cannot fix.
+    // When the AI service returned prose (its own honest "I don't have that,
+    // but here is what I can help with"), that prose is strictly better than
+    // any generic string, so prefer it.
     const fallbackMsg =
+      (typeof aiResult?.answer === "string" && aiResult.answer.trim()) ||
       this.socketStateService.getUserData(userId)?.botSettings?.fallbackMessage ||
-      "I am sorry, I am not able to understand you";
+      "I don't have anything on that in our help content yet. Could you tell me a bit more about what you're trying to do, and I'll point you the right way?";
     await this.sendBotMessage(userId, [{ type: "text", value: fallbackMsg }]);
     // Reset to start node so the next message re-enters the flow normally.
     const startNode = this.socketStateService.getUserData(userId)?.startNode;
@@ -1351,6 +1361,9 @@ if (!webhookId) {
     node: BotFlowNode,
     userId: string | any
   ) {
+    // Mirrors handleFailureNode: a success branch left unconnected in the
+    // builder would otherwise call getBotNode(undefined) and throw.
+    if (!node.next?.length) return;
     const nextNode = await this.botsService.getBotNode(node.next[0]);
     return this.handleNode(nextNode, message, userId);
   }
@@ -1718,6 +1731,10 @@ if (!webhookId) {
       (n: BotFlowNode) => n?.nodeType === NodeTypeEnum.FAILURE
     );
 
+    // Hoisted so the catch below can mark an already-created session failed if
+    // delivery throws after the session row exists.
+    let launchedSessionId: string | null = null;
+
     try {
       if (!payload.templateId) {
         this.logger.error("OPEN_TEMPLATE node missing templateId");
@@ -1728,7 +1745,11 @@ if (!webhookId) {
       const template: any = await this.templateService.findOne(
         payload.templateId
       );
-      if (!template || !template.hostedUrl) {
+      // A URL typed on the node itself wins over the one stored on the
+      // template, so a flow can point at a specific S3/CDN deployment without
+      // re-uploading the template.
+      const hostedUrl = (payload.templateUrl || "").trim() || template?.hostedUrl;
+      if (!template || !hostedUrl) {
         this.logger.error(`Template ${payload.templateId} has no hosted build`);
         if (failureNode) return this.handleNode(failureNode, message, userId);
         return;
@@ -1748,9 +1769,10 @@ if (!webhookId) {
         conversationId,
         platform,
         variables,
-        hostedUrl: template.hostedUrl,
+        hostedUrl,
         expiryMinutes: payload.sessionExpiryMinutes,
       });
+      launchedSessionId = session.id;
 
       // Persist which session this workflow is now waiting on.
       this.socketStateService.updateUserData(userId, {
@@ -1764,23 +1786,58 @@ if (!webhookId) {
       const responses = (node.responses as any[]) || [];
       const bodyText = responses[0]?.value || buttonText;
 
-      // Send the CTA through the ACTIVE provider for this channel (never
-      // hardcoded to WhatsApp) — resolved via the feature-flag registry.
+      // Only a provider with real interactive-button support gets a native CTA.
+      // Everything else goes through sendBotMessage — the universal outbound
+      // path, which also persists the chat row and announces it to the inbox.
       const provider = await this.messagingRegistry.resolve(platform, botId);
-      if (provider && mode !== ModeEnum.preview) {
+      const useNativeCta =
+        mode !== ModeEnum.preview &&
+        !!provider &&
+        provider.supportsFeature("cta_url");
+      const isWidgetPath =
+        mode === ModeEnum.preview || platform === PlatformEnum.WIDGET;
+
+      let sendResult: { status: string; error?: string } = { status: "success" };
+      if (useNativeCta) {
         const recipient = ctx?.recipient || ctx?.sender_psid || userId;
-        await provider.sendMessage(
+        sendResult = await provider.sendMessage(
           recipient,
-          provider.supportsFeature("cta_url")
-            ? { type: "cta_url", text: bodyText, cta: { displayText: buttonText, url: launchUrl } }
-            : { type: "text", text: `${bodyText}\n${buttonText}: ${launchUrl}` },
+          {
+            type: "cta_url",
+            text: bodyText,
+            cta: { displayText: buttonText, url: launchUrl },
+          },
           ctx
         );
       } else {
-        // Preview / widget fallback: surface the link as a normal bot message.
+        // The widget renders a real launch button from `template.url`, so its
+        // body text stays clean. Every text-only channel (WhatsApp Web, SMS,
+        // ...) must carry the link inside `value` instead — the channel
+        // renderers fall through to `message.value`, so a URL left only on
+        // `template` would be silently stripped and the customer would receive
+        // a bare "Open". A channel that CAN render a native button (WhatsApp
+        // Web via cta_url) uses `template.bodyText` to keep the bubble clean.
         await this.sendBotMessage(userId, [
-          { type: "text", value: `${bodyText}\n${buttonText}: ${launchUrl}` },
+          {
+            type: ChatTypeEnum.TEMPLATE,
+            value: isWidgetPath
+              ? bodyText
+              : `${bodyText}\n${buttonText}: ${launchUrl}`,
+            template: { url: launchUrl, buttonText, bodyText },
+          },
         ]);
+      }
+
+      // Don't mark the session launched (or fire analytics) unless the CTA
+      // actually reached the customer — otherwise a silent WhatsApp Web send
+      // failure would leave the workflow paused forever with no signal.
+      if (sendResult.status !== "success") {
+        this.logger.error(
+          `Failed to deliver template link for session ${session.id}: ${sendResult.error}`
+        );
+        await this.templateSessionService.markFailed(session.id, sendResult.error);
+        if (failureNode) return this.handleNode(failureNode, message, userId);
+        return;
       }
 
       await this.templateSessionService.markLaunched(session.id);
@@ -1795,6 +1852,13 @@ if (!webhookId) {
       // PAUSE: stay on this node; do not advance until a callback arrives.
     } catch (error) {
       this.logger.error(`Error in handleOpenTemplate: ${error.message}`);
+      // If a session was already created before delivery threw, mark it failed
+      // so it isn't left waiting for a callback that will never come.
+      if (launchedSessionId) {
+        await this.templateSessionService
+          .markFailed(launchedSessionId, error.message)
+          .catch(() => undefined);
+      }
       if (failureNode) return this.handleNode(failureNode, message, userId);
     }
   }
@@ -1844,9 +1908,67 @@ if (!webhookId) {
         attributes: { ...existing, ...mergeData },
       });
     }
-    if (!target) return;
+    if (!target) {
+      // Nothing wired after the template. On a successful submit still confirm
+      // in the chat, otherwise the customer (and anyone testing the flow) gets
+      // silence after completing the form.
+      if (outcome === "SUCCESS") {
+        await this.sendBotMessage(userId, [
+          { type: ChatTypeEnum.TEXT, value: this.summariseSubmission(mergeData) },
+        ]);
+      }
+      return;
+    }
     this.socketStateService.updateUserData(userId, { currentNode: target });
     return this.handleNode(target, "", userId);
+  }
+
+  /**
+   * Replaces {{key}} placeholders in an authored message with values collected
+   * during the conversation (including data submitted from a hosted template).
+   *
+   * Keeps the bot's wording fully author-controlled: an appointment flow can say
+   * "You're booked for {{slot}}" while a purchase flow says "We'll deliver
+   * {{item}} within 24 hours" — same mechanism, different copy per node.
+   */
+  private interpolateAttributes(
+    value: any,
+    attributes: Record<string, any> = {}
+  ): any {
+    if (typeof value !== "string" || !value.includes("{{")) return value;
+
+    return value.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key: string) => {
+      const resolved = attributes?.[key];
+      if (resolved === undefined || resolved === null) return "";
+      if (Array.isArray(resolved)) return resolved.join(", ");
+      if (typeof resolved === "object") return JSON.stringify(resolved);
+      return String(resolved);
+    });
+  }
+
+  /**
+   * Human-readable recap of what the customer submitted, used when the flow has
+   * no node wired after the template. Without it a local test looks broken: the
+   * form submits successfully but nothing ever comes back in the chat.
+   */
+  private summariseSubmission(data: Record<string, any> = {}): string {
+    const lines = Object.entries(data)
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([key, v]) => {
+        const label = key
+          .replace(/[_-]+/g, " ")
+          .replace(/([a-z])([A-Z])/g, "$1 $2")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        const shown = Array.isArray(v)
+          ? v.join(", ")
+          : typeof v === "object"
+            ? JSON.stringify(v)
+            : String(v);
+        return `${label}: ${shown}`;
+      });
+
+    if (lines.length === 0) return "Thanks! Your details have been received.";
+    return `Thanks! Here's a summary of your details:\n${lines.join("\n")}`;
   }
 
   @OnEvent("template.submitted", { async: true })
@@ -1939,18 +2061,29 @@ if (!webhookId) {
     );
 
     message.map((ele: any, index: number) => {
-      if (ele.type === ChatTypeEnum.RANDOM_TEXT) {
-        ele.value =
-          ele.values.length > 0
+      // Resolve a random variant WITHOUT mutating the node's stored responses —
+      // node objects are reused across turns, so overwriting `value` here would
+      // permanently collapse a RANDOM_TEXT node to its first drawn variant.
+      let value = ele.value;
+      let type = ele.type;
+      if (type === ChatTypeEnum.RANDOM_TEXT) {
+        value =
+          ele.values?.length > 0
             ? ele.values[Math.floor(Math.random() * ele.values.length)]
             : "";
-        ele.type = ChatTypeEnum.TEXT;
+        type = ChatTypeEnum.TEXT;
       }
+
+      // Substitute {{attribute}} placeholders so an authored reply can echo
+      // back collected values (e.g. a slot the customer just booked in a
+      // template). Unknown keys collapse to '' rather than leaking the braces.
+      value = this.interpolateAttributes(value, userData.attributes);
+
       const messageResponse: MessageResponseDto = {
         id: generateId("message", 10),
         senderId: botId,
-        type: ele.type,
-        value: ele.value,
+        type,
+        value,
         buttons: ele.buttons,
         time: new Date(),
         delay: 2000,
@@ -1959,12 +2092,13 @@ if (!webhookId) {
         location: ele.location,
         info: ele.info,
         handledByAgent: handledByAgent || false,
+        template: ele.template,
       };
 
       if (mode !== ModeEnum.preview) {
         this.eventEmitter.emit("create.new.chat", {
-          message: ele.value,
-          type: ele.type,
+          message: value,
+          type,
           sender: botId,
           conversationId: conversationId,
           // Correlation handle so a channel delivery handler (WhatsApp Web etc.)

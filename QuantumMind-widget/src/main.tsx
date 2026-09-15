@@ -42,12 +42,12 @@ const chatbot = () => {
 
 export default chatbot;
 
-window.botId = "6a57ca1368c861f4cbccd254";
-// window.baseUrl = "https://bizback.bizmorphic.com";
-window.baseUrl = "http://localhost:4000"
-window.isOpenChat = true;
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <>
-    <App />
-  </>
-);
+// window.botId = "6a57ca1368c861f4cbccd254";
+// window.baseUrl = "https://jacube.engage.com";
+// // window.baseUrl = "http://localhost:4000"
+// window.isOpenChat = true;
+// ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+//   <>
+//     <App />
+//   </>
+// );

@@ -231,7 +231,7 @@ const BotList = () => {
       renderCell: ({ row }: any) => {
         return (
           <>
-            <Link href={`/bots/settings/${row?._id || row?.id}`}>
+            <Link href={`/bots/settings?botId=${row?._id || row?.id}`}>
               <StyledLink>{row.name}</StyledLink>
             </Link>
             <CustomChip
@@ -339,7 +339,7 @@ const BotList = () => {
       renderCell: ({ row }: any) => {
         return role && access(role, AccessTypesEnum.ACTION) ? (
           <>
-            <Link href={`/bots/bot-flow/${row?._id || row?.id}`}>
+            <Link href={`/bots/bot-flow?botId=${row?._id || row?.id}`}>
               <Tooltip placement="top" title="Bot Flow" arrow>
                 <IconButton
                   aria-label="bot-flow"
@@ -352,7 +352,7 @@ const BotList = () => {
               </Tooltip>
             </Link>
 
-            <Link href={`/bots/settings/${row?._id || row?.id}`}>
+            <Link href={`/bots/settings?botId=${row?._id || row?.id}`}>
               <Tooltip placement="top" title="Edit" arrow>
                 <IconButton
                   aria-label="Edit"

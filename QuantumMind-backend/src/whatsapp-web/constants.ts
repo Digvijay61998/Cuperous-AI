@@ -15,6 +15,14 @@ export const WA_WEB_STATUS_EVENT = 'whatsappweb.status';
 export const WA_WEB_INBOUND_EVENT = 'whatsappweb.inbound';
 export const WA_WEB_ACK_EVENT = 'whatsappweb.ack';
 export const WA_WEB_HISTORY_EVENT = 'whatsappweb.history';
+/**
+ * engine -> feature: the chat list / contact book WhatsApp pushed.
+ *
+ * Separate from the inbound-message event because these carry no message: they
+ * are what lets the inbox list a conversation that has not written to us since
+ * this process started.
+ */
+export const WA_WEB_CHATS_EVENT = 'whatsappweb.chats';
 export const WA_WEB_SEND_EVENT = 'send-whatsapp-web-message';
 
 /** The `channel` value ChannelThread rows use for this platform. */

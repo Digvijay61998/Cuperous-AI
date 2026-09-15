@@ -131,11 +131,53 @@ export class Chat {
 export const ChatSchema = SchemaFactory.createForClass(Chat);
 
 /**
+ * Prefix marking a locally-generated stand-in for a channel message id.
+ *
+ * WHY A PLACEHOLDER IS NEEDED AT ALL
+ * ----------------------------------
+ * An outbound message is written BEFORE it is sent, so that a message the channel
+ * accepts can never lack a local record. At write time we do not yet know the
+ * channel's own id — but leaving `externalMessageId` unset is not an option,
+ * because of how the unique index below behaves on a compound key:
+ *
+ *   `sparse` skips a document only when **every** indexed field is missing. A row
+ *   with `channelThread` set and `externalMessageId` absent IS indexed, as
+ *   `externalMessageId: null` — so only ONE such row can exist per thread.
+ *
+ * The consequence, observed in production: the first reply on a thread stored
+ * fine; the moment one was left in `pending`/`failed`, every later reply on that
+ * thread collided with E11000 and was rejected. A single failed message
+ * permanently blocked the conversation.
+ *
+ * Giving each outbound row a unique placeholder keeps the slot occupied by a
+ * distinct value, so unlimited replies can be in flight per thread. It is
+ * overwritten with the channel's real id by `linkOutboundChannelMessage`.
+ */
+export const PENDING_EXTERNAL_ID_PREFIX = 'pending:';
+
+/** The placeholder a not-yet-acknowledged outbound row carries. */
+export function pendingExternalId(correlationId: string): string {
+  return `${PENDING_EXTERNAL_ID_PREFIX}${correlationId}`;
+}
+
+/** True for a locally-minted stand-in rather than a real channel message id. */
+export function isPendingExternalId(
+  externalMessageId: string | undefined | null,
+): boolean {
+  return !!externalMessageId?.startsWith(PENDING_EXTERNAL_ID_PREFIX);
+}
+
+/**
  * Dedup oracle for channel messages: at most one row per (thread, external id).
  *
  * `sparse` is essential — the vast majority of rows (widget + bot chats) carry
  * neither field, and a non-sparse unique index would treat them all as
  * duplicate nulls and reject every insert after the first.
+ *
+ * NOTE the compound-sparse subtlety documented on
+ * {@link PENDING_EXTERNAL_ID_PREFIX}: this index does NOT skip a row that has a
+ * `channelThread` but no `externalMessageId`. Anything writing an outbound row
+ * before the channel has answered must supply a unique placeholder.
  */
 ChatSchema.index(
   { channelThread: 1, externalMessageId: 1 },
@@ -144,6 +186,16 @@ ChatSchema.index(
 
 /** Ack lookups: an incoming delivery receipt finds its row by external id. */
 ChatSchema.index({ externalMessageId: 1 }, { sparse: true });
+
+/**
+ * Correlation-id lookups, on the hot path for every outbound channel message.
+ *
+ * `linkOutboundChannelMessage` and `failOutboundByCorrelationId` both find a row
+ * by `chatId`; without this the send path pays a collection scan per reply.
+ * Sparse because widget/bot rows written before the correlation convention have
+ * no value here.
+ */
+ChatSchema.index({ chatId: 1 }, { sparse: true });
 
 /** Thread history paging, newest-first. */
 ChatSchema.index({ channelThread: 1, time: -1 });

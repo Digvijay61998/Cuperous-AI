@@ -215,7 +215,7 @@ const BotSetting = () => {
     window.botId =  "${botId}";
     window.baseUrl = "${env.baseurl}";
     window.isOpenChat = false;
-    import jarcube from "${env.baseurl}/api/file/plugin.js";
+    import jarcube from "${env.widgetUrl}";
     jarcube();
   </script>
     <!-- End of JarCube code -->

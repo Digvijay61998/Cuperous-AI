@@ -177,6 +177,7 @@ const AddTemplateDrawer = ({ open, toggle }: Props) => {
     if (data.estimatedDuration) {
       formData.append('estimatedDuration', data.estimatedDuration);
     }
+
     if (zipFile) formData.append('template', zipFile);
     if (thumbFile) formData.append('thumbnail', thumbFile);
 
@@ -266,6 +267,10 @@ const AddTemplateDrawer = ({ open, toggle }: Props) => {
               </FormHelperText>
             )}
           </FormControl>
+
+          <Typography variant="caption" color="text.secondary" sx={{display: 'block', mb:5}}>
+            Hosted URL is generated automatically after upload and versioning
+          </Typography>
 
           {/* Industry */}
           <FormControl fullWidth size="small" sx={{ mb: 5 }} error={industryError}>

@@ -163,6 +163,51 @@ export const updateTemplateConfig = createAsyncThunk(
   },
 );
 
+// ** Resolve a template's config for a specific bot.
+// Returns manifest defaults <- catalog values <- this bot's overrides, merged
+// server-side, so the editor shows what the customer will actually see.
+export const fetchTemplateConfig = createAsyncThunk(
+  'template/fetchTemplateConfig',
+  async ({ id, botId }: { id: string; botId?: string }) => {
+    const response = await Axios.get(`template/${id}/config`, {
+      params: botId ? { bid: botId } : undefined,
+    });
+
+    return response.data;
+  },
+);
+
+// ** Save config overrides for ONE bot.
+// Deliberately separate from updateTemplateConfig: that one edits the shared
+// catalog defaults for every bot using the template, which is not what you want
+// when tailoring a template to a single bot.
+export const updateTemplateInstanceConfig = createAsyncThunk(
+  'template/updateTemplateInstanceConfig',
+  async ({
+    id,
+    botId,
+    configValues,
+  }: {
+    id: string;
+    botId: string;
+    configValues: Record<string, any>;
+  }) => {
+    try {
+      const response = await Axios.patch(`template/${id}/instance-config`, {
+        botId,
+        configValues,
+      });
+      toast.success('Template settings saved for this bot');
+
+      return response.data;
+    } catch (error: any) {
+      console.log('Update instance config API:Error >>>>', error);
+      toast.error(error.response?.data?.message || error.message || error);
+      throw error;
+    }
+  },
+);
+
 // ** Publish / Unpublish / Archive
 export const publishTemplate = createAsyncThunk(
   'template/publishTemplate',

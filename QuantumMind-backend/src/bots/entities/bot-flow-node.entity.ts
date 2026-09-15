@@ -17,6 +17,8 @@ export interface BotPayload {
   secure?: boolean;
   // ** Open Template node (Phase 2) **
   templateId?: string;
+  /** Overrides the template's own hostedUrl for this node only. */
+  templateUrl?: string;
   buttonText?: string;
   buttonIcon?: string;
   variableMappings?: TemplateVariableMapping[];

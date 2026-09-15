@@ -38,8 +38,17 @@ app/
   services/
     embeddings.py            sentence-transformers wrapper; lru_cache singleton
     vector_store.py          ALL Milvus access; thread-safe singleton; tenant isolation
-    ingestion.py             chunking + ingest orchestration
-    query.py                 ⭐ the RAG engine — retrieve → gate → prompt → generate
+    ingestion.py             chunking + ingest orchestration (repairs text pre-embed)
+    conversation.py          smalltalk routing — answers greetings BEFORE retrieval
+    answer_policy.py         system prompt · refusal detection · text repair
+    query.py                 ⭐ the RAG engine — route → rewrite → retrieve → gate
+                             → prompt → generate → refusal check
+
+  rewriter/                  query-rewrite strategies (ABC + factory + config)
+    base.py                  QueryRewriter ABC + RewriteResult (frozen — do not edit)
+    noop.py                  the off switch; `rewriter_strategy = none`, the default
+    sanitize.py              pure helpers: pronoun list, response sanitisation, ids
+    factory.py               name → constructor registry; `llm` not yet registered
 
   llm/
     base.py                  LLMProvider ABC + LLMResult dataclass
@@ -51,6 +60,11 @@ app/
 
 eval/                        ⭐ evaluation harness (Phase 0)
   golden/dataset.yaml        23 cases over 5 documents; tags slice the results
+  datasets/                  ⭐ five HAND-GRADED suites (conversational behaviour)
+    README.md                how to run and score them; corpus ground truth
+    01..05-*.md              grading criteria per case
+    suites.yaml              machine-readable questions for the runner
+    probe_datasets.py        asks them in order; prints answers next to criteria
   metrics.py                 recall/precision/faithfulness/relevancy/correctness + gate metrics
   runner.py                  CLI; drives the REAL QueryService in an isolated collection
   results/baseline.json      the comparison target — regressions are measured against this
@@ -85,14 +99,23 @@ POST /ingest/{website|text|file|files}
 ### Query
 ```
 POST /query/ask
-  → embed(question)                            ← ⚠️ raw question, history IGNORED here
-  → Milvus COSINE top-5, expr: client_id == "..."
-  → keep hits where score >= 0.15              ← confidence gate
-  → if none: return {confident: false, answer: null}   ← LLM never called
-  → build system prompt with concatenated context
-  → append last 6 history turns + question
+  → classify_smalltalk(question)               ← greeting/thanks/bye/identity?
+      → if matched: return a warm reply. 0 embeddings, 0 searches, 0 tokens.
+  → rewriter.rewrite(question, history)        ← retrieval-only; `none` by default,
+                                                 so today this is inert (L1 open)
+  → embed(search_query)                        ← ⚠️ still the raw question while
+                                                 rewriter_strategy = none
+  → Milvus COSINE top-8, expr: client_id == "..."
+  → absolute gate: score >= 0.15               ← decides `confident`
+  → relative gate: score >= 0.45 × best        ← decides how much enters the prompt;
+                                                 top chunk always kept
+  → if none: return {confident: false, answer: NO_CONTEXT_REPLY}  ← LLM never called
+  → repair_text on each chunk, build system prompt
+  → append last 6 history turns + question     ← the LLM sees the ORIGINAL question
   → provider.generate(messages)
-  → return {answer, confident: true, sources, tokens_used, provider, model}
+  → is_refusal(answer)?                        ← model declined despite passing chunks
+      → if so: confident=false, sources=[]     ← lets the caller escalate
+  → return {answer, confident, sources, tokens_used, provider, model}
 ```
 
 ### Storage
@@ -168,11 +191,36 @@ metrics never touch the LLM and are stable to the digit. Do not tighten the
 generator tolerance without re-measuring across at least five runs. Finding
 **L26**, decision **D12**.
 
-### 12. Tracing must never break a request
+### 12. `confident: false` is the escalation signal — keep it truthful
+Callers route to a human on `confident: false`. So the flag must mean "we could
+not answer this", not "cosine similarity was above 0.15". Two consequences:
+
+- A model refusal downgrades it (`answer_policy.is_refusal`). Without this, a
+  polite "I don't have that information" ships to the customer with
+  `confident: true` and the handoff never fires. Finding **L28**, decision **D14**.
+- `is_refusal` must stay **conservative**. A missed refusal costs one bot reply; a
+  false positive routes an already-answered question to a human and wastes an
+  agent's time. It judges clause by clause, and a clause containing a figure is
+  substantive regardless of how it is framed — do not "simplify" that to a length
+  or keyword check. Decision **D15**.
+
+### 13. A greeting must never reach retrieval
+`services/conversation.py` answers greetings, thanks, sign-offs and identity
+questions before any embedding happens. Deleting or bypassing it does not merely
+lose a nicety — "hello" retrieves the least-dissimilar policy chunk, clears the
+gate, and the LLM correctly reports that no chunk answers it, so the customer who
+said hi receives "I don't have that information right now." Finding **L27**.
+
+The matcher requires a **complete phrase cover** of the message, not containment.
+Loosening that to containment makes "thanks, how much is Growth?" match on
+`thanks` and reply "Glad that helped!" to a pricing question. Every rule in that
+module is written to fail *towards* retrieval; keep it that way. Decision **D13**.
+
+### 14. Tracing must never break a request
 `app/tracing.py` swallows its own errors by design. Keep it that way. A span that
 fails to record is an observability gap, not a 500.
 
-### 13. Eval isolation is load-bearing — do not weaken it
+### 15. Eval isolation is load-bearing — do not weaken it
 `eval/runner.py` **assigns** `MILVUS_COLLECTION` (never `setdefault`), because
 `.env` already sets it and the Makefile passes `--env-file`. A `setdefault` there
 is a silent no-op, and teardown then drops the **production** collection. Teardown
@@ -185,7 +233,9 @@ also verifies its target and refuses to drop anything but `eval_<hex>`. Finding
 
 | Trap | Detail |
 |---|---|
-| **Chat history never reaches retrieval** | `query.py` embeds the raw question. History only reaches the LLM. Follow-ups retrieve nothing. This is finding **L1** and the top priority. |
+| **Chat history never reaches retrieval** | `query.py` embeds the raw question. History only reaches the LLM. Follow-ups retrieve nothing. This is finding **L1** and the top priority. Still open: the rewriter seam is wired but `rewriter_strategy` defaults to `none` and `llm_rewriter.py` does not exist yet (spec tasks 8.1–8.2). `multi_turn` remains 0.500 recall. |
+| **PDF extraction mangles `₹` to `■`** | pypdf substitutes U+25A0 for glyphs it cannot map, and the model then quotes the box back to the customer. `answer_policy.repair_text` maps it back **at ingest**, so the stored text and its embedding both carry the fix — repairing only at answer time leaves a customer searching "₹5,000" unable to match the chunk. The table is tiny on purpose: it is safe only because this corpus is single-currency. Finding **L30**, decision **D18**. |
+| **The similarity gate is not an answerability check** | `confident` from cosine alone says chunks *look* related, not that they contain the answer. Hence the refusal check (hard rule 12). If you add a reranker in Phase 2, move the gate onto the rerank score but keep the refusal check — they catch different failures. |
 | **MiniLM truncates at ~256 tokens** | Was silent; Phase 0 added a warning in `embeddings.py`. The truncation itself still happens — that is Phase 5. `ingest_website_pages` prepends the page title, so long title + content can overflow and you lose the tail. |
 | ~~**Threshold docs disagree**~~ | Fixed in Phase 0. `0.15` everywhere. Code is authoritative if they ever drift again. |
 | ~~**`embedding_dim` setting is dead**~~ | Removed in Phase 0. Real dimension comes from the loaded model via `self.embeddings.dimension`. |

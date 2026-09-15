@@ -94,7 +94,7 @@ function CreateBot() {
           botType : `${type}`
         };
         sessionStorage.setItem('botSettings', JSON.stringify(routeData));
-        router.push(`/bots/settings/${data?.payload?._id || data?.payload?.id}`);
+        router.push(`/bots/settings?botId=${data?.payload?._id || data?.payload?.id}`);
       },
     );
   };

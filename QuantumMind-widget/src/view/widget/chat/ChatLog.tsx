@@ -32,6 +32,7 @@ import Gallery from "./components/Gallery";
 import Image from "./components/Image";
 import Message from "./components/Message";
 import QuickReply from "./components/QuickReply";
+import TemplateLauncher from "./components/TemplateLauncher";
 // ** Types Imports
 import AdsSlider from "../ads/Ads";
 import Offers from "../offers";
@@ -215,6 +216,15 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
                       <Video link={chat.value} type={chat.format || "mp4"} />
                     )}
                     {chat.type === "maps" && <Map location={chat.location} />}
+                    {chat.type === "template" && chat.template?.url && (
+                      <TemplateLauncher
+                        botStyles={botStyles}
+                        message={chat.value || ""}
+                        buttonText={chat.template?.buttonText}
+                        url={chat.template.url}
+                        onOpen={props.onOpenTemplate}
+                      />
+                    )}
                     {chat.type === "ads" && (
                       <AdsSlider adsSlideArray={chat?.value} {...props} />
                     )}

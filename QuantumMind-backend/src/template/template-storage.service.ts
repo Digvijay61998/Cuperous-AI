@@ -48,6 +48,9 @@ export class TemplateStorageService {
     return `${this.serverBaseUrl}/api/file/templates/${relativePath}`;
   }
 
+  private get publicTemplateBaseUrl (): string {
+     return (this.configService.get('template.publicBaseUrl') || '').trim();
+  }
   /**
    * Builds the public hosted URL for a template version from the CURRENT
    * storage mode + config. Exposed so callers (TemplateService) can recompute
@@ -57,6 +60,9 @@ export class TemplateStorageService {
    *   relPath = "{templateId}/v{version}"
    */
   buildHostedUrl(relPath: string): string {
+    if (this.publicTemplateBaseUrl) {
+      return `${this.publicTemplateBaseUrl.replace(/\/$/, '')}/${relPath}/index.html`;
+    }
     if (this.storageMode === 's3') {
       return this.objectUrl(`templates/${relPath}/index.html`);
     }
@@ -92,7 +98,7 @@ export class TemplateStorageService {
 
     return {
       s3Path: basePath,
-      hostedUrl: this.localUrl(`${basePath}/index.html`),
+      hostedUrl: this.buildHostedUrl(basePath),
       fileCount: entries.length,
       fileSize,
     };
@@ -185,7 +191,6 @@ export class TemplateStorageService {
               Body: entry.data,
               ContentType: contentType,
               CacheControl: cacheControl,
-              ACL: 'public-read',
             })
             .promise();
         }),
@@ -203,7 +208,7 @@ export class TemplateStorageService {
 
     return {
       s3Path: basePath,
-      hostedUrl: this.objectUrl(`${basePath}/index.html`),
+      hostedUrl: this.buildHostedUrl(`templates/${templateId}/v${version}`),
       fileCount: entries.length,
       fileSize,
     };
@@ -226,7 +231,6 @@ export class TemplateStorageService {
         Body: file.buffer,
         ContentType: file.mimetype || mime.lookup(ext) || 'image/png',
         CacheControl: 'public, max-age=86400',
-        ACL: 'public-read',
       })
       .promise();
     return result.Location;

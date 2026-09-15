@@ -38,6 +38,7 @@ import { FacebookModule } from "./facebook/facebook.module";
 import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
 import { ChannelThreadModule } from "./channel-thread/channel-thread.module";
+import { InboxModule } from "./inbox/inbox.module";
 import { VideoModule } from "./video/video.module";
 import { TemplateModule } from "./template/template.module";
 import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
@@ -75,6 +76,7 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     WebhookModule,
     ConversationModule,
     ChannelThreadModule,
+    InboxModule,
     RedisModule,
     SocketModule,
     RedisPropagateModule,

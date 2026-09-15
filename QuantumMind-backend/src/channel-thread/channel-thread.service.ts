@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import { CHANNEL_THREAD_PROVIDER } from './constant';
 import { ChannelThreadDocument } from './entities/channel-thread.entity';
 
@@ -32,6 +32,22 @@ export interface ThreadPreview {
   time: Date;
   direction?: string;
   sender?: string;
+}
+
+/**
+ * Inbox list query. `botIds` is the caller's permission scope (see
+ * InboxService.scopeFilter) and is applied as a `bot: { $in }` filter — it is
+ * NOT optional-by-accident: `undefined` means "unscoped/admin", an empty array
+ * means "this caller can see nothing" and must return nothing rather than
+ * everything.
+ */
+export interface ListThreadsOptions {
+  channel?: string;
+  botIds?: string[] | null;
+  search?: string;
+  limit?: number;
+  /** Cursor: return threads whose lastMessageAt is strictly older than this. */
+  before?: Date;
 }
 
 /**
@@ -99,6 +115,76 @@ export class ChannelThreadService {
       },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );
+  }
+
+  /**
+   * Create-or-label a thread from the channel's own chat list, with no message.
+   *
+   * Distinct from {@link upsertForInbound} in three ways that matter:
+   *
+   *  - It reports whether the row was **created**, so the caller can announce a
+   *    changed channel list only when the tabs could actually have changed.
+   *  - It never touches `unreadCount`. WhatsApp's own unread count answers "how
+   *    many has the phone not seen", which is a different question from "how many
+   *    has this dashboard not seen" — adopting it would show unread badges for
+   *    messages an agent already read here.
+   *  - `lastMessageAt` is only ever moved **forward**, and only on insert or when
+   *    the channel reports something newer. A chat-list event replaying an older
+   *    timestamp must not drag an active thread down the inbox.
+   *
+   * `lastMessage` is deliberately left unset: the preview must describe a message
+   * we have actually stored, or the inbox would show a row whose thread is empty.
+   */
+  async upsertForChatSync(input: {
+    channel: string;
+    sessionName?: string;
+    chatId: string;
+    phone?: string;
+    pushName?: string;
+    bot?: string;
+    lastMessageAt?: Date;
+    meta?: Record<string, any>;
+  }): Promise<{ thread: ChannelThreadDocument; created: boolean }> {
+    const key = this.normalizeKey(input);
+
+    const set: Record<string, any> = {};
+    if (input.phone) set.phone = input.phone;
+    if (input.pushName) set.pushName = input.pushName;
+    if (input.meta && Object.keys(input.meta).length) {
+      for (const [k, v] of Object.entries(input.meta)) {
+        set[`meta.${k}`] = v;
+      }
+    }
+
+    const setOnInsert: Record<string, any> = {
+      botEnabled: true,
+      handledByAgent: false,
+      unreadCount: 0,
+    };
+    if (input.bot) setOnInsert.bot = input.bot;
+    // On insert this is the only activity clock we have; on update it is handled
+    // by the forward-only $max below, so it must not appear in both.
+    if (input.lastMessageAt) setOnInsert.lastMessageAt = input.lastMessageAt;
+
+    const update: Record<string, any> = { $setOnInsert: setOnInsert };
+    if (Object.keys(set).length) update.$set = set;
+
+    const before = await this.threadModel.findOne(key, { _id: 1 });
+
+    // `$max` rather than `$set`: chat-list events arrive out of order and on every
+    // reconnect, and an older timestamp winning would reshuffle the inbox.
+    if (input.lastMessageAt && before) {
+      update.$max = { lastMessageAt: input.lastMessageAt };
+      delete setOnInsert.lastMessageAt;
+    }
+
+    const thread = await this.threadModel.findOneAndUpdate(key, update, {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    });
+
+    return { thread, created: !before };
   }
 
   async findByKey(key: ChannelThreadKey): Promise<ChannelThreadDocument | null> {
@@ -263,15 +349,25 @@ export class ChannelThreadService {
    * Distinct channels that actually have threads — this is what drives the
    * dashboard's channel tabs, so a new platform appears automatically without a
    * frontend change.
+   *
+   * `botIds` scopes the counts to the channels the caller may see. Passing an
+   * empty array yields no channels; passing null/undefined is unscoped.
    */
-  async listChannelsWithCounts(): Promise<
+  async listChannelsWithCounts(
+    botIds?: string[] | null,
+  ): Promise<
     Array<{ channel: string; threads: number; unread: number }>
   > {
-    const rows = await this.threadModel.aggregate([
+    const pipeline: any[] = [];
+    const scope = this.botScopeFilter(botIds);
+    if (scope) pipeline.push({ $match: scope });
+    pipeline.push(
       {
         $group: {
           _id: '$channel',
           threads: { $sum: 1 },
+          // Threads carrying at least one unseen message — the tab badge is a
+          // count of conversations needing attention, not of messages.
           unread: {
             $sum: {
               $cond: [{ $gt: ['$unreadCount', 0] }, 1, 0],
@@ -280,11 +376,96 @@ export class ChannelThreadService {
         },
       },
       { $sort: { threads: -1 } },
-    ]);
+    );
+
+    const rows = await this.threadModel.aggregate(pipeline);
     return rows.map((r) => ({
       channel: r._id,
       threads: r.threads,
       unread: r.unread,
     }));
+  }
+
+  /**
+   * Translate a permission scope into a Mongo filter fragment.
+   *
+   * Returns `null` for an unscoped (admin) caller so the caller can omit the
+   * `$match` entirely. An EMPTY array deliberately produces `{ bot: {$in: []} }`
+   * — a filter that matches nothing — because "this agent is assigned no bots"
+   * must show an empty inbox, not the whole tenant's.
+   */
+  private botScopeFilter(
+    botIds?: string[] | null,
+  ): Record<string, any> | null {
+    if (botIds === undefined || botIds === null) return null;
+    return {
+      bot: {
+        $in: botIds.map((id) => new mongoose.Types.ObjectId(id)),
+      },
+    };
+  }
+
+  /**
+   * The inbox thread list for one channel tab, newest activity first.
+   *
+   * Cursor-paginated on `lastMessageAt` rather than offset-paginated: threads
+   * reorder constantly as messages arrive, and an offset would skip or repeat
+   * rows between pages. Backed by the `(channel, lastMessageAt)` index.
+   */
+  async listThreads(options: ListThreadsOptions = {}): Promise<{
+    threads: ChannelThreadDocument[];
+    nextCursor: string | null;
+  }> {
+    const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
+
+    const filter: Record<string, any> = {};
+    if (options.channel) filter.channel = options.channel;
+
+    const scope = this.botScopeFilter(options.botIds);
+    if (scope) Object.assign(filter, scope);
+
+    if (options.search) {
+      // Escaped: a contact search for "+91 (22)" must not be parsed as a regex
+      // group, and an unescaped user string is a ReDoS vector.
+      const escaped = options.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(escaped, 'i');
+      filter.$or = [{ pushName: rx }, { phone: rx }, { chatId: rx }];
+    }
+
+    if (options.before) {
+      filter.lastMessageAt = { $lt: options.before };
+    }
+
+    // limit+1 to learn whether another page exists without a second count query.
+    const rows = await this.threadModel
+      .find(filter)
+      .sort({ lastMessageAt: -1 })
+      .limit(limit + 1)
+      .populate('bot', 'name')
+      .populate('visitor', 'name email phone')
+      .populate('assignedAgent', 'name email');
+
+    const hasMore = rows.length > limit;
+    const threads = hasMore ? rows.slice(0, limit) : rows;
+    // A thread that has never carried a message has no lastMessageAt and cannot
+    // be a cursor; nulling out ends pagination rather than looping on it.
+    const last = threads[threads.length - 1];
+    const nextCursor =
+      hasMore && last?.lastMessageAt
+        ? last.lastMessageAt.toISOString()
+        : null;
+
+    return { threads, nextCursor };
+  }
+
+  /** One thread with its relations, for the inbox detail header. */
+  async findByIdPopulated(
+    id: string,
+  ): Promise<ChannelThreadDocument | null> {
+    return this.threadModel
+      .findById(id)
+      .populate('bot', 'name')
+      .populate('visitor', 'name email phone')
+      .populate('assignedAgent', 'name email');
   }
 }

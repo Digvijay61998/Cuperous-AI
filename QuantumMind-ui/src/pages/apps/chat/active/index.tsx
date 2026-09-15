@@ -34,11 +34,15 @@ import {
   addActiveMessage,
   clearActiveMessage, handleSoundToggle, selectChat, updateActiveConversation
 } from 'src/store/apps/conversation';
+import { LIVE_CHAT_TAB } from 'src/store/apps/inbox';
 import { getActiveConversationStats } from 'src/store/apps/states';
+import ChannelInbox from 'src/views/apps/inbox/ChannelInbox';
+import ChannelTabs from 'src/views/apps/inbox/ChannelTabs';
 
 const AppChat = ({props}: any) => {
   const store = useSelector((state: RootState) => state.conversations);
   const {chatContext, enableSound} = useSelector((state: RootState) => state.conversations);
+  const { activeTab } = useSelector((state: RootState) => state.inbox);
 
 
   const [userStatus, setUserStatus] = useState<StatusType>('online');
@@ -148,6 +152,14 @@ console.log(activeStatsData,"activestats")
         </Grid>
       </Grid>
       <br />
+
+      {/* Channel tabs. Data-driven from GET /inbox/channels, so a newly
+          integrated platform appears here with no change to this page. */}
+      <ChannelTabs />
+
+      {activeTab !== LIVE_CHAT_TAB ? (
+        <ChannelInbox channel={activeTab} />
+      ) : (
       <div style={{display:'flex'}}>
       <Box   
           sx={{
@@ -222,6 +234,7 @@ console.log(activeStatsData,"activestats")
       setUpdateStats={setUpdateStats}
     /></Box>
       </div>
+      )}
     </>
   );
 };

@@ -9,6 +9,7 @@ import bots from 'src/store/apps/bots';
 import chat from 'src/store/apps/chat';
 import conversations from 'src/store/apps/conversation';
 import dashboard from 'src/store/apps/dashboard';
+import inbox from 'src/store/apps/inbox';
 import offer from 'src/store/apps/offer';
 import preview from 'src/store/apps/preview';
 import questionBank from 'src/store/apps/question-bank';
@@ -68,6 +69,7 @@ export const store = configureStore({
     dashboard,
     scraper,
     messaging,
+    inbox,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

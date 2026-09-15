@@ -9,6 +9,7 @@ import logging
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import get_settings
+from app.services.answer_policy import repair_text
 from app.services.vector_store import VectorStoreService, get_vector_store
 
 logger = logging.getLogger(__name__)
@@ -26,9 +27,19 @@ class IngestionService:
         )
 
     def _chunk(self, text: str) -> list[str]:
+        """Repair extraction artefacts, then split.
+
+        Repair happens BEFORE chunking, so the stored text and the vector
+        computed from it both carry the corrected characters. Repairing only at
+        answer time would fix what the customer reads while leaving the
+        embedding computed over `■5,000` — so a customer searching for "₹5,000"
+        would still fail to match the chunk that answers them. Idempotent, so
+        re-ingesting repaired text is a no-op.
+        """
         if not text or not text.strip():
             return []
-        return [c for c in self.splitter.split_text(text) if c.strip()]
+        repaired = repair_text(text)
+        return [c for c in self.splitter.split_text(repaired) if c.strip()]
 
     # ------------------------------------------------------------------ website
     def ingest_website_pages(

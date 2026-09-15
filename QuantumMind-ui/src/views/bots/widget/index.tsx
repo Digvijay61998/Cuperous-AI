@@ -20,9 +20,10 @@ import { getBotMetadata, fetchVisitor } from 'src/store/apps/preview';
 
 type Props = {
   isChatBotOpen: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
-export default function Index({ isChatBotOpen }: Props) {
+export default function Index({ isChatBotOpen, onOpenChange }: Props) {
   const chatContext = useContext(ChatContext);
   const [isBotOpen, setIsBotOpen] = useState(false);
   const socketRef = useRef<any>(null);
@@ -80,6 +81,15 @@ const handleStartPreview = () => {
     setIsBotOpen(isChatBotOpen);
   }, [isChatBotOpen]);
 
+  // The panel can also be opened/closed from inside (header close button, the
+  // floating launcher). Mirroring it back keeps the page's "Test Your Bot"
+  // button in sync — otherwise the two states drift apart and the button
+  // appears to do nothing.
+  const updateBotOpen = (open: boolean) => {
+    setIsBotOpen(open);
+    onOpenChange?.(open);
+  };
+
   const mdAbove = true;
   const statusObj: any = {
     busy: 'error',
@@ -116,7 +126,7 @@ const handleStartPreview = () => {
             hidden={hidden}
             mdAbove={mdAbove}
             statusObj={statusObj}
-            setIsBotOpen={setIsBotOpen}
+            setIsBotOpen={updateBotOpen}
             socket={socketRef.current}
             updatemyMessages={updatemyMessages}
             visitorAccessToken={visitorAccessToken}
@@ -135,7 +145,7 @@ const handleStartPreview = () => {
         <div style={{ position: 'absolute', right: 20, bottom: 40 }}>
           <IconButton
             sx={{ p: 4, backgroundColor: '#fff', boxShadow: '0 0 5px grey' }}
-            onClick={() => setIsBotOpen(true)}
+            onClick={() => updateBotOpen(true)}
           >
             <Icon icon="material-symbols:chat" fontSize={25} color="#00a7ff" />
           </IconButton>

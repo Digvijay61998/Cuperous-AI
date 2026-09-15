@@ -15,9 +15,17 @@ const withTM = require('next-transpile-modules')([
 module.exports = withTM({
   reactStrictMode: false,
 
+  // Static export (SPA) for S3 hosting. `next export` emits a static `out/`
+  // folder with no server. trailingSlash makes each route a folder with its
+  // own index.html so S3/Cloudflare serve deep links cleanly. Image
+  // optimization needs a server, so it is disabled for the static build.
+  trailingSlash: true,
+  images: {
+    unoptimized: true,
+  },
+
   experimental: {
     esmExternals: false,
-    outputStandalone: true
   },
   webpack: (config) => {
     config.resolve.alias = {

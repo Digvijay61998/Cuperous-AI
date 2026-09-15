@@ -1,0 +1,800 @@
+{
+  "run_id": "14c1dfcb",
+  "timestamp": "2026-09-06T13:35:20.142412+00:00",
+  "mode": "deterministic",
+  "config": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "llm_provider": "openai",
+    "llm_model": "gpt-4o-mini",
+    "retrieval_top_k": 8,
+    "min_similarity_score": 0.15,
+    "chunk_size": 500,
+    "chunk_overlap": 50
+  },
+  "corpus_chunks": 5,
+  "summary": {
+    "case_count": 23,
+    "answered_count": 17,
+    "error_count": 0,
+    "context_recall": 0.8947368421052632,
+    "context_precision": 0.7017543859649122,
+    "faithfulness": 0.7797301286105841,
+    "answer_relevancy": 0.6247899159663866,
+    "answer_correctness": 0.6428334806580244,
+    "fact_coverage": 0.9411764705882353,
+    "confidence_accuracy": 0.9130434782608695,
+    "false_negative_rate": 0.10526315789473684,
+    "false_positive_rate": 0.0,
+    "latency_p50_ms": 1470.1193920009246,
+    "latency_p95_ms": 2107.9568769006073,
+    "total_tokens": 19775,
+    "total_cost_usd": 0.00296625,
+    "by_tag": {
+      "baseline": {
+        "case_count": 6,
+        "context_recall": 1.0,
+        "context_precision": 0.8333333333333334,
+        "faithfulness": 0.7972222222222222,
+        "answer_correctness": 0.6673260312484451,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "exact_match": {
+        "case_count": 4,
+        "context_recall": 1.0,
+        "context_precision": 1.0,
+        "faithfulness": 0.8725,
+        "answer_correctness": 0.7585858585858586,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "multi_hop": {
+        "case_count": 2,
+        "context_recall": 1.0,
+        "context_precision": 0.8333333333333333,
+        "faithfulness": 0.5,
+        "answer_correctness": 0.49553001277139214,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "multi_turn": {
+        "case_count": 4,
+        "context_recall": 0.5,
+        "context_precision": 0.20833333333333331,
+        "faithfulness": 0.75,
+        "answer_correctness": 0.6875,
+        "fact_coverage": 0.5,
+        "confidence_accuracy": 0.5
+      },
+      "out_of_scope": {
+        "case_count": 4,
+        "context_recall": null,
+        "context_precision": null,
+        "faithfulness": null,
+        "answer_correctness": null,
+        "fact_coverage": null,
+        "confidence_accuracy": 1.0
+      },
+      "p1_target": {
+        "case_count": 4,
+        "context_recall": 0.5,
+        "context_precision": 0.20833333333333331,
+        "faithfulness": 0.75,
+        "answer_correctness": 0.6875,
+        "fact_coverage": 0.5,
+        "confidence_accuracy": 0.5
+      },
+      "p3_target": {
+        "case_count": 4,
+        "context_recall": 1.0,
+        "context_precision": 1.0,
+        "faithfulness": 0.8725,
+        "answer_correctness": 0.7585858585858586,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "paraphrase": {
+        "case_count": 3,
+        "context_recall": 1.0,
+        "context_precision": 0.611111111111111,
+        "faithfulness": 0.8398148148148148,
+        "answer_correctness": 0.726484674329502,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "single_turn": {
+        "case_count": 11,
+        "context_recall": 1.0,
+        "context_precision": 0.7727272727272729,
+        "faithfulness": 0.7514011078527207,
+        "answer_correctness": 0.5926205215311798,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "terse": {
+        "case_count": 1,
+        "context_recall": 1.0,
+        "context_precision": 0.5,
+        "faithfulness": 0.8333333333333334,
+        "answer_correctness": 0.26666666666666666,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      },
+      "typos": {
+        "case_count": 1,
+        "context_recall": 1.0,
+        "context_precision": 1.0,
+        "faithfulness": 0.8709677419354839,
+        "answer_correctness": 0.5238095238095238,
+        "fact_coverage": 1.0,
+        "confidence_accuracy": 1.0
+      }
+    },
+    "wall_seconds": 39.21
+  },
+  "cases": [
+    {
+      "case_id": "SH-01",
+      "tags": [
+        "single_turn",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.875,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.8667,
+      "fact_coverage": 1.0,
+      "latency_ms": 1711.59,
+      "tokens_used": 1066,
+      "cost_usd": 0.0001599,
+      "retrieved_sources": [
+        "support-hours"
+      ],
+      "top_score": 0.512,
+      "answer": "Support is open Monday through Friday, from 9:00am to 5:00pm Pacific Time. We're closed on weekends and all US federal holidays.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "SH-02",
+      "tags": [
+        "single_turn",
+        "paraphrase",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.8667,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.6875,
+      "fact_coverage": 1.0,
+      "latency_ms": 1355.1,
+      "tokens_used": 1070,
+      "cost_usd": 0.0001605,
+      "retrieved_sources": [
+        "support-hours"
+      ],
+      "top_score": 0.251,
+      "answer": "No, Acme's customer support is closed on weekends, including Saturdays. You can email help@acme.test, and they will reply within one business day.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "SP-01",
+      "tags": [
+        "single_turn",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.6667,
+      "answer_relevancy": 0.6667,
+      "answer_correctness": 0.36,
+      "fact_coverage": 1.0,
+      "latency_ms": 2803.44,
+      "tokens_used": 1176,
+      "cost_usd": 0.0001764,
+      "retrieved_sources": [
+        "shipping-policy"
+      ],
+      "top_score": 0.6133,
+      "answer": "Shipping costs depend on the order total and the shipping method:\n\n- For orders over $50 within the continental United States, shipping is free.\n- For orders under $50, there's a flat shipping fee of $6.95.\n- Express shipping is available for $19.95, regardless of the order total, and it arrives in 2 business days.\n- For international shipping to Canada and Mexico, the cost is a flat rate of $34.95, taking 10 to 14 business days. \n\nLet me know if you need more details!",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "SP-02",
+      "tags": [
+        "single_turn",
+        "paraphrase",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.5,
+      "faithfulness": 0.875,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.7586,
+      "fact_coverage": 1.0,
+      "latency_ms": 1256.84,
+      "tokens_used": 1190,
+      "cost_usd": 0.0001785,
+      "retrieved_sources": [
+        "shipping-policy",
+        "returns-policy"
+      ],
+      "top_score": 0.3346,
+      "answer": "Yes, we offer international shipping to Canada and Mexico only, at a flat rate of $34.95. It takes 10 to 14 business days for delivery.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "RP-01",
+      "tags": [
+        "single_turn",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.5,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.5,
+      "answer_correctness": 0.7857,
+      "fact_coverage": 1.0,
+      "latency_ms": 1459.25,
+      "tokens_used": 1190,
+      "cost_usd": 0.0001785,
+      "retrieved_sources": [
+        "returns-policy",
+        "product-catalog"
+      ],
+      "top_score": 0.3053,
+      "answer": "You can return any unused item within 30 days of delivery for a full refund. The item must be in its original packaging with all tags attached.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "RP-02",
+      "tags": [
+        "single_turn",
+        "baseline"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.5,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.5455,
+      "fact_coverage": 1.0,
+      "latency_ms": 1416.51,
+      "tokens_used": 1072,
+      "cost_usd": 0.0001608,
+      "retrieved_sources": [
+        "returns-policy"
+      ],
+      "top_score": 0.4988,
+      "answer": "No, you cannot return a gift card. Gift cards are not eligible for return according to our policy.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MT-01",
+      "tags": [
+        "multi_turn",
+        "p1_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": false,
+      "confidence_correct": false,
+      "context_recall": 0.0,
+      "context_precision": 0.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.5,
+      "answer_correctness": 0.0,
+      "fact_coverage": 0.0,
+      "latency_ms": 596.27,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MT-02",
+      "tags": [
+        "multi_turn",
+        "p1_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.3333,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 1.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 1919.01,
+      "tokens_used": 1275,
+      "cost_usd": 0.00019125,
+      "retrieved_sources": [
+        "returns-policy",
+        "shipping-policy",
+        "support-hours"
+      ],
+      "top_score": 0.2991,
+      "answer": "International shipping to Canada takes 10 to 14 business days.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MT-03",
+      "tags": [
+        "multi_turn",
+        "p1_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.5,
+      "faithfulness": 0.5,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.375,
+      "fact_coverage": 0.0,
+      "latency_ms": 1630.29,
+      "tokens_used": 1221,
+      "cost_usd": 0.00018315,
+      "retrieved_sources": [
+        "product-catalog",
+        "shipping-policy"
+      ],
+      "top_score": 0.3267,
+      "answer": "No, the Acme Widget Pro is not cheaper than $249.99; that's its retail price.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MT-04",
+      "tags": [
+        "multi_turn",
+        "p1_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": false,
+      "confidence_correct": false,
+      "context_recall": 0.0,
+      "context_precision": 0.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.0,
+      "fact_coverage": 0.0,
+      "latency_ms": 797.14,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EM-01",
+      "tags": [
+        "exact_match",
+        "p3_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.9167,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.5455,
+      "fact_coverage": 1.0,
+      "latency_ms": 1929.15,
+      "tokens_used": 1107,
+      "cost_usd": 0.00016605,
+      "retrieved_sources": [
+        "product-catalog"
+      ],
+      "top_score": 0.309,
+      "answer": "The QM-4471-B is the Acme Widget Pro, which is our flagship product. It retails for $249.99 and includes a 2-year manufacturer warranty.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EM-02",
+      "tags": [
+        "exact_match",
+        "p3_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.64,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.6,
+      "fact_coverage": 1.0,
+      "latency_ms": 1470.12,
+      "tokens_used": 1117,
+      "cost_usd": 0.00016755,
+      "retrieved_sources": [
+        "troubleshooting"
+      ],
+      "top_score": 0.5137,
+      "answer": "To fix error code ERR_TIMEOUT_502, check your network connection first. Make sure that your device is connected to the internet. Additionally, confirm that port 8443 is not blocked by a firewall, as this can prevent your device from reaching the Acme cloud service.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EM-03",
+      "tags": [
+        "exact_match",
+        "p3_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.3333,
+      "answer_correctness": 1.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 1347.89,
+      "tokens_used": 1095,
+      "cost_usd": 0.00016425,
+      "retrieved_sources": [
+        "product-catalog"
+      ],
+      "top_score": 0.5411,
+      "answer": "The QM-ADAPT-1 adapter is sold separately for $14.99.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EM-04",
+      "tags": [
+        "exact_match",
+        "p3_target"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.9333,
+      "answer_relevancy": 0.5,
+      "answer_correctness": 0.8889,
+      "fact_coverage": 1.0,
+      "latency_ms": 1961.37,
+      "tokens_used": 1094,
+      "cost_usd": 0.0001641,
+      "retrieved_sources": [
+        "troubleshooting"
+      ],
+      "top_score": 0.3664,
+      "answer": "Error code ERR_AUTH_401 means the device credentials have expired. To resolve this, open the Acme app, go to Settings, and tap Re-authenticate.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MH-01",
+      "tags": [
+        "multi_hop",
+        "single_turn"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.6667,
+      "faithfulness": 0.5294,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.6207,
+      "fact_coverage": 1.0,
+      "latency_ms": 2022.81,
+      "tokens_used": 1317,
+      "cost_usd": 0.00019755,
+      "retrieved_sources": [
+        "product-catalog",
+        "shipping-policy",
+        "returns-policy"
+      ],
+      "top_score": 0.4309,
+      "answer": "No, you won't get free shipping if you buy the Widget Lite. The Widget Lite costs $89.99, which is over the $50 threshold for free shipping. Therefore, your order will qualify for free standard shipping.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "MH-02",
+      "tags": [
+        "multi_hop",
+        "single_turn"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.4706,
+      "answer_relevancy": 0.5714,
+      "answer_correctness": 0.3704,
+      "fact_coverage": 1.0,
+      "latency_ms": 1570.12,
+      "tokens_used": 1126,
+      "cost_usd": 0.0001689,
+      "retrieved_sources": [
+        "product-catalog"
+      ],
+      "top_score": 0.2648,
+      "answer": "Yes, since your device is on firmware 3.0, you'll need to purchase the QM-ADAPT-1 adapter to use it with the Acme Widget Pro or Lite. The adapter costs $14.99.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "OOS-01",
+      "tags": [
+        "out_of_scope"
+      ],
+      "expected_confident": false,
+      "actual_confident": false,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 598.63,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "OOS-02",
+      "tags": [
+        "out_of_scope"
+      ],
+      "expected_confident": false,
+      "actual_confident": false,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 599.83,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "OOS-03",
+      "tags": [
+        "out_of_scope"
+      ],
+      "expected_confident": false,
+      "actual_confident": false,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 601.06,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "OOS-04",
+      "tags": [
+        "out_of_scope"
+      ],
+      "expected_confident": false,
+      "actual_confident": false,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "answer_correctness": 0.0,
+      "fact_coverage": 1.0,
+      "latency_ms": 398.62,
+      "tokens_used": 0,
+      "cost_usd": 0.0,
+      "retrieved_sources": [],
+      "top_score": null,
+      "answer": "I don't have anything on that in our help content yet. If you can tell me a bit more about what you're trying to do, I'll point you in the right direction.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EP-01",
+      "tags": [
+        "single_turn",
+        "terse"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.5,
+      "faithfulness": 0.8333,
+      "answer_relevancy": 1.0,
+      "answer_correctness": 0.2667,
+      "fact_coverage": 1.0,
+      "latency_ms": 2009.82,
+      "tokens_used": 1212,
+      "cost_usd": 0.0001818,
+      "retrieved_sources": [
+        "shipping-policy",
+        "support-hours"
+      ],
+      "top_score": 0.1844,
+      "answer": "Acme Corporation customer support is available Monday through Friday, from 9:00am to 5:00pm Pacific Time. We're closed on weekends and all US federal holidays. If you need help outside those hours, you can email help@acme.test, and we'll reply within one business day. Priority support customers get a response within 4 hours, even on weekends.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EP-02",
+      "tags": [
+        "single_turn",
+        "typos"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 1.0,
+      "faithfulness": 0.871,
+      "answer_relevancy": 0.25,
+      "answer_correctness": 0.5238,
+      "fact_coverage": 1.0,
+      "latency_ms": 2062.35,
+      "tokens_used": 1125,
+      "cost_usd": 0.00016875,
+      "retrieved_sources": [
+        "returns-policy"
+      ],
+      "top_score": 0.3284,
+      "answer": "To return an item, email returns@acme.test with your order number. We'll send you a prepaid shipping label. You can return any unused item within 30 days of delivery for a full refund, as long as it's in original packaging with all tags attached. Refunds are processed within 5 business days after we receive the returned item.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    },
+    {
+      "case_id": "EP-03",
+      "tags": [
+        "single_turn",
+        "paraphrase"
+      ],
+      "expected_confident": true,
+      "actual_confident": true,
+      "confidence_correct": true,
+      "context_recall": 1.0,
+      "context_precision": 0.3333,
+      "faithfulness": 0.7778,
+      "answer_relevancy": 0.8,
+      "answer_correctness": 0.7333,
+      "fact_coverage": 1.0,
+      "latency_ms": 2113.02,
+      "tokens_used": 1322,
+      "cost_usd": 0.0001983,
+      "retrieved_sources": [
+        "shipping-policy",
+        "returns-policy",
+        "product-catalog"
+      ],
+      "top_score": 0.4053,
+      "answer": "The cheapest way to get your order is to choose standard shipping, which is free for orders over $50. If your order is under $50, there will be a flat shipping fee of $6.95. Standard shipping takes 5 to 7 business days.",
+      "error": null,
+      "notes": [
+        "faithfulness=lexical",
+        "relevancy=lexical"
+      ]
+    }
+  ]
+}

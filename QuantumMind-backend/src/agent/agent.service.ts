@@ -199,6 +199,47 @@ export class AgentService implements OnModuleInit {
     }
   }
 
+  /**
+   * Ids of every dashboard user who should see activity on `botId`.
+   *
+   * Used by the omnichannel inbox to fan a channel message out to the agents
+   * watching that bot. Two rules matter:
+   *
+   *  - **Admins are always included, with no bot filter.** An admin has no
+   *    `assignedBots` (the field is for routing agents), so filtering on it
+   *    would silently exclude exactly the users most likely to be watching the
+   *    inbox.
+   *  - **Status is NOT filtered.** `assignAgent` filters to ONLINE because it is
+   *    picking someone to hand a conversation to; this is a passive broadcast, so
+   *    the only question that matters is whether a socket is connected — and
+   *    that is answered downstream by the socket registry. Filtering on a stale
+   *    `status` row here would drop messages for a connected agent.
+   *
+   * Projection is `_id` only: this runs on every inbound channel message, so it
+   * must stay a covered, index-only read.
+   */
+  async findInboxRecipientIds(botId: string): Promise<string[]> {
+    try {
+      const agents = await this.agentModel
+        .find({
+          $or: [
+            { assignedBots: { $in: [botId] } },
+            { role: RoleEnum.ADMIN },
+          ],
+          active: true,
+        })
+        .select("_id");
+      return agents.map((a) => (a._id as any).toString());
+    } catch (error) {
+      this.logger.error(
+        `Failed to resolve inbox recipients for bot ${botId}: ${error.message}`
+      );
+      // Fan-out is best-effort: a lookup failure must not break the inbound
+      // message pipeline that persisted the message.
+      return [];
+    }
+  }
+
   async findOne(agentId: string) {
     try {
       return await this.agentModel

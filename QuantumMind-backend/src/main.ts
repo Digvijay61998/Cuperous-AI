@@ -92,11 +92,18 @@ async function bootstrap() {
     prefix: "/api/file",
   });
 
-  app.use(
-    helmet({
-      crossOriginEmbedderPolicy: false,
-    })
-  );
+  // Hosted templates are embedded in an iframe inside the chat widget, which
+  // runs on the customer's own domain — so they must stay frameable
+  // cross-origin. Everything else keeps helmet's frameguard, so scope the
+  // exemption to the template asset path rather than disabling it globally.
+  const helmetMiddleware = helmet({
+    crossOriginEmbedderPolicy: false,
+  });
+  const TEMPLATE_ASSET_PATH = "/api/file/templates/";
+  app.use((req: any, res: any, next: any) => {
+    if (req.path?.startsWith(TEMPLATE_ASSET_PATH)) return next();
+    return helmetMiddleware(req, res, next);
+  });
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   const options = new DocumentBuilder()

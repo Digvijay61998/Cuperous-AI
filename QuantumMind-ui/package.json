@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start -p 6662",
     "export": "next export",
+    "build:static": "next build && next export",
     "lint": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx}\"",
     "build:icons": "tsc -b src/iconify-bundle && node src/iconify-bundle/bundle-icons-react.js",
@@ -14,7 +15,7 @@
   },
   "dependencies": {
     "@casl/ability": "6.2.0",
-    "@casl/react": "3.0.0",
+    "@casl/react": "4.0.0",
     "@emotion/cache": "11.6.0",
     "@emotion/react": "11.10.4",
     "@emotion/server": "11.4.0",

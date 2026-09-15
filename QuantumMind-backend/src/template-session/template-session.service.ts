@@ -74,6 +74,7 @@ export class TemplateSessionService {
       session.id,
       token,
       input.templateId,
+      input.botId,
     );
     return { session, launchUrl };
   }
@@ -81,6 +82,14 @@ export class TemplateSessionService {
   async markLaunched(sessionId: string) {
     await this.sessionModel.findByIdAndUpdate(sessionId, {
       status: TemplateSessionStatusEnum.LAUNCHED,
+    });
+  }
+
+  /** The CTA never reached the customer (provider send failed). */
+  async markFailed(sessionId: string, reason?: string) {
+    this.logger.warn(`Template session ${sessionId} failed to launch: ${reason}`);
+    await this.sessionModel.findByIdAndUpdate(sessionId, {
+      status: TemplateSessionStatusEnum.FAILED,
     });
   }
 

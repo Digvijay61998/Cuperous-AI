@@ -1,0 +1,25 @@
+# Milvus config override for LOCAL development — merged on top of the image's
+# default /milvus/configs/milvus.yaml. Points Milvus at the local MinIO
+# container (docker-compose service "minio") instead of AWS S3, so local dev
+# never reads or writes the production S3 bucket.
+#
+# This is the DEFAULT config the compose file mounts. To use real S3 instead
+# (production), set ENABLE_MILVUS_S3=true — see docs/STORAGE.md — which switches
+# the mount to user.yaml (the S3 variant).
+#
+# Only address / credentials come from the environment (the three keys Milvus
+# supports as env vars); useSSL / bucketName / region have no env equivalent and
+# must live here. Milvus auto-creates the bucket on first boot if it is missing.
+#
+# Docs: https://milvus.io/docs/v2.4.x/deploy_s3.md
+minio:
+  address: minio
+  port: 9000
+  useSSL: false
+  bucketName: milvus-local
+  rootPath: milvus
+  useIAM: false
+  cloudProvider: aws
+  region: ""
+  useVirtualHost: false
+  requestTimeoutMs: 10000

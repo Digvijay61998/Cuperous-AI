@@ -241,6 +241,21 @@ const ChatLog = (props: any) => {
                     {chat.type === 'image' && (
                       <Image isSender={isSender} image={chat.value || ''} />
                     )}
+                    {/*
+                      The embedded template panel is a web-widget feature; this
+                      test pane is too small to host it usefully, so here the
+                      launch link is shown as normal (linkified) text and opens
+                      in a new tab. Submitting it still resumes the flow, so the
+                      bot's follow-up appears in this pane as usual.
+                    */}
+                    {chat.type === 'template' && chat.template?.url && (
+                      <Message
+                        isSender={isSender}
+                        message={`${chat.value || ''}\n${
+                          chat.template.buttonText || 'Open'
+                        }: ${chat.template.url}`}
+                      />
+                    )}
                     
                   </div>
                 </Box>

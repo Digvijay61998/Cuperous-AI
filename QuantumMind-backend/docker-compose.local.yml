@@ -1,0 +1,44 @@
+# Local development infrastructure for the JarCube backend.
+#
+# Brings up an isolated MongoDB + Redis on your machine so local development
+# never touches the production Atlas cluster.
+#
+#   Start:   docker compose -f docker-compose.local.yml up -d
+#   Stop:    docker compose -f docker-compose.local.yml stop
+#   Down:    docker compose -f docker-compose.local.yml down          (keeps data)
+#   Reset:   docker compose -f docker-compose.local.yml down -v       (wipes data)
+#
+# Data is persisted in named volumes, so it survives stop/down (but not `down -v`).
+services:
+  mongo:
+    image: mongo:6
+    container_name: jarcube-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - jarcube-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jarcube-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "redispass"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - jarcube-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispass", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  jarcube-mongo-data:
+  jarcube-redis-data:

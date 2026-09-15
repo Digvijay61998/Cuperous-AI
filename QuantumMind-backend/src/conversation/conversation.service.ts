@@ -14,7 +14,10 @@ import {
 } from "./constant";
 import { CreateChatDto } from "./dto/create-chat.dto";
 import { CreateConversationDto } from "./dto/create-conversation.dto";
-import { ChatDocument } from "./entities/chat.entity";
+import {
+  ChatDocument,
+  PENDING_EXTERNAL_ID_PREFIX,
+} from "./entities/chat.entity";
 import { ConversationDocument } from "./entities/conversation.entity";
 import { ConversationTypeEnum } from "./enums/conversation-type.enum";
 
@@ -147,17 +150,82 @@ export class ConversationService {
       return { chat, created: true };
     } catch (error) {
       if (this.isDuplicateKeyError(error)) {
+        // Resolve the row that already holds this identity so the caller gets
+        // something usable rather than a bare null.
+        //
+        // Falls back to the correlation id when there is no external id to match
+        // on: an outbound row written before the channel answered is identified by
+        // `chatId`, and returning null for it made the agent-reply path report
+        // "could not persist" for a message that was, in fact, already stored.
         const existing = dto.externalMessageId
           ? await this.chatModel.findOne({
               channelThread: dto.channelThread,
               externalMessageId: dto.externalMessageId,
             })
+          : dto.chatId
+          ? await this.chatModel.findOne({ chatId: dto.chatId })
           : null;
         return { chat: existing, created: false };
       }
       this.logger.error(`Error saving channel message: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * One stored channel message, by thread and channel-native id.
+   *
+   * Used to recognise the echo of a message we sent ourselves: WhatsApp replays it
+   * through the inbound path with `fromMe: true`, and without this check the
+   * pipeline would insert a second row and the dashboard would show the reply
+   * twice.
+   */
+  async findChannelMessage(
+    threadId: string,
+    externalMessageId: string
+  ): Promise<ChatDocument | null> {
+    if (!threadId || !externalMessageId) return null;
+    return this.chatModel.findOne({
+      channelThread: threadId,
+      externalMessageId,
+    });
+  }
+
+  /**
+   * Mark an outbound row failed, matched on its correlation id.
+   *
+   * A reply that never reached the channel has no `externalMessageId`, so
+   * `advanceChannelMessageStatus` (which matches on that field) cannot touch it —
+   * this is the only way such a row can leave `pending`.
+   *
+   * The `status: { $in: allowedPrevious }` guard is the same forward-only rule
+   * applied in the query rather than in a read-then-write: a row that has somehow
+   * already reached `delivered` or `read` is evidence the channel did take the
+   * message, and a late local failure must not contradict that.
+   */
+  async failOutboundByCorrelationId(
+    correlationId: string
+  ): Promise<ChatDocument | null> {
+    if (!correlationId) return null;
+    return this.chatModel.findOneAndUpdate(
+      {
+        chatId: correlationId,
+        // Eligible when the row is still unconfirmed. The agent path writes
+        // `pending`; the bot path writes NO status at all (it never joined the
+        // delivery ladder), so an absent status must also qualify — otherwise a
+        // rejected bot reply could never be marked failed and would sit
+        // status-less forever. A row already at delivered/read is excluded: it is
+        // evidence the channel took the message and a late failure must not undo
+        // that.
+        $or: [
+          { status: { $in: allowedPreviousStatuses(ChatStatusEnum.FAILED) } },
+          { status: { $exists: false } },
+          { status: null },
+        ],
+      },
+      { $set: { status: ChatStatusEnum.FAILED } },
+      { new: true }
+    );
   }
 
   /**
@@ -286,9 +354,26 @@ export class ConversationService {
 
     if (correlationId) {
       const updated = await this.chatModel.findOneAndUpdate(
-        // Never overwrite a row that already carries an external id — that would
-        // be a different message that happens to share a correlation id.
-        { chatId: correlationId, externalMessageId: { $exists: false } },
+        {
+          chatId: correlationId,
+          // Never overwrite a row that already carries a REAL channel id — that
+          // would be a different message sharing a correlation id.
+          //
+          // A locally-minted `pending:` placeholder is different: it exists only
+          // to keep the unique index's (thread, null) slot from being contended
+          // (see PENDING_EXTERNAL_ID_PREFIX), and replacing it with the channel's
+          // own id is exactly this method's job. Matching only on
+          // `$exists: false` missed those rows entirely, so a reply written by the
+          // agent path could never be linked and stayed `pending` forever.
+          $or: [
+            { externalMessageId: { $exists: false } },
+            {
+              externalMessageId: {
+                $regex: `^${PENDING_EXTERNAL_ID_PREFIX}`,
+              },
+            },
+          ],
+        },
         { $set: set },
         { new: true }
       );

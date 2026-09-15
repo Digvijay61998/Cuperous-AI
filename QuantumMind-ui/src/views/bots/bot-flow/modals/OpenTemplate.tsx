@@ -1,6 +1,7 @@
 // ** React Imports
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useRouter } from 'next/router';
 
 // ** MUI Imports
 import Dialog from '@mui/material/Dialog';
@@ -30,8 +31,10 @@ import {
   nodeUpdate,
 } from 'src/store/apps/bot-flow';
 import {
+  fetchTemplateConfig,
   fetchTemplateDetail,
   fetchTemplates,
+  updateTemplateInstanceConfig,
 } from 'src/store/apps/template';
 
 // ** Common dialog title
@@ -58,6 +61,7 @@ export default function OpenTemplate(props: any) {
   );
 
   const [templateId, setTemplateId] = useState('');
+  const [templateUrl, setTemplateUrl] = useState('');
   const [buttonText, setButtonText] = useState('Open');
   const [buttonIcon, setButtonIcon] = useState('');
   const [bodyText, setBodyText] = useState('');
@@ -67,10 +71,21 @@ export default function OpenTemplate(props: any) {
   const [mappings, setMappings] = useState<VariableMapping[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Load published templates + this node's saved config on open
+  // Config overrides scoped to THIS bot. Editing them here (rather than on the
+  // Templates page) keeps the shared catalog defaults untouched for every other
+  // bot using the same template.
+  const router = useRouter();
+  const botId = (router.query.botId as string) || '';
+  const [configSchema, setConfigSchema] = useState<any[]>([]);
+  const [configValues, setConfigValues] = useState<Record<string, any>>({});
+
+  // Load selectable templates + this node's saved config on open.
+  // Drafts are included on purpose: a template only needs a hosted build to be
+  // launchable, and during local testing builds are uploaded but not published.
+  // Archived ones are excluded since they are intentionally retired.
   useEffect(() => {
     if (open) {
-      dispatch(fetchTemplates({ status: 'published', limit: 100 }));
+      dispatch(fetchTemplates({ limit: 100 }));
       if (nodeId) dispatch(getNodeDetails(nodeId));
     }
   }, [open, nodeId, dispatch]);
@@ -80,6 +95,7 @@ export default function OpenTemplate(props: any) {
     const p = nodeDetails?.payload;
     if (nodeDetails?.id === nodeId && p) {
       setTemplateId(p.templateId || '');
+      setTemplateUrl(p.templateUrl || '');
       setButtonText(p.buttonText || 'Open');
       setButtonIcon(p.buttonIcon || '');
       setTimeoutMinutes(p.timeoutMinutes ?? 30);
@@ -96,10 +112,59 @@ export default function OpenTemplate(props: any) {
     if (templateId) dispatch(fetchTemplateDetail(templateId));
   }, [templateId, dispatch]);
 
+  // Resolved config for this bot (defaults + catalog + this bot's overrides).
+  useEffect(() => {
+    if (!open || !templateId) {
+      setConfigSchema([]);
+      setConfigValues({});
+
+      return;
+    }
+    let cancelled = false;
+    dispatch(fetchTemplateConfig({ id: templateId, botId }))
+      .unwrap()
+      .then((res: any) => {
+        // The dialog may have been closed or the template switched while this
+        // was in flight — applying a stale response would show the wrong values.
+        if (cancelled) return;
+        setConfigSchema(Array.isArray(res?.configSchema) ? res.configSchema : []);
+        setConfigValues(res?.configValues || {});
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, templateId, botId, dispatch]);
+
   const configKeys: string[] =
     templateDetail?.id === templateId && Array.isArray(templateDetail?.configSchema)
       ? templateDetail.configSchema.map((f: any) => f.key)
       : [];
+
+  // A template can only be launched once it has a hosted build. Surfacing this
+  // in the picker avoids a node that silently dead-ends at runtime.
+  const selectableTemplates = (templates || []).filter(
+    (t: any) => t?.status !== 'archived',
+  );
+  const selectedTemplate = selectableTemplates.find((t: any) => t.id === templateId);
+
+  // The URL the visitor will actually be sent to. A URL typed on the node wins
+  // over the template's own hosted URL, so a flow can target a specific S3/CDN
+  // deployment without touching the shared catalog entry.
+  const effectiveUrl = templateUrl.trim() || selectedTemplate?.hostedUrl || '';
+  const missingBuild = Boolean(templateId) && Boolean(selectedTemplate) && !effectiveUrl;
+
+  // Only the scalar field types are editable inline here. Richer types
+  // (richtext/image/list/...) still belong on the Templates page, which has the
+  // room for them; showing a broken input for those would be worse than hiding.
+  const SIMPLE_TYPES = ['text', 'number', 'boolean', 'color', 'select', 'url'];
+  const editableFields = configSchema.filter((f: any) =>
+    SIMPLE_TYPES.includes(f?.type),
+  );
+
+  const setConfigValue = (key: string, value: any) =>
+    setConfigValues((prev) => ({ ...prev, [key]: value }));
 
   const addMapping = () =>
     setMappings([...mappings, { templateKey: '', source: 'attribute', value: '' }]);
@@ -116,6 +181,7 @@ export default function OpenTemplate(props: any) {
         title: title || nodeDetails?.title,
         payload: {
           templateId,
+          templateUrl: templateUrl.trim(),
           buttonText,
           buttonIcon,
           timeoutMinutes: Number(timeoutMinutes),
@@ -126,6 +192,18 @@ export default function OpenTemplate(props: any) {
         responses: bodyText ? [{ type: 'text', value: bodyText }] : [],
       }),
     );
+
+    // Persist the per-bot overrides alongside the node. Failure here must not
+    // discard the node changes already saved above, so it is awaited but its
+    // rejection is contained (the thunk already toasts the reason).
+    if (templateId && botId && editableFields.length > 0) {
+      await dispatch(
+        updateTemplateInstanceConfig({ id: templateId, botId, configValues }),
+      )
+        .unwrap()
+        .catch(() => undefined);
+    }
+
     setSaving(false);
     handleClose();
   };
@@ -168,18 +246,125 @@ export default function OpenTemplate(props: any) {
             value={templateId}
             onChange={(e) => setTemplateId(e.target.value)}
           >
-            {templates?.length === 0 && (
+            {selectableTemplates.length === 0 && (
               <MenuItem disabled value="">
-                No published templates
+                No templates available
               </MenuItem>
             )}
-            {templates?.map((t: any) => (
+            {selectableTemplates.map((t: any) => (
               <MenuItem key={t.id} value={t.id}>
                 {t.name}
+                {t.status && t.status !== 'published' ? ` (${t.status})` : ''}
+                {!t.hostedUrl ? ' — no build' : ''}
               </MenuItem>
             ))}
           </Select>
+          {missingBuild && (
+            <Typography variant="caption" color="error" sx={{ mt: 1 }}>
+              This template has no hosted build yet. Upload a ZIP on the Templates page first,
+              or paste the hosted URL below.
+            </Typography>
+          )}
         </FormControl>
+
+        {/* Hosted URL used by the launch button */}
+        <TextField
+          fullWidth
+          size="small"
+          sx={{ mb: 1 }}
+          label="Template URL"
+          placeholder={selectedTemplate?.hostedUrl || 'https://cdn.example.com/my-template/index.html'}
+          value={templateUrl}
+          onChange={(e) => setTemplateUrl(e.target.value)}
+        />
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 4 }}>
+          {effectiveUrl
+            ? `Launch URL: ${effectiveUrl}`
+            : 'Leave empty to use the URL stored on the template.'}
+        </Typography>
+
+        {/* Per-bot config overrides */}
+        {editableFields.length > 0 && (
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+              Customise for this bot
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Overrides apply only to this bot. Other bots keep the template defaults.
+            </Typography>
+            <Stack spacing={3} sx={{ mt: 3 }}>
+              {editableFields.map((f: any) => {
+                const value = configValues[f.key] ?? f.defaultValue ?? '';
+                if (f.type === 'boolean') {
+                  return (
+                    <FormControlLabel
+                      key={f.key}
+                      label={f.label || f.key}
+                      control={
+                        <Switch
+                          checked={Boolean(configValues[f.key] ?? f.defaultValue)}
+                          onChange={(e) => setConfigValue(f.key, e.target.checked)}
+                        />
+                      }
+                    />
+                  );
+                }
+                if (f.type === 'select') {
+                  return (
+                    <FormControl key={f.key} fullWidth size="small">
+                      <InputLabel id={`cfg-${f.key}`}>{f.label || f.key}</InputLabel>
+                      <Select
+                        labelId={`cfg-${f.key}`}
+                        label={f.label || f.key}
+                        value={value}
+                        onChange={(e) => setConfigValue(f.key, e.target.value)}
+                      >
+                        {(f.options || []).map((opt: any) => {
+                          const val = typeof opt === 'string' ? opt : opt.value;
+                          const lbl = typeof opt === 'string' ? opt : opt.label || opt.value;
+
+                          return (
+                            <MenuItem key={val} value={val}>
+                              {lbl}
+                            </MenuItem>
+                          );
+                        })}
+                      </Select>
+                    </FormControl>
+                  );
+                }
+
+                return (
+                  <TextField
+                    key={f.key}
+                    fullWidth
+                    size="small"
+                    label={f.label || f.key}
+                    helperText={f.helpText}
+                    type={
+                      f.type === 'number'
+                        ? 'number'
+                        : f.type === 'color'
+                          ? 'color'
+                          : 'text'
+                    }
+                    value={value}
+                    onChange={(e) =>
+                      setConfigValue(
+                        f.key,
+                        f.type === 'number'
+                          ? e.target.value === ''
+                            ? ''
+                            : Number(e.target.value)
+                          : e.target.value,
+                      )
+                    }
+                  />
+                );
+              })}
+            </Stack>
+          </Box>
+        )}
 
         {/* Message + button */}
         <TextField

@@ -362,7 +362,7 @@ const BotSetting = () => {
     window.botId =  '${botId}';
     window.baseUrl = '${env.baseurl}';
     window.isOpenChat = false;
-    import jarcube from '${env.baseurl}/api/file/plugin.js';
+    import jarcube from '${env.widgetUrl}';
     jarcube();
   </script>
     <!-- End of JarCube code -->
@@ -372,7 +372,7 @@ React.useEffect(() => {
   window.botId = '${botId}';
   window.baseUrl = '${env.baseurl}';
   window.isOpenChat = false;
-  import('${env.baseurl}/api/file/plugin.js')
+  import('${env.widgetUrl}')
     .then((module) => {
       module.default();
     })
@@ -388,7 +388,7 @@ React.useEffect(() => {
     mounted() {
       const script = document.createElement('script');
       script.type = 'module';
-      script.src = '${env.baseurl}/api/file/plugin.js';
+      script.src = '${env.widgetUrl}';
       document.body.appendChild(script);
   
       // Optional: You can set window properties here if needed
@@ -409,7 +409,7 @@ React.useEffect(() => {
   window.botId = '${botId}';
   window.baseUrl = '${env.baseurl}';
   window.isOpenChat = false;
-  import jarcube from '${env.baseurl}/api/file/plugin.js';
+  import jarcube from '${env.widgetUrl}';
   jarcube();
 </script>
 <!-- End of JarCube code -->`

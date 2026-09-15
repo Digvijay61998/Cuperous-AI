@@ -18,6 +18,7 @@ import app.services.query as query_mod  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.llm.base import LLMProvider, LLMResult  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.answer_policy import NO_CONTEXT_REPLY  # noqa: E402
 
 client = TestClient(app)
 
@@ -94,14 +95,36 @@ def test_ingest_then_query_flow(monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["confident"] is False
-    assert body["answer"] is None
+    # `answer` now carries suggested wording instead of None. `confident` is
+    # still what the caller routes on. See answer_policy.NO_CONTEXT_REPLY.
+    assert body["answer"] == NO_CONTEXT_REPLY
+    assert body["sources"] == []
 
 
 def test_query_unknown_client_is_not_confident(monkeypatch):
     monkeypatch.setattr(query_mod, "get_llm_provider", lambda: FakeProvider())
     r = client.post(
         "/query/ask",
-        json={"client_id": "nonexistent_client", "question": "hello?"},
+        # NOT a greeting: "hello?" is now answered by the smalltalk route without
+        # ever touching the store, which would make this test assert nothing
+        # about tenant isolation. A real question is what proves an unknown
+        # client retrieves nothing.
+        json={"client_id": "nonexistent_client", "question": "What are your support hours?"},
     )
     assert r.status_code == 200, r.text
     assert r.json()["confident"] is False
+
+
+def test_greeting_is_answered_without_retrieval(monkeypatch):
+    """A greeting gets a warm reply, not a fallback, and costs nothing."""
+    monkeypatch.setattr(query_mod, "get_llm_provider", lambda: FakeProvider())
+    r = client.post(
+        "/query/ask",
+        json={"client_id": "nonexistent_client", "question": "hello", "company_name": "Acme"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["confident"] is True
+    assert body["answer"]
+    assert body["tokens_used"] == 0
+    assert body["sources"] == []

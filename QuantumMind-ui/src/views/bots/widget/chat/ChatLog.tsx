@@ -45,6 +45,7 @@ import Gallery from "./components/Gallery";
 // ** Types Imports
 
 import Map from "./components/Map";
+import TemplateLaunch from "./components/TemplateLaunch";
 import Video from "./components/Video";
 const Transition = forwardRef(function Transition(
   props: TransitionProps & {
@@ -225,6 +226,15 @@ const ChatLog = (props: any) => {
                       <Video link={chat.value} type={chat.format || 'mp4'} />
                     )}
                     {chat.type === 'maps' && <Map location={chat.location} />}
+                    {chat.type === 'template' && chat.template?.url && (
+                      <TemplateLaunch
+                        isSender={isSender}
+                        botStyles={botStyles}
+                        message={chat.value || ''}
+                        url={chat.template.url}
+                        buttonText={chat.template.buttonText || 'Open'}
+                      />
+                    )}
                     <div style={{ width: '100%', marginLeft: '-1rem' }}>
                       {chat.type === 'gallery' && (
                         <Gallery galleryArray={chat?.buttons} {...props} />

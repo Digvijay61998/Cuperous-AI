@@ -19,7 +19,8 @@ export const getBotFLow = createAsyncThunk('bot/flow/get', async (botId: string 
         return response.data
     } catch (error: any) {
         console.log("error", error)
-        toast.error(error.response.data.message || error.message)
+        toast.error(error?.response?.data?.message || error?.message || 'Failed to load bot flow')
+        throw error
     }
 })
 
@@ -33,11 +34,13 @@ export const updateBotFlow = createAsyncThunk(
             const response = await Axios.patch(`/bots/${data._id}/flow`, {
                 edges: data.edges, nodes: data.nodes
             })
+            toast.success('Bot flow published successfully')
             dispatch(getBotFLow(data._id))
             return response.data
         } catch (error: any) {
             console.log("error", error)
-            toast.error(error.response.data.message || error.message)
+            toast.error(error?.response?.data?.message || error?.message || 'Failed to publish bot flow')
+            throw error
         }
     }
 )
@@ -67,7 +70,7 @@ export const nodeUpdate = createAsyncThunk(
         return response.data
       }
      catch (error: any) {
-    toast.error(error.response.data.message || error.message)
+    toast.error(error?.response?.data?.message || error?.message || 'Failed to update node')
   }
     }
   )
@@ -82,7 +85,7 @@ export const botFlowSlice = createSlice({
     reducers: {},
     extraReducers: builder => {
         builder.addCase(getBotFLow.fulfilled, (state, action) => {
-            state.botDetails = action.payload
+            if (action.payload) state.botDetails = action.payload
         })
         builder.addCase(getNodeDetails.fulfilled, (state, action) => {
             state.nodeDetails = action?.payload?.node || {}

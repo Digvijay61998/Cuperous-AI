@@ -70,20 +70,59 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
 
     # ---- Retrieval ----
-    retrieval_top_k: int = 5
+    # 8 rather than 5: the hard questions a support agent actually gets are
+    # multi-part ("what do I pay, and is WhatsApp included?") and their answers
+    # live in different documents. At top_k=5 the pricing chunk and the plan
+    # chunk competed for slots and one of them lost, which is what produced
+    # partially-correct bills. Cost is ~1.5x context tokens, which the
+    # relative-score floor below claws most of back.
+    retrieval_top_k: int = 8
     # Minimum similarity (cosine) required to treat retrieved context as relevant.
     # Below this the query engine reports low confidence so the bot can fall back.
     # Tuned for all-MiniLM-L6-v2, which yields fairly low cosine scores even for
     # clearly relevant matches; 0.15 favors recall. The system prompt still
     # instructs the LLM not to answer when the context lacks the information.
     min_similarity_score: float = 0.15
+    # Second, *relative* gate applied after the absolute one: drop any chunk
+    # scoring below this fraction of the best chunk's score. An absolute
+    # threshold alone cannot tell "0.21 is the best we found" (genuinely weak)
+    # from "0.21 alongside a 0.74" (noise riding along on a strong match). The
+    # top chunk is always kept, so this can never empty a non-empty result set.
+    # 0.0 disables it.
+    relative_score_floor: float = Field(0.45, ge=0.0, le=1.0)
+
+    # ---- Conversation behaviour ----
+    # Greetings, thanks and sign-offs are answered directly, without retrieval.
+    # Without this a "hello" is embedded, scrapes whatever chunk is least
+    # dissimilar, clears the 0.15 gate, and the LLM — correctly, since no chunk
+    # answers "hello" — replies "I don't have that information right now."
+    # A support bot that cannot say hello is not shippable.
+    smalltalk_enabled: bool = True
+    # When the model declines to answer, report `confident=false` so the caller
+    # can route to a human instead of delivering the refusal as if it were an
+    # answer. The refusal text still travels in `answer` so the caller can show
+    # something human rather than a generic "I did not understand that".
+    refusal_downgrades_confidence: bool = True
+    # Let the assistant acknowledge that a human colleague can take over. Off by
+    # default because a bot that offers a handoff the surrounding workflow does
+    # not implement is worse than one that stays quiet.
+    allow_human_handoff_offer: bool = False
 
     # ---- LLM provider ----
     # One of: openai | moonshot | anthropic
     llm_provider: Literal["openai", "moonshot", "anthropic"] = "openai"
     llm_model: str = "gpt-4o-mini"
-    llm_temperature: float = 0.3
-    llm_max_tokens: int = 512
+    # 0.1, not 0.3. A support answer has one correct form: the policy either says
+    # ₹5,000 or it does not. Sampling variation buys nothing here and costs
+    # arithmetic reliability — at 0.3, an otherwise-correct bill breakdown summed
+    # ₹1,999 + ₹10,380 + ₹1,499 to ₹12,878. Not zero, because a hard 0 makes the
+    # model repeat a bad phrasing verbatim on a retry.
+    llm_temperature: float = 0.1
+    # 512 truncated multi-part answers mid-sentence. A question asking three
+    # things with a worked calculation needs roughly 400-600 tokens; at 512 the
+    # third part was being cut off, and a truncated policy answer is worse than a
+    # short one because the customer cannot tell it is incomplete.
+    llm_max_tokens: int = 900
 
     # Provider API keys / base URLs
     openai_api_key: str = ""

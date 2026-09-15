@@ -32,6 +32,13 @@ import {
   updateConversationChats,
   handleChatContext,
 } from 'src/store/apps/conversation';
+import {
+  getInboxChannels,
+  inboxMessageReceived,
+  inboxMessageStatusReceived,
+  inboxSocketGap,
+  inboxThreadUpdated,
+} from 'src/store/apps/inbox';
 // ** Types
 import {
   AuthValuesType,
@@ -121,6 +128,60 @@ const AuthProvider = ({ children }: Props) => {
 
               dispatch(pushToActiveConversations(data));
             });
+
+            // ** Omnichannel inbox (WhatsApp / Telegram / Instagram / …).
+            //
+            // Subscribed here, alongside the widget events, because this is
+            // where the single shared socket is initialised — a second
+            // subscription point would mean a second connection.
+            chatContext.onInboxMessage().subscribe((event: any) => {
+              if (!event?.threadId) return;
+              // Only an inbound message from the customer is a notification;
+              // our own bot/agent reply echoes back on the same event and must
+              // not ping the agent who just sent it.
+              const isIncoming = event?.message?.direction !== 'outbound';
+              if (isIncoming) {
+                if (enSound.current) {
+                  const snd = new Audio('/sound.mpeg');
+                  snd.play();
+                }
+                pushNotification(
+                  event?.message?.message,
+                  `New ${event?.channel || 'channel'} message`,
+                  event?.message?.type || 'text',
+                );
+              }
+              dispatch(inboxMessageReceived(event));
+            });
+
+            chatContext.onInboxThreadUpdated().subscribe((event: any) => {
+              dispatch(inboxThreadUpdated(event));
+            });
+
+            chatContext.onInboxMessageStatus().subscribe((event: any) => {
+              dispatch(inboxMessageStatusReceived(event));
+            });
+
+            // A chat-list sync created threads (a conversation that predates this
+            // process, or one started on the phone). Refetch the tab counts so it
+            // becomes reachable without a reload.
+            chatContext.onInboxChannelsChanged().subscribe(() => {
+              dispatch(getInboxChannels());
+            });
+
+            // Reconnect gap recovery. Messages that arrived while the socket was
+            // down were never emitted to this tab, and no other code path would
+            // ever surface them, so the channel counts are refetched on every
+            // reconnect. `reconnect` (not `connect`) fires only on a genuine
+            // re-establish, so the initial connect does not double-fetch.
+            chatContext.onReconnect().subscribe(() => {
+              dispatch(inboxSocketGap());
+              dispatch(getInboxChannels());
+            });
+
+            // Seed the channel tabs so a badge is correct on first paint
+            // rather than only after the first live message.
+            dispatch(getInboxChannels());
 
             setLoading(false);
           })

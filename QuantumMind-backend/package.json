@@ -75,8 +75,8 @@
     "winston": "^3.8.2"
   },
   "devDependencies": {
-    "@nestjs/cli": "^9.0.0",
-    "@nestjs/schematics": "^9.0.0",
+    "@nestjs/cli": "^10.0.0",
+    "@nestjs/schematics": "^10.0.0",
     "@nestjs/testing": "^9.0.0",
     "@types/adm-zip": "^0.5.7",
     "@types/aws-lambda": "^8.10.109",

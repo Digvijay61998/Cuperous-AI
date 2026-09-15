@@ -1,10 +1,11 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
-import { TEMPLATE_PROVIDER } from './constant';
+import { TEMPLATE_INSTANCE_PROVIDER, TEMPLATE_PROVIDER } from './constant';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { SearchTemplateDto } from './dto/search-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
+import { TemplateInstanceDocument } from './entities/template-instance.entity';
 import { TemplateDocument } from './entities/template.entity';
 import { TemplateCategoryEnumList } from './enums/template-category.enum';
 import { TemplateIndustryEnumList } from './enums/template-industry.enum';
@@ -15,6 +16,7 @@ import {
 import { TemplateStorageService } from './template-storage.service';
 import {
   extractConfigSchema,
+  validateAndNormalizeConfigValues,
   validateTemplateZip,
 } from './template.validator';
 
@@ -32,6 +34,8 @@ export class TemplateService {
   constructor(
     @Inject(TEMPLATE_PROVIDER)
     private readonly templateModel: Model<TemplateDocument>,
+    @Inject(TEMPLATE_INSTANCE_PROVIDER)
+    private readonly instanceModel: Model<TemplateInstanceDocument>,
     private readonly storageService: TemplateStorageService,
   ) {}
 
@@ -81,11 +85,14 @@ export class TemplateService {
    * local<->s3 storage mode switch.
    */
   private attachHostedUrl<T extends TemplateDocument>(template: T): T {
-    if (template?.currentVersion) {
-      template.hostedUrl = this.storageService.buildHostedUrl(
-        `${template.id}/v${template.currentVersion}`,
-      );
-    }
+    if (!template?.currentVersion) return template;
+
+    const generatedUrl = this.storageService.buildHostedUrl(
+      `templates/${template.id}/v${template.currentVersion}`,
+    );
+
+    template.hostedUrl = generatedUrl;
+
     return template;
   }
 
@@ -241,24 +248,119 @@ export class TemplateService {
     }
   }
 
-  /** Public runtime config consumed by the hosted template. */
-  async getConfig(id: string) {
+  /**
+   * Public runtime config consumed by the hosted template.
+   *
+   * Values resolve in increasing order of specificity:
+   *   manifest defaults -> catalog `configValues` -> this bot's instance.
+   * Omitting `botId` yields the catalog defaults (used by previews).
+   */
+  async getConfig(id: string, botId?: string) {
     try {
+      // Visitor-facing route: a malformed id is an unknown template, not a 500.
+      if (!id || !isValidObjectId(id)) {
+        throw new HttpException('Template not found', 404);
+      }
+
       const template = await this.templateModel
         .findOne({ _id: id, isDeleted: false })
         .select('name slug configSchema configValues supportedLanguages supportsDarkMode status');
       if (!template) throw new HttpException('Template not found', 404);
+
+      const catalogValues = template.configValues || {};
+      let configValues: Record<string, any> = { ...catalogValues };
+
+      if (botId) {
+        const instance = await this.instanceModel
+          .findOne({ templateId: id, botId, isDeleted: false })
+          .select('configValues');
+        if (instance?.configValues) {
+          configValues = { ...configValues, ...instance.configValues };
+        }
+      }
+
       return {
         id: template.id,
         name: template.name,
         slug: template.slug,
         configSchema: template.configSchema,
-        configValues: template.configValues,
+        configValues,
         supportedLanguages: template.supportedLanguages,
         supportsDarkMode: template.supportsDarkMode,
       };
     } catch (error) {
       this.logger.error(`Error fetching config ${id}: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+  }
+
+  /**
+   * Updates one customer's overrides for a template. Values are validated
+   * against the same manifest schema as the catalog defaults, then merged so a
+   * partial edit never clears untouched keys.
+   */
+  async updateInstanceConfig(
+    id: string,
+    botId: string,
+    configValues: Record<string, any>,
+    workspaceId?: string,
+    user?: JwtPayload,
+  ) {
+    try {
+      if (!id || !isValidObjectId(id)) {
+        throw new HttpException('Template not found', 404);
+      }
+      if (!botId || !botId.trim()) {
+        throw new HttpException('botId is required', 400);
+      }
+
+      const template = await this.templateModel
+        .findOne({ _id: id, isDeleted: false })
+        .select('configSchema');
+      if (!template) throw new HttpException('Template not found', 404);
+
+      const normalized = validateAndNormalizeConfigValues(
+        template.configSchema as any,
+        configValues,
+      );
+
+      const trimmedBotId = botId.trim();
+      const existing = await this.instanceModel.findOne({
+        templateId: id,
+        botId: trimmedBotId,
+      });
+      const merged = { ...(existing?.configValues || {}), ...normalized };
+
+      const update: Record<string, any> = {
+        configValues: merged,
+        updatedBy: (user?._id as any) || null,
+        isDeleted: false,
+      };
+      if (workspaceId !== undefined) update.workspaceId = workspaceId;
+
+      try {
+        return await this.instanceModel.findOneAndUpdate(
+          { templateId: id, botId: trimmedBotId },
+          { $set: update },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+      } catch (error) {
+        // Two concurrent first-time saves can both miss the findOne above; the
+        // unique (templateId, botId) index makes the loser throw E11000. The
+        // document now exists, so retry the update as a plain edit.
+        if (error?.code === 11000 || error?.code === 11001) {
+          return await this.instanceModel.findOneAndUpdate(
+            { templateId: id, botId: trimmedBotId },
+            { $set: update },
+            { new: true },
+          );
+        }
+        throw error;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error updating instance config ${id}/${botId}: ${error.message}`,
+      );
       throw new HttpException(error.message, error.status || 500);
     }
   }
@@ -293,7 +395,9 @@ export class TemplateService {
         'estimatedDuration',
       ];
       for (const key of editable) {
-        if (dto[key] !== undefined) (template as any)[key] = dto[key];
+        if (dto[key] !== undefined) {
+            (template as any)[key] = dto[key];
+        }
       }
 
       template.updatedBy = (user?._id as any) || template.updatedBy;
@@ -317,7 +421,12 @@ export class TemplateService {
       });
       if (!template) throw new HttpException('Template not found', 404);
 
-      template.configValues = { ...template.configValues, ...configValues };
+      const normalized = validateAndNormalizeConfigValues(
+        template.configSchema as any,
+        configValues,
+      );
+
+      template.configValues = { ...template.configValues, ...normalized };
       template.markModified('configValues');
       template.updatedBy = (user?._id as any) || template.updatedBy;
       await template.save();

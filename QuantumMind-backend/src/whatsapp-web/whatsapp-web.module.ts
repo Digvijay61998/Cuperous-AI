@@ -5,6 +5,7 @@ import { whatsappWebProviders } from './whatsapp-web-session.provider';
 import { WhatsappWebController } from './whatsapp-web.controller';
 import { WhatsappWebService } from './whatsapp-web.service';
 import { WhatsappWebInboundService } from './whatsapp-web-inbound.service';
+import { WhatsappWebRateLimiter } from './whatsapp-web-rate-limiter';
 
 /**
  * WhatsApp Web (baileys) feature module: session CRUD + lifecycle, inbound
@@ -19,6 +20,7 @@ import { WhatsappWebInboundService } from './whatsapp-web-inbound.service';
     ...whatsappWebProviders,
     WhatsappWebService,
     WhatsappWebInboundService,
+    WhatsappWebRateLimiter,
   ],
   exports: [WhatsappWebService],
 })
