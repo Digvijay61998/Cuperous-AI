@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.logging_utils import configure_logging
 from app.middleware import RequestLoggingMiddleware
-from app.routers import health, ingest, query
+from app.routers import generate, health, ingest, query
 
 settings = get_settings()
 
@@ -35,6 +35,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(ingest.router)
 app.include_router(query.router)
+app.include_router(generate.router)
 
 
 if __name__ == "__main__":

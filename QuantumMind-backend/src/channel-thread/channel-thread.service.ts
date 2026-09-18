@@ -191,6 +191,60 @@ export class ChannelThreadService {
     return this.threadModel.findOne(this.normalizeKey(key));
   }
 
+  /**
+   * Cache a contact's profile picture.
+   *
+   * `avatarUpdatedAt` is stamped even for a null url. A contact with no picture and
+   * a contact whose lookup failed look identical from here, and without recording
+   * the attempt both would be re-fetched on every single sync — a per-contact round
+   * trip to the channel, forever, for an answer that will not change.
+   */
+  async setContactAvatar(
+    threadId: string,
+    avatarUrl: string | null,
+  ): Promise<void> {
+    await this.threadModel.updateOne(
+      { _id: threadId },
+      avatarUrl
+        ? { $set: { avatarUrl, avatarUpdatedAt: new Date() } }
+        : // Clear a stale url rather than leaving one that no longer resolves: a
+          // broken image is worse than an initials placeholder.
+          {
+            $set: { avatarUpdatedAt: new Date() },
+            $unset: { avatarUrl: '' },
+          },
+    );
+  }
+
+  /**
+   * Threads on one channel account whose avatar is missing or past its shelf life.
+   *
+   * Ordered by most recent activity and hard-limited, because this drives outbound
+   * lookups against the channel: the threads an agent is about to look at are worth
+   * the round trip, and a long-dead conversation is not. Deliberately excludes
+   * threads with no `phone` — an `@lid`-only contact cannot be resolved to a
+   * picture, so asking would spend a request to be told nothing.
+   */
+  async findThreadsNeedingAvatar(options: {
+    channel: string;
+    sessionName?: string;
+    staleBefore: Date;
+    limit: number;
+  }): Promise<ChannelThreadDocument[]> {
+    return this.threadModel
+      .find({
+        channel: options.channel,
+        sessionName: options.sessionName || '',
+        $or: [
+          { avatarUpdatedAt: { $exists: false } },
+          { avatarUpdatedAt: { $lt: options.staleBefore } },
+        ],
+      })
+      .sort({ lastMessageAt: -1 })
+      .limit(options.limit)
+      .select({ _id: 1, chatId: 1, avatarUrl: 1, avatarUpdatedAt: 1 });
+  }
+
   async findById(id: string): Promise<ChannelThreadDocument | null> {
     return this.threadModel.findById(id);
   }

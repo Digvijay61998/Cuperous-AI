@@ -238,7 +238,18 @@ export class BotsService {
       } = query;
 
       const queryObject = {};
-      if (status) queryObject["status"] = status;
+      // `remove()` is a SOFT delete — it only flips `status` to `deleted`, and the
+      // row stays in the collection. So an unfiltered read returns bots the
+      // operator has already deleted, which is how they kept appearing in the
+      // "Select JarCube Bot" dropdown on the Social Messengers form. Absent an
+      // explicit status the default is therefore "everything that still exists",
+      // not "every document". Asking for `status=deleted` explicitly still works,
+      // which is what the Bots list's own Deleted filter relies on.
+      if (status) {
+        queryObject["status"] = status;
+      } else {
+        queryObject["status"] = { $ne: BotStatusEnum.DELETED };
+      }
       if (tags) queryObject["tags"] = { $in: tags };
 
       const agents = this.botModel

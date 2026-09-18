@@ -11,6 +11,7 @@ import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 
 // ** Store & Actions
@@ -28,6 +29,7 @@ import CustomAvatar from 'src/@core/components/mui/avatar';
 import { formatDateToMonthShort } from 'src/@core/utils/format';
 import { getInitials } from 'src/@core/utils/get-initials';
 import { InboxThread } from 'src/services/socket.services';
+import { contactInitialsSource, contactSubtitle } from './contactDisplay';
 
 interface Props {
   channel: string;
@@ -120,6 +122,8 @@ const ThreadList = ({ channel, sidebarWidth }: Props) => {
     return visible.map((thread) => {
       const isActive = selectedThreadId === thread.id;
       const preview = thread.lastMessage?.message || '';
+      const initialsSource = contactInitialsSource(thread);
+      const subtitle = contactSubtitle(thread);
 
       return (
         <ListItem
@@ -148,21 +152,40 @@ const ThreadList = ({ channel, sidebarWidth }: Props) => {
               src={thread.avatarUrl || undefined}
               sx={{ width: 38, height: 38, mr: 3, fontSize: '0.875rem' }}
             >
-              {thread.name ? getInitials(thread.name) : null}
+              {/* Initials only when the label is a real name — see
+                  contactInitialsSource. Otherwise a person glyph, because initials
+                  taken from a phone number render as punctuation. */}
+              {initialsSource ? (
+                getInitials(initialsSource)
+              ) : (
+                <Icon icon="mdi:account" fontSize={20} />
+              )}
             </CustomAvatar>
 
             <ListItemText
               sx={{ my: 0, mr: 2 }}
               primary={
-                <Typography
-                  noWrap
-                  sx={{
-                    fontWeight: thread.unreadCount > 0 ? 600 : 500,
-                    color: isActive ? 'common.white' : 'text.primary',
-                  }}
+                /* The number lives in a tooltip rather than a third line: the row
+                   already carries name + preview + time + badges, and for a named
+                   contact the number is reference information, not something an
+                   agent scans the list for. Nameless contacts show the formatted
+                   number as their name, so nothing is hidden from them. */
+                <Tooltip
+                  title={subtitle}
+                  placement="top-start"
+                  arrow
+                  disableHoverListener={!subtitle}
                 >
-                  {thread.name}
-                </Typography>
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontWeight: thread.unreadCount > 0 ? 600 : 500,
+                      color: isActive ? 'common.white' : 'text.primary',
+                    }}
+                  >
+                    {thread.name}
+                  </Typography>
+                </Tooltip>
               }
               secondary={
                 <Typography

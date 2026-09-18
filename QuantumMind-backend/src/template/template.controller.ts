@@ -80,6 +80,17 @@ export class TemplateController {
     return await this.templateService.getConfig(id, botId);
   }
 
+  // Best-effort analytics sink for hosted templates. The SDK fires view / start
+  // / complete / abandon / error events fire-and-forget; without this route
+  // every event was a 404 in the logs (the SDK swallows the failure, so it is
+  // log noise rather than a functional break, but it hides real errors). ACK so
+  // the events succeed. Must be @Public — the template carries no admin JWT.
+  @Post('analytics')
+  @Public()
+  async trackAnalytics(@Body() body: Record<string, any>) {
+    return this.templateService.recordAnalytics(body);
+  }
+
   // Catalog-wide defaults (admin only).
   @Patch(':id/config')
   async updateConfig(

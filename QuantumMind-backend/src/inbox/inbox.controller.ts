@@ -41,6 +41,26 @@ export class InboxController {
     return this.inboxService.listChannels(user);
   }
 
+  // Declared before `threads` only for readability — it sits under `channels`,
+  // which is a literal segment, so there is no route-shadowing hazard here.
+  @Get('channels/:channel/status')
+  @ApiOperation({
+    summary: 'Whether a channel can send right now, and why not if it cannot',
+    description:
+      'Drives the connection banner above a channel tab. Necessary because the ' +
+      'tab list is derived from threads, which are permanent: a deleted, stopped ' +
+      'or logged-out messenger leaves a tab that looks perfectly healthy until a ' +
+      'reply fails. States are derived from the live engine runtime, not from a ' +
+      'stored column, because "stopped", "logged out" and "reconnecting" all share ' +
+      'one persisted status.',
+  })
+  getChannelStatus(
+    @CurrentUser() user: JwtPayload,
+    @Param('channel') channel: string,
+  ) {
+    return this.inboxService.getChannelStatus(user, channel);
+  }
+
   @Get('threads')
   @ApiOperation({
     summary: 'Thread list for one channel, newest activity first',

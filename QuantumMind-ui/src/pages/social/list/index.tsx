@@ -157,7 +157,11 @@ const SocialList = () => {
   }, [socialStats]);
 
   useEffect(() => {
-    dispatch(fetchBotData());
+    // Active bots only. A messenger routes live customer traffic to whatever bot
+    // is attached, so offering a suspended or deleted bot in the attach dropdown
+    // (or in the filter below) only ever produces a connection that silently
+    // never answers.
+    dispatch(fetchBotData({ status: 'active' }));
   }, []);
 
   useEffect(() => {

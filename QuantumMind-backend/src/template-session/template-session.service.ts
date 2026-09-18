@@ -48,8 +48,72 @@ export class TemplateSessionService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  /** Create a session + return the customer-facing launch URL. */
+  /**
+   * A session this conversation is still waiting on for a given node, if any:
+   * not yet resolved and not past expiry. Scoped by conversation + node so a
+   * flow that launches two different templates, or the same template in a later
+   * conversation, is not blocked by an unrelated pending session.
+   */
+  async findLiveSession(filter: {
+    conversationId: string;
+    nodeId: string;
+    visitorId?: string;
+  }): Promise<TemplateSessionDocument | null> {
+    if (!filter?.conversationId || !filter?.nodeId) return null;
+    const query: Record<string, any> = {
+      conversationId: filter.conversationId,
+      nodeId: filter.nodeId,
+      status: {
+        $in: [
+          TemplateSessionStatusEnum.CREATED,
+          TemplateSessionStatusEnum.LAUNCHED,
+          TemplateSessionStatusEnum.OPENED,
+          TemplateSessionStatusEnum.IN_PROGRESS,
+        ],
+      },
+      expiresAt: { $gt: new Date() },
+    };
+    if (filter.visitorId) query.visitorId = filter.visitorId;
+    return this.sessionModel.findOne(query).sort({ createdAt: -1 });
+  }
+
+  /**
+   * Create a session + return the customer-facing launch URL.
+   *
+   * Durable backstop to the in-memory re-entry guard in handleOpenTemplate: if
+   * that guard's node state was lost (idle eviction or a restart), this reuses
+   * the still-live session instead of minting a second link. `reused` lets the
+   * caller skip re-sending.
+   */
   async create(input: CreateSessionInput) {
+    const existing = await this.findLiveSession({
+      conversationId: input.conversationId,
+      nodeId: input.nodeId,
+      visitorId: input.visitorId,
+    });
+    if (existing) {
+      this.logger.debug(
+        `Reusing live template session ${existing.id} for node ${input.nodeId} ` +
+          `instead of creating a duplicate`,
+      );
+      return {
+        session: existing,
+        launchUrl: this.launchService.buildUrl(
+          input.hostedUrl,
+          existing.id,
+          existing.launchToken,
+          input.templateId,
+          input.botId,
+          {
+            conversationId: input.conversationId,
+            visitorId: input.visitorId,
+            platform: input.platform,
+          },
+        ),
+        reused: true,
+      };
+    }
+
     const token = this.launchService.generateToken();
     const expiryMinutes = input.expiryMinutes ?? DEFAULT_SESSION_EXPIRY_MINUTES;
     const expiresAt = new Date(Date.now() + expiryMinutes * 60_000);
@@ -75,8 +139,42 @@ export class TemplateSessionService {
       token,
       input.templateId,
       input.botId,
+      {
+        conversationId: input.conversationId,
+        visitorId: input.visitorId,
+        platform: input.platform,
+      },
     );
-    return { session, launchUrl };
+    return { session, launchUrl, reused: false };
+  }
+
+  /**
+   * The session to resume when a submission arrives keyed only by conversation
+   * (the /template/actions/* path carries a conversationId, not a session id).
+   *
+   * Newest session for the conversation that has NOT already resolved
+   * (VALIDATED/SUBMITTED) and did not fail to launch (FAILED). Expiry is
+   * deliberately NOT filtered: a customer who took longer than the link's
+   * validity to submit still completed the form, so the flow should still
+   * advance down SUCCESS rather than being stuck on an expiry-driven
+   * FAILURE/TIMEOUT.
+   */
+  async findResumableSessionByConversation(
+    conversationId: string,
+  ): Promise<TemplateSessionDocument | null> {
+    if (!conversationId) return null;
+    return this.sessionModel
+      .findOne({
+        conversationId,
+        status: {
+          $nin: [
+            TemplateSessionStatusEnum.VALIDATED,
+            TemplateSessionStatusEnum.SUBMITTED,
+            TemplateSessionStatusEnum.FAILED,
+          ],
+        },
+      })
+      .sort({ createdAt: -1 });
   }
 
   async markLaunched(sessionId: string) {
@@ -231,12 +329,35 @@ export class TemplateSessionService {
       expiresAt: { $lt: now },
     });
 
+    let resolved = 0;
     for (const session of stale) {
       const wasOpened = Boolean(session.openedAt);
-      session.status = wasOpened
+      const nextStatus = wasOpened
         ? TemplateSessionStatusEnum.ABANDONED
         : TemplateSessionStatusEnum.EXPIRED;
-      await session.save();
+
+      // Claim the row atomically BEFORE emitting. The find above and the write
+      // are separate round trips, so a slow/overlapping sweep — or a submit
+      // landing at the exact expiry boundary — could otherwise resolve the same
+      // session twice and emit two resume events, routing the conversation
+      // twice. Matching on the still-active status makes this a compare-and-set:
+      // only the caller that flips the status emits.
+      const claimed = await this.sessionModel.findOneAndUpdate(
+        {
+          _id: session._id,
+          status: {
+            $in: [
+              TemplateSessionStatusEnum.CREATED,
+              TemplateSessionStatusEnum.LAUNCHED,
+              TemplateSessionStatusEnum.OPENED,
+              TemplateSessionStatusEnum.IN_PROGRESS,
+            ],
+          },
+        },
+        { status: nextStatus },
+      );
+      if (!claimed) continue;
+      resolved++;
 
       this.eventEmitter.emit(
         wasOpened ? 'template.abandoned' : 'template.expired',
@@ -248,8 +369,8 @@ export class TemplateSessionService {
         },
       );
     }
-    if (stale.length) {
-      this.logger.log(`Swept ${stale.length} stale template session(s)`);
+    if (resolved) {
+      this.logger.log(`Swept ${resolved} stale template session(s)`);
     }
   }
 }

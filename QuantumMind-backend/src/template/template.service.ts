@@ -255,6 +255,21 @@ export class TemplateService {
    *   manifest defaults -> catalog `configValues` -> this bot's instance.
    * Omitting `botId` yields the catalog defaults (used by previews).
    */
+  /**
+   * Best-effort analytics sink for hosted-template events (view / start /
+   * complete / abandon / error). Not persisted to a store yet — acknowledged so
+   * the SDK's fire-and-forget calls stop 404-ing, and logged at debug so the
+   * events are still observable during debugging. Wire to a real analytics
+   * collection when one exists.
+   */
+  async recordAnalytics(event: Record<string, any> = {}) {
+    this.logger.debug(
+      `template analytics: event=${event?.event} template=${event?.templateId} ` +
+        `bot=${event?.botId} conv=${event?.conversationId}`,
+    );
+    return { ok: true };
+  }
+
   async getConfig(id: string, botId?: string) {
     try {
       // Visitor-facing route: a malformed id is an unknown template, not a 500.

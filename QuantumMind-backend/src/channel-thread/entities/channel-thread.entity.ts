@@ -68,8 +68,28 @@ export class ChannelThread {
   @Prop()
   pushName: string;
 
+  /**
+   * The contact's profile picture, as the channel last reported it.
+   *
+   * NOT permanent. WhatsApp serves these from a signed CDN URL that stops
+   * resolving after a while, so a stored value is a cache with a shelf life rather
+   * than a stable address — hence `avatarUpdatedAt` below.
+   */
   @Prop()
   avatarUrl: string;
+
+  /**
+   * When the avatar was last *looked up* — not when it last changed.
+   *
+   * Stamped even when the lookup came back empty, which is the point: a contact
+   * with no picture at all is indistinguishable from a failed fetch, and without
+   * recording the attempt every list refresh would re-ask the channel for every
+   * pictureless contact forever. That is a per-contact round trip to WhatsApp on a
+   * loop, which is exactly the traffic pattern that gets an unofficial session
+   * banned.
+   */
+  @Prop()
+  avatarUpdatedAt: Date;
 
   /** The bot that answers on this thread. */
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Bot' })

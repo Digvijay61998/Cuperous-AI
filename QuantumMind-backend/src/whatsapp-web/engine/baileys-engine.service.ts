@@ -26,6 +26,13 @@ type BaileysModule = {
   useMultiFileAuthState: (
     folder: string,
   ) => Promise<{ state: any; saveCreds: () => Promise<void> }>;
+  /**
+   * Baileys' official in-memory caching layer for the Signal key store. Wrapping
+   * the raw file-backed store with it is what prevents a just-written session
+   * from reading back as "missing" before the disk write settles — the race that
+   * produces the "Bad MAC" / "Failed to decrypt" / "Closing session" spam.
+   */
+  makeCacheableSignalKeyStore?: (keys: any, logger: any) => any;
   normalizeMessageContent?: (content: any) => any;
   getContentType?: (content: any) => string | undefined;
 };
@@ -188,7 +195,7 @@ export class BaileysEngineService implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     for (const [name, rt] of this.sessions.entries()) {
       rt.stopping = true;
-      if (rt.reconnectTimer) clearTimeout(rt.reconnectTimer);
+      this.clearReconnect(rt);
       try {
         rt.sock?.end?.(undefined);
       } catch {
@@ -202,6 +209,22 @@ export class BaileysEngineService implements OnModuleDestroy {
     return path.join(this.baseDir, name);
   }
 
+  /**
+   * Cancel a queued reconnect and forget its handle.
+   *
+   * The handle is not merely a cleanup obligation — it is the only in-process
+   * evidence that a closed session intends to come back, which `getRuntimeInfo`
+   * reports so the dashboard can say "reconnecting" instead of "disabled". A
+   * cleared-but-still-set handle would make a session that has given up look like
+   * one that is still trying.
+   */
+  private clearReconnect(rt: SessionRuntime): void {
+    if (rt.reconnectTimer) {
+      clearTimeout(rt.reconnectTimer);
+      rt.reconnectTimer = undefined;
+    }
+  }
+
   getStatus(name: string): string {
     return this.sessions.get(name)?.status ?? WhatsappWebSessionStatus.DISCONNECTED;
   }
@@ -213,6 +236,61 @@ export class BaileysEngineService implements OnModuleDestroy {
   isActive(name: string): boolean {
     const rt = this.sessions.get(name);
     return !!rt && !!rt.sock;
+  }
+
+  /**
+   * Whether this session still holds WhatsApp credentials on disk.
+   *
+   * This is what separates "an operator stopped it" from "WhatsApp logged the
+   * device out". Both leave the DB row at `disconnected`, but a logout purges the
+   * auth directory (see purgeAuth), so a session with no creds can only be
+   * recovered by scanning a fresh QR — which is a different instruction to give
+   * the operator than "press Start".
+   *
+   * Checks for the creds file specifically, not just the directory: `start()`
+   * creates the directory before baileys writes anything into it, so directory
+   * existence alone reports credentials for a session that has never been linked.
+   */
+  hasCredentials(name: string): boolean {
+    try {
+      return fs.existsSync(path.join(this.authDir(name), 'creds.json'));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Live runtime facts about a session that the persisted row cannot carry.
+   *
+   * Exposed as a snapshot rather than handing out the SessionRuntime itself so
+   * callers cannot mutate engine state, and so the `sessions` map stays private.
+   * `reconnectPending` is the interesting one: a socket that closed because of a
+   * transient drop has a backoff timer armed, while one closed by `stop()` does
+   * not — and that is the only in-process evidence of which happened.
+   */
+  getRuntimeInfo(name: string): {
+    known: boolean;
+    status: string;
+    active: boolean;
+    stopping: boolean;
+    reconnectPending: boolean;
+    reconnectAttempts: number;
+    hasCredentials: boolean;
+    phone?: string;
+    pushName?: string;
+  } {
+    const rt = this.sessions.get(name);
+    return {
+      known: !!rt,
+      status: rt?.status ?? WhatsappWebSessionStatus.DISCONNECTED,
+      active: !!rt?.sock,
+      stopping: rt?.stopping === true,
+      reconnectPending: !!rt?.reconnectTimer,
+      reconnectAttempts: rt?.reconnectAttempts ?? 0,
+      hasCredentials: this.hasCredentials(name),
+      phone: rt?.phone,
+      pushName: rt?.pushName,
+    };
   }
 
   private setStatus(
@@ -266,6 +344,27 @@ export class BaileysEngineService implements OnModuleDestroy {
     const makeWASocket = baileys.default ?? baileys.makeWASocket;
 
     const { state, saveCreds } = await baileys.useMultiFileAuthState(dir);
+
+    // Wrap the raw file-backed Signal key store with Baileys' own caching layer.
+    //
+    // `useMultiFileAuthState` reads and writes every session key straight to
+    // disk. Baileys writes a freshly-negotiated Signal session and then reads it
+    // back moments later for the next message — but the file write has not
+    // settled yet, so the read misses, Baileys treats the session as gone and
+    // discards it. The next inbound message then fails to decrypt: "Bad MAC",
+    // "Failed to decrypt message with any known session", "Key used already or
+    // never filled", and the "Closing session" dump. Those lines come from the
+    // `libsignal` dependency via `console.*`, so `silentLogger` cannot hide them
+    // — the only real fix is to stop the sessions being discarded.
+    //
+    // makeCacheableSignalKeyStore keeps the just-written state visible in memory
+    // immediately, independent of disk-flush timing, which closes the race. This
+    // mirrors the OpenWA engine in this same repo. Guarded so an older Baileys
+    // build without the helper still starts (unwrapped, as before).
+    if (typeof baileys.makeCacheableSignalKeyStore === 'function') {
+      state.keys = baileys.makeCacheableSignalKeyStore(state.keys, silentLogger);
+    }
+
     const { version } = await baileys
       .fetchLatestBaileysVersion()
       .catch(() => ({ version: undefined as any }));
@@ -486,6 +585,12 @@ export class BaileysEngineService implements OnModuleDestroy {
         BaileysEngineService.RECONNECT_BASE_DELAY_MS * rt.reconnectAttempts;
       this.setStatus(name, WhatsappWebSessionStatus.DISCONNECTED);
       rt.reconnectTimer = setTimeout(() => {
+        // Cleared as the attempt begins, not left dangling. The handle is what
+        // `getRuntimeInfo` reads to report "a retry is still queued", so leaving a
+        // fired timer's reference in place would make a session that has given up
+        // look like one that is about to try again — and the operator would be
+        // told to wait instead of to reconnect.
+        rt.reconnectTimer = undefined;
         this.start(name).catch((e) =>
           this.logger.error(`Reconnect failed for ${name}: ${e?.message}`),
         );
@@ -740,6 +845,41 @@ export class BaileysEngineService implements OnModuleDestroy {
   }
 
   /**
+   * Resolve a contact's profile picture URL, or null when there is not one.
+   *
+   * Returns null rather than throwing for every failure mode — no picture set,
+   * privacy settings hiding it, a lookup that timed out, a session that is not
+   * connected. The caller is decorating an inbox row, so none of those are worth
+   * failing an operation over, and they are not distinguishable to the person
+   * looking at the screen either way.
+   *
+   * `preview` (not `image`) because this fills a 38px avatar: the full-size photo is
+   * an order of magnitude more bytes for pixels nobody sees. The explicit timeout
+   * matters because a silent contact makes WhatsApp simply never answer, and the
+   * default would leave the enrichment loop parked on one row.
+   */
+  async getProfilePictureUrl(
+    name: string,
+    jid: string,
+    timeoutMs = 10_000,
+  ): Promise<string | null> {
+    const rt = this.sessions.get(name);
+    if (!rt?.sock || rt.status !== WhatsappWebSessionStatus.READY) return null;
+    try {
+      const url = await rt.sock.profilePictureUrl(
+        normalizeJid(jid),
+        'preview',
+        timeoutMs,
+      );
+      return url || null;
+    } catch {
+      // Expected constantly: "item-not-found" is what WhatsApp answers for a
+      // contact with no picture, and it is not an error worth logging per contact.
+      return null;
+    }
+  }
+
+  /**
    * Send read receipts (the customer's blue ticks) for specific messages.
    *
    * WhatsApp acknowledges individual messages rather than a read-up-to
@@ -777,7 +917,7 @@ export class BaileysEngineService implements OnModuleDestroy {
     const rt = this.sessions.get(name);
     if (!rt) return;
     rt.stopping = true;
-    if (rt.reconnectTimer) clearTimeout(rt.reconnectTimer);
+    this.clearReconnect(rt);
     try {
       rt.sock?.end?.(undefined);
     } catch {
@@ -793,7 +933,7 @@ export class BaileysEngineService implements OnModuleDestroy {
     const rt = this.sessions.get(name);
     if (rt) {
       rt.stopping = true;
-      if (rt.reconnectTimer) clearTimeout(rt.reconnectTimer);
+      this.clearReconnect(rt);
       try {
         await rt.sock?.logout?.();
       } catch {
@@ -816,7 +956,7 @@ export class BaileysEngineService implements OnModuleDestroy {
     const rt = this.sessions.get(name);
     if (!rt) return;
     rt.stopping = true;
-    if (rt.reconnectTimer) clearTimeout(rt.reconnectTimer);
+    this.clearReconnect(rt);
     try {
       rt.sock?.ws?.close?.();
       rt.sock?.end?.(undefined);

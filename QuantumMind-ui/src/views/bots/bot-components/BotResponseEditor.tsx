@@ -474,8 +474,18 @@ const BotResponseEditor = (props: BotResponseProps) => {
                   <div style={{ padding: '0.5rem' }} key={index}>
                     <div style={{ display: 'flex', padding: '5px' }}>
                       <TextField
-                        // fullWidth
-                        sx={{ width: 300 }}
+                        fullWidth
+                        // Multiline so a message longer than one line wraps and
+                        // stays fully visible instead of scrolling off the right
+                        // edge of a fixed-width single-line box (the old width:300
+                        // input clipped anything past ~40 chars). minRows keeps the
+                        // empty field a comfortable size; maxRows caps it and lets
+                        // the field scroll internally for very long copy rather than
+                        // pushing the trash button off-screen.
+                        multiline
+                        minRows={2}
+                        maxRows={10}
+                        sx={{ width: 300, flex: 1 }}
                         id="filled-basic"
                         variant="filled"
                         value={item.value}
@@ -562,8 +572,13 @@ const BotResponseEditor = (props: BotResponseProps) => {
                     </div>
                     <div style={{ display: 'flex', padding: '5px' }}>
                       <TextField
-                        // fullWidth
-                        sx={{ width: 300 }}
+                        fullWidth
+                        // Same fix as the plain 'text' variant: each random-text
+                        // variant is a full message and must wrap rather than clip.
+                        multiline
+                        minRows={2}
+                        maxRows={10}
+                        sx={{ width: 300, flex: 1 }}
                         id="filled-basic"
                         variant="filled"
                         value={item?.values[item.activeVariant]}

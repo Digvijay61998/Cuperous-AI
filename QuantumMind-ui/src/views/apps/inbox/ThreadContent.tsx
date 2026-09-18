@@ -21,11 +21,13 @@ import {
 } from 'src/store/apps/inbox';
 
 // ** Utils
+import Icon from 'src/@core/components/icon';
 import CustomAvatar from 'src/@core/components/mui/avatar';
 import { getInitials } from 'src/@core/utils/get-initials';
 import returnPlatformIcon from 'src/components/PlatforomIcons';
 import { InboxMessage } from 'src/services/socket.services';
 import { capabilitiesFor } from './channelConfig';
+import { contactInitialsSource, contactSubtitle } from './contactDisplay';
 import ThreadComposer from './ThreadComposer';
 import ThreadLog from './ThreadLog';
 
@@ -208,7 +210,12 @@ const ThreadContent = ({ channel }: Props) => {
             src={thread.avatarUrl || undefined}
             sx={{ width: 38, height: 38, mr: 3, fontSize: '0.875rem' }}
           >
-            {thread.name ? getInitials(thread.name) : null}
+            {/* Same rule as the sidebar row: initials only for a real name. */}
+            {contactInitialsSource(thread) ? (
+              getInitials(contactInitialsSource(thread) as string)
+            ) : (
+              <Icon icon="mdi:account" fontSize={20} />
+            )}
           </CustomAvatar>
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -222,8 +229,12 @@ const ThreadContent = ({ channel }: Props) => {
               </Tooltip>
             </Box>
             <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-              {thread.phone || thread.chatId}
-              {thread.bot?.name ? ` · ${thread.bot.name}` : ''}
+              {/* `contactSubtitle` is empty when the heading above already IS the
+                  phone number, so a nameless contact no longer shows it twice.
+                  Falls back to the bot name alone, with no orphaned separator. */}
+              {[contactSubtitle(thread), thread.bot?.name]
+                .filter(Boolean)
+                .join(' · ')}
             </Typography>
           </Box>
         </Box>

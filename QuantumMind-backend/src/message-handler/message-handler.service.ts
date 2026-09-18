@@ -433,6 +433,9 @@ export class MessageHandlerService {
         case NodeTypeEnum.FAILURE:
           return await this.handleFailureNode(message, currentNode, userId);
 
+        case NodeTypeEnum.TIMEOUT:
+          return await this.handleTimeoutNode(message, currentNode, userId);
+
         case NodeTypeEnum.TRANSFER_TO_AGENT:
           return await this.TransferToAgent(message, currentNode, userId);
 
@@ -687,6 +690,22 @@ export class MessageHandlerService {
     const userData = this.socketStateService.getUserData(userId);
     if (!userData) return;
     const { botId, botName, defaultFallback, conversationId } = userData;
+
+    // Nothing to ask. This happens when the flow LANDS on an AI node with no
+    // inbound message — most importantly when a template submit routes
+    // SUCCESS -> AI node via routeTemplateResume(..., ""). Calling the AI with
+    // an empty question would hit the RAG "no context" path and emit a spurious
+    // "I don't have anything on that" right after the confirmation. Instead,
+    // just make this the resting node so the customer's NEXT real message is
+    // answered here.
+    if (typeof message !== "string" || !message.trim()) {
+      this.socketStateService.updateUserData(userId, { currentNode: node });
+      this.trace(
+        "handleAiResponse:park",
+        `node=${node.id} reached with empty message — waiting for next input`
+      );
+      return;
+    }
 
     // Correlation id shared with the AI service (via x-request-id header).
     const requestId = newRequestId();
@@ -1350,9 +1369,54 @@ if (!webhookId) {
     node: BotFlowNode,
     userId: string | any
   ) {
-    if (node.next.length > 0) {
+    if (node.next?.length) {
       const nextNode = await this.botsService.getBotNode(node.next[0]);
       return this.handleNode(nextNode, message, userId);
+    }
+    // Dead end: keep the conversation alive with the AI assistant instead of
+    // going mute. This is exactly the case that stranded customers — a template
+    // link expired, routed to an unwired FAILURE branch, and every later message
+    // hit a silent node.
+    return this.restOnTerminalNode(message, node, userId);
+  }
+
+  /**
+   * TIMEOUT branch of an OPEN_TEMPLATE node — reached when the form was opened
+   * but not completed before the session timed out. Behaves like the FAILURE
+   * branch: continue the scripted flow if one is wired, otherwise hand the
+   * conversation to the AI assistant rather than dead-ending. (Without this
+   * case, TIMEOUT fell through to the default fallback and then went silent.)
+   */
+  async handleTimeoutNode(
+    message: any,
+    node: BotFlowNode,
+    userId: string | any
+  ) {
+    if (node.next?.length) {
+      const nextNode = await this.botsService.getBotNode(node.next[0]);
+      return this.handleNode(nextNode, message, userId);
+    }
+    return this.restOnTerminalNode(message, node, userId);
+  }
+
+  /**
+   * The scripted flow has ended on a terminal branch with nothing wired after
+   * it. Rather than leaving the customer talking to a dead node, park here and
+   * let the AI assistant field further messages. Keeping currentNode on this
+   * node means every subsequent message routes back here and is answered.
+   *
+   * The first landing usually carries an empty message (routeTemplateResume /
+   * handleNode pass ""), so there is nothing to answer yet — just take up the
+   * resting position and wait for the customer's next real message.
+   */
+  private async restOnTerminalNode(
+    message: any,
+    node: BotFlowNode,
+    userId: string | any
+  ) {
+    this.socketStateService.updateUserData(userId, { currentNode: node });
+    if (typeof message === "string" && message.trim()) {
+      await this.answerWithAiAssistant(message, userId);
     }
   }
 
@@ -1361,11 +1425,32 @@ if (!webhookId) {
     node: BotFlowNode,
     userId: string | any
   ) {
-    // Mirrors handleFailureNode: a success branch left unconnected in the
-    // builder would otherwise call getBotNode(undefined) and throw.
-    if (!node.next?.length) return;
-    const nextNode = await this.botsService.getBotNode(node.next[0]);
-    return this.handleNode(nextNode, message, userId);
+    // Deliver the SUCCESS node's own message first, if the builder attached one
+    // (e.g. a "thank you" after a template submit). This node used to be a pure
+    // router that discarded node.responses entirely, so any message configured
+    // on it was silently dropped. sendBotMessage interpolates {{attributes}},
+    // and a template submit merges the submitted fields into attributes before
+    // this runs, so the copy can reference what the customer just entered
+    // (e.g. "You're booked for {{slot}}").
+    //
+    // Delivered ONCE: when this node has no continuation it becomes the resting
+    // node (see restOnTerminalNode), so without this guard the thank-you would
+    // be re-sent on every subsequent message the AI assistant then handles.
+    const alreadyDelivered =
+      this.socketStateService.getNodeState(userId, node.id) ===
+      BotNodeStateEnum.VISITED;
+    if (node.responses?.length && !alreadyDelivered) {
+      await this.sendBotMessage(userId, node.responses);
+    }
+    this.socketStateService.setNodeState(userId, node.id, BotNodeStateEnum.VISITED);
+
+    if (node.next?.length) {
+      const nextNode = await this.botsService.getBotNode(node.next[0]);
+      return this.handleNode(nextNode, message, userId);
+    }
+    // No continuation wired: keep answering via the AI assistant instead of
+    // dead-ending after the confirmation.
+    return this.restOnTerminalNode(message, node, userId);
   }
 
   async TransferToAgent(message: any, node: BotFlowNode, userId: string | any) {
@@ -1694,6 +1779,111 @@ if (!webhookId) {
   // Open Template node (Phase 2)
   // ==========================================================================
 
+  /**
+   * Answer a free-form chat message with the assistant, WITHOUT advancing the
+   * flow. Two callers:
+   *   1. while parked on an OPEN_TEMPLATE node (the customer is filling the form
+   *      and still chatting), and
+   *   2. when the scripted flow has reached a terminal dead-end (a
+   *      SUCCESS/FAILURE/TIMEOUT branch with nothing wired after it) — rather
+   *      than going mute, the conversation degrades to a general AI assistant.
+   *
+   * Question bank first (a curated answer beats a generated one and costs no
+   * tokens), then the AI knowledge base, then the bot's fallback message. It is
+   * never silent, and it never changes currentNode.
+   */
+  private async answerWithAiAssistant(message: any, userId: string | any) {
+    if (typeof message !== "string" || !message.trim()) return;
+
+    const userData = this.socketStateService.getUserData(userId);
+    if (!userData) return;
+
+    // Whatever happens, the customer's message gets a reply. Silence here is
+    // what made the assistant look dead: a greeting ("how are you"), a meta
+    // question ("what link is this") and anything not in the knowledge base all
+    // come back not-confident, and staying quiet on those reads as broken.
+    let reply: string | null = null;
+    try {
+      const qbAnswer = await this.findAnswerFromQuestionBank(message);
+      if (qbAnswer) {
+        await this.sendBotMessage(userId, [{ type: "text", value: qbAnswer }]);
+        return;
+      }
+
+      const ai = await this.askAIForAnswer(
+        userData.botId,
+        userData.botName,
+        message,
+        userData.conversationId,
+        userId
+      );
+      // Prefer a confident answer; otherwise use the AI service's own honest
+      // "I don't have that yet…" wording, which is friendlier and more specific
+      // than a generic canned line.
+      reply = ai.answer && ai.answer.trim() ? ai.answer : null;
+    } catch (error) {
+      // AI unreachable/errored — fall through to the configured fallback rather
+      // than going silent.
+      this.logger.warn(`answerWhileParked AI call failed: ${error?.message}`);
+    }
+
+    if (!reply) {
+      reply =
+        userData.botSettings?.fallbackMessage ||
+        "I'm here to help. You can complete the form above, or ask me anything about our products and services.";
+    }
+    await this.sendBotMessage(userId, [{ type: "text", value: reply }]);
+  }
+
+  /**
+   * One-shot AI answer used OUTSIDE the AI node's flow control (e.g. answering
+   * while parked on a template). Returns both the confidence flag and the
+   * answer text — including the service's honest fallback wording when it is
+   * not confident (QueryResponse carries `answer` even with confident=false),
+   * so the caller can still say something useful. Uses the bot's own knowledge
+   * base by default (clientId = botId), matching the AI node's fallback.
+   *
+   * Distinct from handleAiResponse, which additionally routes to SUCCESS/FAILURE
+   * child nodes and advances the flow — neither of which is wanted here.
+   */
+  private async askAIForAnswer(
+    botId: string,
+    botName: string,
+    message: string,
+    conversationId: string,
+    userId: string | any
+  ): Promise<{ confident: boolean; answer: string | null }> {
+    const aiUrl = this.configService.get("ai.url");
+    const timeout = this.configService.get("ai.timeout");
+    if (!aiUrl) return { confident: false, answer: null };
+
+    const chatHistory = await this.getRecentChatHistory(
+      conversationId,
+      userId,
+      message
+    );
+    const requestId = newRequestId();
+    const body = {
+      client_id: botId,
+      question: message,
+      bot_id: botId,
+      company_name: botName,
+      chat_history: chatHistory,
+    };
+
+    const res = await firstValueFrom(
+      this.httpService.post(`${aiUrl}/query/ask`, body, {
+        timeout,
+        headers: { "x-request-id": requestId },
+      })
+    );
+    const data = res?.data;
+    return {
+      confident: !!data?.confident,
+      answer: typeof data?.answer === "string" ? data.answer : null,
+    };
+  }
+
   /** Resolve dynamic variable mappings against the workflow's attributes. */
   private resolveTemplateVariables(
     mappings: any[] = [],
@@ -1735,6 +1925,41 @@ if (!webhookId) {
     // delivery throws after the session row exists.
     let launchedSessionId: string | null = null;
 
+    // ---- Re-entry guard (Fix A) ----------------------------------------
+    // This node PAUSES the flow: after the link is sent it stays the current
+    // node and only advances when a template.* callback arrives via
+    // routeTemplateResume — NOT on the next chat message. Without a guard,
+    // every inbound message re-enters this node (handleMessage -> handleNode ->
+    // OPEN_TEMPLATE) and mints a fresh session + a fresh launch link, which is
+    // the "link on every reply" bug.
+    //
+    // The mark is deliberately NOT cleared when the session resolves: launching
+    // the same order/booking form once per conversation is the intended
+    // behaviour, and leaving it VISITED also breaks the flow's cycle
+    // (START -> BOT_RESPONSE -> OPEN_TEMPLATE, and an AI branch whose
+    // non-confident path resets currentNode to startNode) — a loop back into
+    // this node finds it already done and stops instead of relaunching. A
+    // genuine restart ("start"/"reset"/CLOSE_CHAT) clears BotNodeState, which
+    // re-arms the node.
+    //
+    // Mirrors handleUserInput's VISITED check exactly.
+    if (
+      this.socketStateService.getNodeState(userId, node.id) ===
+      BotNodeStateEnum.VISITED
+    ) {
+      this.trace(
+        "handleOpenTemplate:parked",
+        `node=${node.id} already launched — answering in parallel, no relaunch`
+      );
+      // The template runs INDEPENDENTLY: the customer is filling the form in the
+      // browser while the chat stays live. Answer their message here without
+      // touching currentNode (so the flow stays parked and the eventual
+      // template.* callback still resumes correctly). Never re-send the link.
+      await this.answerWithAiAssistant(message, userId);
+      return;
+    }
+    // --------------------------------------------------------------------
+
     try {
       if (!payload.templateId) {
         this.logger.error("OPEN_TEMPLATE node missing templateId");
@@ -1760,18 +1985,36 @@ if (!webhookId) {
         attributes
       );
 
-      const { session, launchUrl } = await this.templateSessionService.create({
-        templateId: payload.templateId,
-        templateVersion: template.currentVersion,
-        botId,
-        nodeId: node.id,
-        visitorId: userId,
-        conversationId,
-        platform,
-        variables,
-        hostedUrl,
-        expiryMinutes: payload.sessionExpiryMinutes,
-      });
+      const { session, launchUrl, reused } =
+        await this.templateSessionService.create({
+          templateId: payload.templateId,
+          templateVersion: template.currentVersion,
+          botId,
+          nodeId: node.id,
+          visitorId: userId,
+          conversationId,
+          platform,
+          variables,
+          hostedUrl,
+          expiryMinutes: payload.sessionExpiryMinutes,
+        });
+
+      // Durable guard tripped (in-memory node state was lost to eviction/
+      // restart, but the session is still live): re-assert the mark and do NOT
+      // re-send — the customer already has this link.
+      if (reused) {
+        this.socketStateService.setNodeState(
+          userId,
+          node.id,
+          BotNodeStateEnum.VISITED
+        );
+        this.trace(
+          "handleOpenTemplate:reused",
+          `session ${session.id} still live — not re-sending the link`
+        );
+        return;
+      }
+
       launchedSessionId = session.id;
 
       // Persist which session this workflow is now waiting on.
@@ -1849,7 +2092,16 @@ if (!webhookId) {
           callbackEvent: payload.callbackEvent,
         });
       }
+
       // PAUSE: stay on this node; do not advance until a callback arrives.
+      // Mark VISITED only now that the link actually reached the customer — a
+      // delivery failure above routes to FAILURE and must stay re-launchable.
+      // This is the guard the re-entry check at the top reads.
+      this.socketStateService.setNodeState(
+        userId,
+        node.id,
+        BotNodeStateEnum.VISITED
+      );
     } catch (error) {
       this.logger.error(`Error in handleOpenTemplate: ${error.message}`);
       // If a session was already created before delivery threw, mark it failed
@@ -1860,6 +2112,17 @@ if (!webhookId) {
           .catch(() => undefined);
       }
       if (failureNode) return this.handleNode(failureNode, message, userId);
+    }
+  }
+
+  /** Drop the "waiting on this template session" marker once it has resolved. */
+  private clearPendingTemplateSession(userId: string | any) {
+    const metadata = {
+      ...(this.socketStateService.getUserData(userId)?.metadata || {}),
+    };
+    if (metadata.pendingTemplateSessionId) {
+      delete metadata.pendingTemplateSessionId;
+      this.socketStateService.updateUserData(userId, { metadata });
     }
   }
 
@@ -1893,8 +2156,31 @@ if (!webhookId) {
       await this.rehydrateForResume(session);
     }
 
+    // Resolve-once guard. A conversation that ran before the launch guard
+    // landed can hold several orphan sessions, and the submit/sweep boundary can
+    // fire two callbacks; without this, each would route the flow again (e.g.
+    // the FAILURE branch several times over — the "repeated reminder" symptom).
+    // Only act on the session this conversation is actually waiting on. A
+    // rehydrated state (post-restart) has no pending id, so a genuine resume
+    // still passes.
+    const pendingSessionId =
+      this.socketStateService.getUserData(userId)?.metadata
+        ?.pendingTemplateSessionId;
+    if (pendingSessionId && String(pendingSessionId) !== String(sessionId)) {
+      this.logger.debug(
+        `Ignoring ${outcome} resume for stale template session ${sessionId}; ` +
+          `conversation is waiting on ${pendingSessionId}`
+      );
+      return;
+    }
+
     const node = await this.botsService.getBotNode(session.nodeId);
     if (!node) return;
+
+    // The wait is over. Clear the pending marker and release the node's VISITED
+    // mark is intentionally NOT reset here (see handleOpenTemplate) so a graph
+    // cycle cannot relaunch the template; a real restart re-arms it.
+    this.clearPendingTemplateSession(userId);
     const nextNodes = await Promise.all(
       node.next.map((id: string) => this.botsService.getBotNode(id))
     );
@@ -1908,19 +2194,103 @@ if (!webhookId) {
         attributes: { ...existing, ...mergeData },
       });
     }
-    if (!target) {
-      // Nothing wired after the template. On a successful submit still confirm
-      // in the chat, otherwise the customer (and anyone testing the flow) gets
-      // silence after completing the form.
-      if (outcome === "SUCCESS") {
+
+    // On a successful submit, confirm the action in chat with an AI-written
+    // recap of what the customer entered (deterministic fallback if the AI
+    // service is slow or down). Sent BEFORE routing so the customer sees, in
+    // order: the recap of their submission, then the SUCCESS node's own
+    // thank-you (handleSuccessNode delivers node.responses), then whatever the
+    // branch continues into. Independent of whether a branch is wired, so the
+    // customer is never left with silence after completing the form.
+    if (outcome === "SUCCESS" && mergeData) {
+      const summary = await this.buildSubmissionSummary(session, mergeData);
+      if (summary) {
         await this.sendBotMessage(userId, [
-          { type: ChatTypeEnum.TEXT, value: this.summariseSubmission(mergeData) },
+          { type: ChatTypeEnum.TEXT, value: summary },
         ]);
       }
-      return;
     }
+
+    if (!target) return;
     this.socketStateService.updateUserData(userId, { currentNode: target });
     return this.handleNode(target, "", userId);
+  }
+
+  /**
+   * A friendly, one-line recap of a template submission for the chat.
+   *
+   * Prefers an AI-written confirmation (the /generate/summary endpoint, which
+   * bypasses RAG); on any failure or empty result it falls back to the
+   * deterministic key/value recap so the customer always gets confirmation.
+   * Never throws — a summary is a nicety, not a reason to break the resume.
+   */
+  private async buildSubmissionSummary(
+    session: any,
+    data: Record<string, any>
+  ): Promise<string> {
+    try {
+      const answer = await this.summarizeSubmissionViaAI(session, data);
+      if (answer && answer.trim()) return answer.trim();
+    } catch (error) {
+      this.logger.warn(
+        `AI submission summary failed, using deterministic recap: ${error?.message}`
+      );
+    }
+    return this.summariseSubmission(data);
+  }
+
+  /**
+   * Ask the AI service to summarise a submission into a warm confirmation.
+   * Returns the text, or null when the service returns nothing usable. Mirrors
+   * the HTTP conventions of handleAiResponse (correlation id, configured URL +
+   * timeout) but hits the non-RAG /generate/summary endpoint.
+   */
+  private async summarizeSubmissionViaAI(
+    session: any,
+    data: Record<string, any>
+  ): Promise<string | null> {
+    const aiUrl = this.configService.get("ai.url");
+    const timeout = this.configService.get("ai.timeout");
+    if (!aiUrl) return null;
+
+    const userId = session?.visitorId;
+    const companyName =
+      this.socketStateService.getUserData(userId)?.botName || undefined;
+
+    // A human label for what was completed, for a more natural confirmation.
+    let templateName: string | undefined;
+    try {
+      const template: any = await this.templateService.findOne(
+        session?.templateId?.toString?.() || session?.templateId
+      );
+      templateName = template?.name;
+    } catch {
+      // Non-fatal: the summary still works without a template name.
+    }
+
+    const requestId = newRequestId();
+    const body = {
+      data,
+      action: templateName,
+      company_name: companyName,
+      template_name: templateName,
+    };
+
+    banner(this.logger, "[BACKEND -> AI SERVICE] Summarise", {
+      URL: `${aiUrl}/generate/summary`,
+      "Request ID": requestId,
+      Fields: Object.keys(data || {}).length,
+      Template: templateName || "(unknown)",
+    });
+
+    const res = await firstValueFrom(
+      this.httpService.post(`${aiUrl}/generate/summary`, body, {
+        timeout,
+        headers: { "x-request-id": requestId },
+      })
+    );
+    const answer = res?.data?.answer;
+    return typeof answer === "string" ? answer : null;
   }
 
   /**
@@ -1978,6 +2348,47 @@ if (!webhookId) {
       await this.templateSessionService.markValidated(data.sessionId);
     } catch (error) {
       this.logger.error(`Error resuming from template submit: ${error.message}`);
+    }
+  }
+
+  /**
+   * Reconnect a hosted-template submission that came through the
+   * /template/actions/* path (the path every deployed template actually calls)
+   * to the conversation flow.
+   *
+   * That path stores the submission but carries only a conversationId, not the
+   * session id — so we resolve the conversation's live template session here,
+   * then reuse the exact same resume machinery as a first-party submit: SUCCESS
+   * branch, the node's thank-you, and the AI recap of the submitted data.
+   * markValidated closes the session so the timeout sweep can no longer route it
+   * to FAILURE/TIMEOUT after the customer has, in fact, completed the form.
+   */
+  @OnEvent("template.action.submitted", { async: true })
+  async onTemplateActionSubmitted(data: {
+    conversationId?: string;
+    templateId?: string;
+    actionType?: string;
+    data?: Record<string, any>;
+  }) {
+    try {
+      if (!data?.conversationId) return; // no conversation to resume (preview/standalone)
+      const session =
+        await this.templateSessionService.findResumableSessionByConversation(
+          data.conversationId
+        );
+      if (!session) {
+        this.logger.debug(
+          `template.action.submitted for conversation ${data.conversationId} ` +
+            `has no resumable session; stored only (already resolved or not bot-launched)`
+        );
+        return;
+      }
+      await this.routeTemplateResume(session.id, "SUCCESS", data.data || {});
+      await this.templateSessionService.markValidated(session.id);
+    } catch (error) {
+      this.logger.error(
+        `Error resuming from template action submit: ${error.message}`
+      );
     }
   }
 

@@ -25,6 +25,26 @@ import toast from 'react-hot-toast';
 import { addNewSocial, fetchSocialList, updateSocial } from 'src/store/apps/social';
 import WhatsappWebConnect from './WhatsappWebConnect';
 
+/**
+ * Bots that may be newly attached to a messenger.
+ *
+ * A bot is soft-deleted (`status: 'deleted'`) and suspended bots stay in the
+ * collection too, so an unfiltered list offers bots that would never answer a
+ * customer. The bot ALREADY attached to the row being edited is kept regardless of
+ * its status — dropping it would silently blank a required field and rewrite the
+ * messenger's routing to nothing the moment someone edited its name.
+ */
+const selectableBots = (bots: any[], attachedBotId?: string) =>
+  (bots || []).filter(
+    (bot: any) =>
+      bot?.status === 'active' ||
+      // A bot list fetched without a status filter has no `status` field surprises,
+      // but be tolerant of a payload that omits it entirely rather than hiding
+      // every option.
+      bot?.status === undefined ||
+      (!!attachedBotId && (bot?._id || bot?.id) === attachedBotId),
+  );
+
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
 const MenuProps = {
@@ -240,11 +260,17 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
               // )}
               MenuProps={MenuProps}
             >
-              {botList?.map((botItem: any, index: number) => (
-                <MenuItem key={index} value={botItem?._id || botItem?.id}>
-                  {botItem?.name}
-                </MenuItem>
-              ))}
+              {selectableBots(botList, jarcubeBot)?.map(
+                (botItem: any, index: number) => {
+                  const inactive = !!botItem?.status && botItem.status !== 'active';
+                  return (
+                    <MenuItem key={index} value={botItem?._id || botItem?.id}>
+                      {botItem?.name}
+                      {inactive ? ` (${botItem.status})` : ''}
+                    </MenuItem>
+                  );
+                },
+              )}
             </Select>
           </FormControl>
           <FormControl required fullWidth sx={{ mb: 6 }} size="small">

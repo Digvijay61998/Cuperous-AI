@@ -13,9 +13,12 @@ import { MessageHandlerService } from 'src/message-handler/message-handler.servi
 import { SocketStateService } from 'src/socket/socket-state.service';
 import { InboxEventsService } from 'src/inbox/inbox-events.service';
 import {
+  INBOX_CHANNEL_STATUS_EVENT,
   INBOX_MARK_READ_EVENT,
   INBOX_REQUEST_HISTORY_EVENT,
   INBOX_SEND_MESSAGE_EVENT,
+  InboxChannelStatusQuery,
+  InboxChannelStatusResult,
   InboxMarkReadEvent,
   InboxRequestHistoryEvent,
   InboxSendMessageEvent,
@@ -160,6 +163,13 @@ export class WhatsappWebInboundService {
         meta: msg.jid.endsWith('@lid') ? { lid: msg.jid } : undefined,
       });
       const threadId = (thread._id as any).toString();
+
+      // 1b. Give a first-time contact a profile picture. Fire-and-forget: it is a
+      //     round trip to WhatsApp, and no part of storing or answering the message
+      //     may wait on a decoration.
+      void this.ensureThreadAvatar(msg.name, threadId, thread, botId).catch(
+        () => undefined,
+      );
 
       // 2. Visitor + conversation to attach the message to.
       const binding = await this.resolveConversation(thread, msg, botId);
@@ -508,6 +518,40 @@ export class WhatsappWebInboundService {
     }
   }
 
+  /**
+   * Answer the inbox's "is this channel usable, and if not why" question.
+   *
+   * Registered WITHOUT `{ async: true }` for the same load-bearing reason as
+   * `onInboxSendMessage` above: that option makes eventemitter2 wrap the listener
+   * in a `setImmediate` shim whose return value is a Timeout rather than the
+   * handler's result, so `emitAsync` would resolve to `[Timeout]` and the inbox
+   * would see no answer at all.
+   *
+   * Returns `null` for another channel's query so the inbox can tell "no hub owns
+   * this channel" apart from "the channel is broken".
+   */
+  @OnEvent(INBOX_CHANNEL_STATUS_EVENT)
+  async onInboxChannelStatus(
+    query: InboxChannelStatusQuery,
+  ): Promise<InboxChannelStatusResult | null> {
+    if (query?.channel !== WA_WEB_CHANNEL) return null;
+    try {
+      return await this.whatsappWebService.getChannelStatus(query.botIds);
+    } catch (error) {
+      this.logger.warn(
+        `Channel status lookup failed for ${WA_WEB_CHANNEL}: ${error?.message}`,
+      );
+      // An honest "we do not know" rather than a fabricated healthy state — the
+      // dashboard must never be told a dead connection is fine.
+      return {
+        channel: WA_WEB_CHANNEL,
+        state: 'unknown',
+        connected: false,
+        accounts: [],
+      };
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Chat list sync
   // ---------------------------------------------------------------------------
@@ -597,6 +641,12 @@ export class WhatsappWebInboundService {
         }
       }
 
+      // Decorate the rows with profile pictures once the threads exist. Deliberately
+      // NOT awaited: it makes network round trips per contact, and the chat list is
+      // already usable without pictures — blocking the sync on them would delay the
+      // inbox appearing at all.
+      void this.enrichAvatars(event.name).catch(() => undefined);
+
       if (created > 0) {
         this.logger.log(
           `Chat sync for "${event.name}": ${created} new thread(s) from ${chats.length} chat(s)`,
@@ -616,6 +666,169 @@ export class WhatsappWebInboundService {
         `Chat sync failed for ${event?.name}: ${error?.message}`,
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contact enrichment (profile pictures)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * How long a cached avatar is trusted.
+   *
+   * WhatsApp serves profile pictures from a signed URL that eventually stops
+   * resolving, so this is an expiry window, not a "has the photo changed" poll. A
+   * day is comfortably inside the URL's life while keeping the refresh cost to one
+   * lookup per contact per day.
+   */
+  private static readonly AVATAR_TTL_MS = 24 * 60 * 60 * 1000;
+
+  /** Contacts resolved per sync pass. Bounds the burst against WhatsApp. */
+  private static readonly AVATAR_BATCH_LIMIT = 120;
+
+  /**
+   * Concurrent lookups.
+   *
+   * Small on purpose. Every one of these is a query to WhatsApp on an unofficial
+   * session, and a wide fan-out of contact lookups is precisely the pattern that
+   * gets a number banned. Three keeps a full batch to a few seconds while looking
+   * like a client browsing its own chat list.
+   */
+  private static readonly AVATAR_CONCURRENCY = 3;
+
+  /** Sessions with an enrichment pass in flight, so passes cannot pile up. */
+  private readonly avatarPassInFlight = new Set<string>();
+
+  /**
+   * Threads with a single-avatar lookup in flight.
+   *
+   * The per-thread inbound chain does not cover this: `ensureThreadAvatar` is
+   * deliberately fire-and-forget, so it is NOT part of the chain, and a history
+   * batch delivering twenty messages for one contact would start twenty identical
+   * lookups before the first one's write landed.
+   */
+  private readonly avatarLookupInFlight = new Set<string>();
+
+  /**
+   * Fill in missing/stale contact avatars for one session.
+   *
+   * Guarded against overlap: chat-sync events arrive in bursts (connect, then every
+   * rename and archive change), and without the guard each one would start its own
+   * pass over the same rows and multiply the traffic to WhatsApp by the number of
+   * events.
+   */
+  private async enrichAvatars(sessionName: string): Promise<void> {
+    if (this.avatarPassInFlight.has(sessionName)) return;
+    if (this.engine.getStatus(sessionName) !== WhatsappWebSessionStatus.READY) {
+      return;
+    }
+
+    this.avatarPassInFlight.add(sessionName);
+    try {
+      const staleBefore = new Date(
+        Date.now() - WhatsappWebInboundService.AVATAR_TTL_MS,
+      );
+      const threads = await this.channelThreadService.findThreadsNeedingAvatar({
+        channel: WA_WEB_CHANNEL,
+        sessionName,
+        staleBefore,
+        limit: WhatsappWebInboundService.AVATAR_BATCH_LIMIT,
+      });
+      if (!threads.length) return;
+
+      // A shared cursor consumed by a few workers, rather than chunking into fixed
+      // slices: one slow contact (WhatsApp simply never answers for some) would
+      // otherwise stall its whole chunk while other workers sat idle.
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < threads.length) {
+          const thread = threads[cursor++];
+          // The session can drop mid-pass; there is no point queueing lookups that
+          // will all fail.
+          if (
+            this.engine.getStatus(sessionName) !==
+            WhatsappWebSessionStatus.READY
+          ) {
+            return;
+          }
+          const url = await this.engine
+            .getProfilePictureUrl(sessionName, thread.chatId)
+            .catch(() => null);
+          await this.channelThreadService
+            .setContactAvatar((thread._id as any).toString(), url)
+            .catch(() => undefined);
+        }
+      };
+
+      await Promise.all(
+        Array.from(
+          {
+            length: Math.min(
+              WhatsappWebInboundService.AVATAR_CONCURRENCY,
+              threads.length,
+            ),
+          },
+          () => worker(),
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Avatar enrichment failed for "${sessionName}": ${error?.message}`,
+      );
+    } finally {
+      this.avatarPassInFlight.delete(sessionName);
+    }
+  }
+
+  /**
+   * Resolve one thread's avatar if we have never tried.
+   *
+   * Runs on the inbound path so a contact who writes to us for the first time gets
+   * a picture immediately instead of waiting for the next chat-sync burst. Only ever
+   * for a thread with NO recorded attempt — refreshing a stale one is the batch
+   * pass's job, and doing it here would put a WhatsApp round trip on the critical
+   * path of every message.
+   */
+  private async ensureThreadAvatar(
+    sessionName: string,
+    threadId: string,
+    thread: any,
+    botId?: string,
+  ): Promise<void> {
+    if (thread?.avatarUpdatedAt) return;
+    if (this.engine.getStatus(sessionName) !== WhatsappWebSessionStatus.READY) {
+      return;
+    }
+    if (this.avatarLookupInFlight.has(threadId)) return;
+
+    this.avatarLookupInFlight.add(threadId);
+    let url: string | null = null;
+    try {
+      url = await this.engine
+        .getProfilePictureUrl(sessionName, thread.chatId)
+        .catch(() => null);
+      await this.channelThreadService
+        .setContactAvatar(threadId, url)
+        .catch(() => undefined);
+    } finally {
+      this.avatarLookupInFlight.delete(threadId);
+    }
+
+    // Only worth telling the dashboard when there is actually a picture to show.
+    // This runs after the message was already announced (it is off the critical
+    // path on purpose), so without a nudge the avatar would not appear until the
+    // agent's next refresh.
+    if (!url) return;
+    const fresh = await this.channelThreadService
+      .findByIdPopulated(threadId)
+      .catch(() => null);
+    if (!fresh) return;
+    await this.inboxEventsService
+      .publishThreadUpdated({
+        botId,
+        channel: WA_WEB_CHANNEL,
+        thread: toThreadView(fresh),
+      })
+      .catch(() => undefined);
   }
 
   // ---------------------------------------------------------------------------

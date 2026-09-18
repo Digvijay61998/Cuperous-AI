@@ -43,6 +43,34 @@ export interface InboxChannel {
   unread: number;
 }
 
+/** Mirrors InboxChannelState in the backend's inbox.constants.ts. */
+export type InboxChannelState =
+  | 'connected'
+  | 'connecting'
+  | 'awaiting_scan'
+  | 'removed'
+  | 'not_connected'
+  | 'disabled'
+  | 'session_expired'
+  | 'reconnecting'
+  | 'failed'
+  | 'unknown';
+
+export interface InboxChannelStatusAccount {
+  sessionName: string;
+  label?: string;
+  state: InboxChannelState;
+  phone?: string;
+  detail?: string;
+}
+
+export interface InboxChannelStatus {
+  channel: string;
+  state: InboxChannelState;
+  connected: boolean;
+  accounts: InboxChannelStatusAccount[];
+}
+
 /** The tab id of the existing widget/agent chat box. Not a real channel. */
 export const LIVE_CHAT_TAB = 'live';
 
@@ -63,6 +91,24 @@ export const getInboxChannels = createAsyncThunk(
       reportError(error, 'Inbox channels API');
       throw error;
     }
+  },
+);
+
+/**
+ * Ask whether a channel can actually send right now.
+ *
+ * Silent on failure, unlike the other thunks here: this is a background health
+ * probe that also runs on a poll, so surfacing a toast per failed attempt would
+ * bury the agent in noise about the thing that is already being reported to them
+ * as a banner. A failed probe simply leaves the previous answer in place.
+ */
+export const getInboxChannelStatus = createAsyncThunk(
+  'inbox/getChannelStatus',
+  async (channel: string) => {
+    const response = await Axios.get(
+      `/inbox/channels/${encodeURIComponent(channel)}/status`,
+    );
+    return { channel, status: response.data as InboxChannelStatus };
   },
 );
 
@@ -140,7 +186,7 @@ export const sendInboxMessage = createAsyncThunk(
       fileName?: string;
       quotedMessageId?: string;
     },
-    { rejectWithValue },
+    { rejectWithValue, dispatch, getState },
   ) => {
     try {
       const response = await Axios.post(
@@ -172,6 +218,18 @@ export const sendInboxMessage = createAsyncThunk(
               error?.message ||
               'Message could not be sent',
       );
+      // A failed reply is the strongest possible signal the channel is down —
+      // stronger than the poll, which only runs once the banner is ALREADY
+      // showing. Re-probe the active channel now so the connection banner
+      // appears immediately instead of after the next 20s poll (or not at all,
+      // if the drop happened while the agent was sitting on a healthy tab).
+      // Best-effort: getInboxChannelStatus is silent on failure by design.
+      if (reason === 'session_not_connected') {
+        const channel = (getState() as any)?.inbox?.activeTab;
+        if (channel && channel !== LIVE_CHAT_TAB) {
+          dispatch(getInboxChannelStatus(channel));
+        }
+      }
       return rejectWithValue({
         threadId: params.threadId,
         correlationId: params.correlationId,
@@ -284,6 +342,8 @@ export const requestInboxHistory = createAsyncThunk(
 
 interface InboxState {
   channels: InboxChannel[];
+  /** Per-channel connection health, keyed by channel. Absent until first probed. */
+  channelStatus: Record<string, InboxChannelStatus>;
   activeTab: string;
   threadsByChannel: Record<string, InboxThread[]>;
   threadCursorByChannel: Record<string, string | null>;
@@ -298,6 +358,7 @@ interface InboxState {
 
 const initialState: InboxState = {
   channels: [],
+  channelStatus: {},
   // The existing chat box stays the default view, so nothing changes for an
   // agent who does not use channels.
   activeTab: LIVE_CHAT_TAB,
@@ -507,6 +568,15 @@ export const inboxSlice = createSlice({
     builder.addCase(getInboxChannels.rejected, (state) => {
       state.loadingChannels = false;
     });
+
+    builder.addCase(getInboxChannelStatus.fulfilled, (state, action) => {
+      const { channel, status } = action.payload || ({} as any);
+      if (!channel || !status) return;
+      state.channelStatus[channel] = status;
+    });
+    // No `rejected` case on purpose: a failed probe must leave the last known
+    // answer standing rather than blanking the banner, because "the request
+    // failed" is not evidence that the channel recovered.
 
     builder.addCase(getInboxThreads.pending, (state) => {
       state.loadingThreads = true;

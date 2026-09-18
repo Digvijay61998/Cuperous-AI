@@ -4,6 +4,7 @@ import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 
 // ** Components
+import ChannelStatusBanner from './ChannelStatusBanner';
 import ThreadContent from './ThreadContent';
 import ThreadList from './ThreadList';
 
@@ -25,9 +26,16 @@ const ChannelInbox = ({ channel }: Props) => {
   const sidebarWidth = smAbove ? 370 : 300;
 
   return (
-    <Box sx={{ display: 'flex', width: '100%' }}>
-      <ThreadList channel={channel} sidebarWidth={sidebarWidth} />
-      <ThreadContent channel={channel} />
+    <Box sx={{ width: '100%' }}>
+      {/* Above the panel, not inside the thread pane: the connection is broken for
+          the whole channel, not for the thread that happens to be selected, and an
+          agent must see it before they pick a conversation and start typing. */}
+      <ChannelStatusBanner channel={channel} />
+
+      <Box sx={{ display: 'flex', width: '100%' }}>
+        <ThreadList channel={channel} sidebarWidth={sidebarWidth} />
+        <ThreadContent channel={channel} />
+      </Box>
     </Box>
   );
 };

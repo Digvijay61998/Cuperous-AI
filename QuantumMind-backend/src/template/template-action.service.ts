@@ -1,4 +1,5 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { isValidObjectId, Model } from 'mongoose';
 import { UploadService } from 'src/upload/upload.service';
 import {
@@ -39,6 +40,7 @@ export class TemplateActionService {
     @Inject(TEMPLATE_PROVIDER)
     private readonly templateModel: Model<TemplateDocument>,
     private readonly uploadService: UploadService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /** Splits a raw action body into the known context fields + everything else (the payload). */
@@ -133,6 +135,26 @@ export class TemplateActionService {
           }
         }
         throw error;
+      }
+
+      // Reconnect the submission to the chat flow. The launch and submit paths
+      // are separate subsystems (template-session vs template-action); this
+      // event is the bridge. A listener (message-handler) resolves the template
+      // session for this conversation and resumes the workflow — SUCCESS branch,
+      // the node's thank-you, and the AI recap of what was submitted. Emitted
+      // ONLY when the submission carries a conversationId (bot-launched flows);
+      // a standalone/preview submission with no conversation is just stored.
+      if (context.conversationId) {
+        this.eventEmitter.emit('template.action.submitted', {
+          conversationId: context.conversationId,
+          visitorId: context.visitorId,
+          botId: context.botId,
+          platform: context.platform,
+          templateId: context.templateId,
+          actionType,
+          submissionId: submission.id,
+          data: payload,
+        });
       }
 
       return {

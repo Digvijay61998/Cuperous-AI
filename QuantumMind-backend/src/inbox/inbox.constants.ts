@@ -96,3 +96,93 @@ export interface InboxRequestHistoryEvent {
   };
   count: number;
 }
+
+/**
+ * inbox -> channel hub: "is this channel actually usable right now, and if not,
+ * why?"
+ *
+ * Request/response like {@link INBOX_SEND_MESSAGE_EVENT}, and for the same
+ * reason: the answer is shown to a human who has to act on it, so a hub that
+ * cannot answer must be distinguishable from a hub that answers "broken".
+ * Listeners return `null` for a channel they do not own.
+ *
+ * WHY THE INBOX CANNOT WORK THIS OUT ITSELF
+ * ----------------------------------------
+ * The channel tab list is derived from ChannelThread rows, which are permanent
+ * — they outlive the messenger that created them. So a deleted, stopped or
+ * logged-out WhatsApp connection leaves a fully-populated tab behind, and the
+ * threads in it look completely normal right up until a reply fails. Only the
+ * owning hub knows the difference, and it is the only thing that can name it.
+ */
+export const INBOX_CHANNEL_STATUS_EVENT = 'inbox.channel.status';
+
+/** Payload for {@link INBOX_CHANNEL_STATUS_EVENT}. */
+export interface InboxChannelStatusQuery {
+  channel: string;
+  /**
+   * The caller's permission scope as bot ids, straight from
+   * InboxService.scopeFilter. `null`/`undefined` is unscoped (admin); an EMPTY
+   * ARRAY means "this caller may see nothing" and must not widen to everything.
+   */
+  botIds?: string[] | null;
+}
+
+/**
+ * Why a channel is or is not usable — a closed set, deliberately.
+ *
+ * These are the states an OPERATOR can act on, not the engine's internal
+ * lifecycle. Several engine statuses collapse into one entry here (both
+ * `initializing` and `authenticating` are just "connecting" to a human), and two
+ * states that share the engine status `disconnected` are split apart, because
+ * "you stopped this" and "WhatsApp logged you out" need completely different
+ * actions from the person reading the banner.
+ */
+export type InboxChannelState =
+  /** A live connection exists. Nothing to show. */
+  | 'connected'
+  /** Handshaking. Transient, resolves on its own. */
+  | 'connecting'
+  /** Waiting for someone to scan the QR / enter the pairing code. */
+  | 'awaiting_scan'
+  /** The messenger row and its session are gone — this tab is history only. */
+  | 'removed'
+  /** Created but never linked to a number. */
+  | 'not_connected'
+  /** Deliberately stopped by an operator. Restartable, creds intact. */
+  | 'disabled'
+  /** WhatsApp unlinked the device: credentials are dead, a fresh scan is needed. */
+  | 'session_expired'
+  /** Dropped unexpectedly; the engine is retrying on its own backoff. */
+  | 'reconnecting'
+  /** Reconnect gave up, or the engine reported a hard failure. */
+  | 'failed'
+  /** No hub answered for this channel — we genuinely do not know. */
+  | 'unknown';
+
+/** One messenger/account behind a channel, and its own state. */
+export interface InboxChannelStatusAccount {
+  /** The hub's own identifier for the account (a WhatsApp Web session name). */
+  sessionName: string;
+  /** Operator-facing label, usually the messenger name. */
+  label?: string;
+  state: InboxChannelState;
+  phone?: string;
+  /** Populated for `failed`, when the engine recorded a reason. */
+  detail?: string;
+}
+
+/**
+ * The answer the dashboard renders as a banner.
+ *
+ * `state` is the AGGREGATE: a channel with one working account and one broken one
+ * is `connected`, because messages still flow and a banner would be a false
+ * alarm. `accounts` carries the per-account detail for a channel with several
+ * numbers.
+ */
+export interface InboxChannelStatusResult {
+  channel: string;
+  state: InboxChannelState;
+  /** True only when at least one account can send right now. */
+  connected: boolean;
+  accounts: InboxChannelStatusAccount[];
+}

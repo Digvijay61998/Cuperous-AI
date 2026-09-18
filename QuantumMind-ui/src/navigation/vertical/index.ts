@@ -88,6 +88,29 @@ const navigation = (): VerticalNavItemsType => {
       path: '/templates/list',
     },
     {
+      title: 'CRM',
+      icon: 'bx:group',
+      path: '',
+      children: [
+        {
+          title: 'Overview',
+          path: '/crm',
+        },
+        {
+          title: 'Contacts',
+          path: '/crm/contacts',
+        },
+        {
+          title: 'Companies',
+          path: '/crm/companies',
+        },
+        {
+          title: 'Deals',
+          path: '/crm/deals',
+        },
+      ],
+    },
+    {
       title: 'Marketing',
       icon: 'mdi:marketplace',
       path: '',

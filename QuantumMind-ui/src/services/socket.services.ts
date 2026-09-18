@@ -88,6 +88,10 @@ export interface InboxThread {
   chatId: string;
   phone?: string;
   name?: string;
+  /** True when `name` is a real display name rather than a formatted phone number. */
+  hasContactName?: boolean;
+  /** `phone` formatted for display, e.g. `+91 82083 23163`. */
+  phoneLabel?: string;
   avatarUrl?: string;
   unreadCount: number;
   botEnabled: boolean;

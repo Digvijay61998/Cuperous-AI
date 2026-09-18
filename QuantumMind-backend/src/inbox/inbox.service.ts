@@ -24,9 +24,12 @@ import { BotControlDto } from './dto/bot-control.dto';
 import { SendInboxMessageDto } from './dto/send-message.dto';
 import { InboxEventsService } from './inbox-events.service';
 import {
+  INBOX_CHANNEL_STATUS_EVENT,
   INBOX_MARK_READ_EVENT,
   INBOX_REQUEST_HISTORY_EVENT,
   INBOX_SEND_MESSAGE_EVENT,
+  InboxChannelStatusQuery,
+  InboxChannelStatusResult,
   InboxMarkReadEvent,
   InboxRequestHistoryEvent,
   InboxSendMessageEvent,
@@ -138,6 +141,55 @@ export class InboxService {
       botIds,
     );
     return { channels };
+  }
+
+  /**
+   * Whether one channel can actually send right now, and why not if it cannot.
+   *
+   * This exists because the tab list lies by omission. Channels are derived from
+   * ChannelThread rows, which are permanent by design — they outlive the messenger
+   * that created them. So deleting, stopping or losing a WhatsApp connection leaves
+   * a fully-populated tab whose threads look entirely normal, and the first an
+   * agent hears of it is a failed reply. The dashboard renders this as a banner so
+   * the failure is visible before they type.
+   *
+   * Asks the owning hub rather than reading a column: the difference between
+   * "stopped", "logged out" and "reconnecting" only exists in the engine's live
+   * runtime, not in the database (see WhatsappWebService.getChannelStatus).
+   */
+  async getChannelStatus(
+    user: JwtPayload,
+    channel: string,
+  ): Promise<InboxChannelStatusResult> {
+    const botIds = await this.scopeFilter(user);
+    const query: InboxChannelStatusQuery = { channel, botIds };
+
+    let settled: any[] = [];
+    try {
+      settled = await this.eventEmitter.emitAsync(
+        INBOX_CHANNEL_STATUS_EVENT,
+        query,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Channel status dispatch failed for "${channel}": ${error?.message}`,
+      );
+    }
+
+    // Only a value that actually looks like a status counts. A listener registered
+    // with the wrong options resolves to something unrelated (see the note on
+    // `onInboxSendMessage`), and treating that as an answer would report a broken
+    // channel as healthy.
+    const result = (settled || []).find(
+      (r) => r && typeof r === 'object' && 'state' in r && 'connected' in r,
+    ) as InboxChannelStatusResult | undefined;
+
+    // No hub owns this channel — `unknown`, not a fabricated `connected`. The
+    // client renders nothing for `unknown`, which is the right outcome for a
+    // channel whose health we cannot speak to (the widget/live chat, say).
+    return (
+      result ?? { channel, state: 'unknown', connected: false, accounts: [] }
+    );
   }
 
   async listThreads(

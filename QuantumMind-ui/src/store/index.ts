@@ -8,6 +8,7 @@ import flow from 'src/store/apps/bot-flow';
 import bots from 'src/store/apps/bots';
 import chat from 'src/store/apps/chat';
 import conversations from 'src/store/apps/conversation';
+import crm from 'src/store/apps/crm';
 import dashboard from 'src/store/apps/dashboard';
 import inbox from 'src/store/apps/inbox';
 import offer from 'src/store/apps/offer';
@@ -70,6 +71,7 @@ export const store = configureStore({
     scraper,
     messaging,
     inbox,
+    crm,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

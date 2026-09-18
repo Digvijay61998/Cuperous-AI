@@ -8,10 +8,15 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { Model } from 'mongoose';
+import {
+  InboxChannelState,
+  InboxChannelStatusAccount,
+  InboxChannelStatusResult,
+} from 'src/inbox/inbox.constants';
 import { SocialService } from 'src/social/social.service';
 import { SocialStatusEnum } from 'src/social/enums/social-status.enum';
 import { BaileysEngineService } from './engine/baileys-engine.service';
-import { WHATSAPP_WEB_SESSION_PROVIDER } from './constants';
+import { WA_WEB_CHANNEL, WHATSAPP_WEB_SESSION_PROVIDER } from './constants';
 import { WhatsappWebSessionDocument } from './entities/whatsapp-web-session.entity';
 import { WhatsappWebSessionStatus } from './enums/session-status.enum';
 import { CreateWhatsappWebSessionDto } from './dto/create-session.dto';
@@ -201,6 +206,152 @@ export class WhatsappWebService implements OnApplicationBootstrap {
       phoneNumber,
     );
     return { pairingCode, status: this.engine.getStatus(session.name) };
+  }
+
+  /**
+   * Why the WhatsApp Web channel is (or is not) usable, for the inbox banner.
+   *
+   * WHY THIS IS DERIVED RATHER THAN STORED
+   * --------------------------------------
+   * The persisted `status` column cannot answer the question on its own. Three
+   * completely different operator situations all land on `disconnected`:
+   *
+   *   - an operator pressed Stop            -> restartable, creds intact
+   *   - WhatsApp unlinked the device        -> creds purged, needs a fresh QR
+   *   - the socket dropped on its own       -> the engine is already retrying
+   *
+   * Telling them apart needs the live engine runtime (is a retry queued?) and the
+   * on-disk auth state (do we still have credentials?), neither of which is in the
+   * DB. Adding `expired`/`disabled` to the status enum would not help: nothing
+   * writes them, because the engine never learns "the operator considers this
+   * disabled" — it only ever sees a closed socket.
+   *
+   * `botIds` is the caller's permission scope; an EMPTY array means "may see
+   * nothing" and must yield no accounts rather than every tenant's.
+   */
+  async getChannelStatus(
+    botIds?: string[] | null,
+  ): Promise<InboxChannelStatusResult> {
+    const filter: Record<string, any> = {};
+    if (botIds !== undefined && botIds !== null) {
+      filter.jarcubeBot = { $in: botIds };
+    }
+
+    const sessions = await this.sessionModel.find(filter).sort({ createdAt: 1 });
+    const accounts = sessions.map((s) => this.deriveAccountState(s));
+
+    // A channel with two numbers, one working, is CONNECTED: messages still flow,
+    // and a banner would be a false alarm an agent learns to ignore. The banner is
+    // for the case where nothing can send.
+    const connected = accounts.some((a) => a.state === 'connected');
+
+    return {
+      channel: WA_WEB_CHANNEL,
+      connected,
+      // With nothing connected, report the most actionable state rather than the
+      // first one: an operator with a stopped number and an expired one needs to be
+      // told about the expired one, because pressing Start will not fix it.
+      state: connected
+        ? 'connected'
+        : this.mostActionableState(accounts.map((a) => a.state)),
+      accounts,
+    };
+  }
+
+  /** One session's operator-facing state, from the row + live engine facts. */
+  private deriveAccountState(
+    session: WhatsappWebSessionDocument,
+  ): InboxChannelStatusAccount {
+    const runtime = this.engine.getRuntimeInfo(session.name);
+    const base = {
+      sessionName: session.name,
+      label: session.name,
+      phone: session.phone || undefined,
+    };
+
+    // The engine's live view wins over the stored column while the process holds
+    // the session: the row is only as fresh as the last status event it persisted,
+    // and a status event can be lost to a crash mid-write.
+    const status = runtime.known ? runtime.status : session.status;
+
+    switch (status) {
+      case WhatsappWebSessionStatus.READY:
+        // Trust the engine, not the row: a row left at `ready` by a hard kill
+        // (no clean shutdown, so no `disconnected` event was ever persisted) would
+        // otherwise report a healthy connection that does not exist.
+        if (runtime.active) return { ...base, state: 'connected' };
+        break;
+
+      case WhatsappWebSessionStatus.QR_READY:
+        return { ...base, state: 'awaiting_scan' };
+
+      case WhatsappWebSessionStatus.INITIALIZING:
+      case WhatsappWebSessionStatus.AUTHENTICATING:
+        return { ...base, state: 'connecting' };
+
+      case WhatsappWebSessionStatus.FAILED:
+        return {
+          ...base,
+          state: 'failed',
+          detail: session.lastError || undefined,
+        };
+
+      case WhatsappWebSessionStatus.CREATED:
+        // Never linked to a number at all — distinct from a link that has lapsed.
+        return { ...base, state: 'not_connected' };
+    }
+
+    // Everything below is the `disconnected` family, plus a `ready` row whose
+    // engine is gone.
+    //
+    // No credentials on disk is decisive and checked FIRST: logout/unlink purges
+    // them, so there is nothing left to restart and only a new scan will do. This
+    // also correctly catches a session whose auth directory was wiped out of band.
+    if (!runtime.hasCredentials) {
+      return {
+        ...base,
+        // A session that never had a phone was never linked, so "expired" would be
+        // a lie; it is simply not set up yet.
+        state: session.phone ? 'session_expired' : 'not_connected',
+      };
+    }
+
+    // A retry is queued: the engine expects to come back on its own, so the
+    // operator should wait rather than touch anything.
+    if (runtime.reconnectPending) return { ...base, state: 'reconnecting' };
+
+    // Creds are intact and nothing is retrying. Either an operator stopped it, or
+    // the process restarted and has not started it yet — both are fixed by the
+    // same action (Start), which is what `disabled` tells the operator to do.
+    return { ...base, state: 'disabled' };
+  }
+
+  /**
+   * Pick the state worth putting in front of the operator.
+   *
+   * Ordered by how much it needs a human: something that will never recover on its
+   * own outranks something that is already recovering. Without this the banner
+   * would show whichever session happened to be created first, which for an
+   * operator with several numbers is arbitrary.
+   */
+  private mostActionableState(
+    states: InboxChannelState[],
+  ): InboxChannelState {
+    if (!states.length) return 'removed';
+    const priority: InboxChannelState[] = [
+      'session_expired',
+      'failed',
+      'awaiting_scan',
+      'disabled',
+      'not_connected',
+      'reconnecting',
+      'connecting',
+      'removed',
+    ];
+    for (const candidate of priority) {
+      if (states.includes(candidate)) return candidate;
+    }
+    return 'unknown';
   }
 
   /**

@@ -25,6 +25,11 @@ export class TemplateLaunchService {
     token: string,
     templateId: string,
     botId?: string,
+    correlation?: {
+      conversationId?: string;
+      visitorId?: string;
+      platform?: string;
+    },
   ): string {
     if (!hostedUrl) return '';
     const sep = hostedUrl.includes('?') ? '&' : '?';
@@ -36,6 +41,20 @@ export class TemplateLaunchService {
     // bid lets the template load this customer's config overrides rather than
     // the shared catalog defaults.
     if (botId) url += `&bid=${encodeURIComponent(botId)}`;
+
+    // Conversation correlation the template SDK reads from the URL
+    // (getContext: cid/vid/src). The SDK echoes these back on every action
+    // submission (createAppointment etc.), which is what lets the backend tie a
+    // submission to the conversation that launched it and resume the flow. The
+    // session id (sid) is the robust key, but the currently deployed SDK does
+    // not read it — so we ALSO pass what it does read, and no template redeploy
+    // is needed. When the SDK is updated to send sid, this becomes belt-and-braces.
+    if (correlation?.conversationId)
+      url += `&cid=${encodeURIComponent(correlation.conversationId)}`;
+    if (correlation?.visitorId)
+      url += `&vid=${encodeURIComponent(correlation.visitorId)}`;
+    if (correlation?.platform)
+      url += `&src=${encodeURIComponent(correlation.platform)}`;
     return url;
   }
 }

@@ -86,3 +86,37 @@ class QueryResponse(BaseModel):
     tokens_used: int = 0
     provider: str
     model: str
+
+
+# ---------------------------------------------------------------------------
+# Generate (free-form, non-RAG)
+# ---------------------------------------------------------------------------
+class SummarizeRequest(BaseModel):
+    """Summarise a completed template submission into a friendly chat message.
+
+    Deliberately NOT routed through /query/ask: that path is strictly RAG and
+    returns confident=false when a prompt has no matching knowledge-base
+    context, so it can never summarise arbitrary form data. This calls the LLM
+    provider directly with the submitted fields.
+    """
+
+    data: dict = Field(
+        ..., description="The submitted form fields (key -> value) to summarise"
+    )
+    action: Optional[str] = Field(
+        None,
+        description="What the customer did, e.g. 'appointment booking', 'order'",
+    )
+    company_name: Optional[str] = Field(
+        None, description="Used to personalize the confirmation"
+    )
+    template_name: Optional[str] = Field(
+        None, description="Human name of the template/form, for context"
+    )
+
+
+class SummarizeResponse(BaseModel):
+    answer: str
+    tokens_used: int = 0
+    provider: str
+    model: str
