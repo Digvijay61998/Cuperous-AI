@@ -31,6 +31,7 @@ import { Toaster } from 'react-hot-toast';
 import AclGuard from 'src/@core/components/auth/AclGuard';
 import AuthGuard from 'src/@core/components/auth/AuthGuard';
 import GuestGuard from 'src/@core/components/auth/GuestGuard';
+import RoleRouteGuard from 'src/@core/components/auth/RoleRouteGuard';
 import WindowWrapper from 'src/@core/components/window-wrapper';
 import ThemeComponent from 'src/@core/theme/ThemeComponent';
 import UserLayout from 'src/layouts/UserLayout';
@@ -170,7 +171,9 @@ const App = (props: ExtendedAppProps) => {
                             aclAbilities={aclAbilities}
                             guestGuard={guestGuard}
                           >
-                            {getLayout(<Component {...pageProps} />)}
+                            <RoleRouteGuard>
+                              {getLayout(<Component {...pageProps} />)}
+                            </RoleRouteGuard>
                           </AclGuard>
                         </Guard>
                       </WindowWrapper>

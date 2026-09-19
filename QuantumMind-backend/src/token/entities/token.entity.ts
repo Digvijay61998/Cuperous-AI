@@ -17,6 +17,9 @@ export class Token {
   @Prop()
   role: string;
 
+  @Prop({ default: null })
+  organizationId: string | null;
+
   @Prop({
     default: () => Date.now() + 7 * 24 * 60 * 60 * 1000,
   })

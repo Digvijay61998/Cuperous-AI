@@ -10,6 +10,13 @@ import { TokenModule } from "./token/token.module";
 import { AuthModule } from "./auth/auth.module";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./auth/guards/jwt.guards";
+import { RolesGuard } from "./common/guards/roles.guard";
+import { SuspendedOrgGuard } from "./common/guards/suspended-org.guard";
+import { FeatureGuard } from "./common/guards/feature.guard";
+import { OrganizationModule } from "./organization/organization.module";
+import { BillingModule } from "./billing/billing.module";
+import { AuditModule } from "./audit/audit.module";
+import { MeModule } from "./me/me.module";
 import { AgentModule } from "./agent/agent.module";
 import { BotsModule } from "./bots/bots.module";
 import { VisitorModule } from "./visitor/visitor.module";
@@ -61,6 +68,10 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     }),
 
     DatabaseModule,
+    AuditModule,
+    OrganizationModule,
+    BillingModule,
+    MeModule,
     ScrapeModule,
     AiModule,
     TrainingDataModule,
@@ -110,6 +121,22 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    // Runs AFTER JwtAuthGuard, so request.user is populated. Authorizes
+    // handlers decorated with @Roles(...); no-op for undecorated routes.
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+    // Denies requests from users whose organization is suspended.
+    {
+      provide: APP_GUARD,
+      useClass: SuspendedOrgGuard,
+    },
+    // Enforces @RequiresFeature(...) against the org's effective entitlements.
+    {
+      provide: APP_GUARD,
+      useClass: FeatureGuard,
     },
     JarCubeGateway,
     JarCubeService,

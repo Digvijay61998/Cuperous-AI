@@ -16,6 +16,7 @@ import axios from 'axios';
 
 // ** Config
 import authConfig from 'src/configs/auth';
+import { homeRouteForRole } from 'src/utils/role-tabs';
 import { ChatContext } from './SocketContext';
 import { addUser, addUserData } from 'src/store/apps/user';
 import { useDispatch, useSelector } from 'react-redux';
@@ -231,7 +232,11 @@ const AuthProvider = ({ children }: Props) => {
             JSON.stringify(response.data),
           );
 
-          const redirectURL = returnUrl && returnUrl !== '/' ? returnUrl : '/';
+          // Role-based landing: super admin -> console, agent -> inbox,
+          // org admin/manager -> dashboard.
+          const home = homeRouteForRole(response.data?.role);
+          const redirectURL =
+            returnUrl && returnUrl !== '/' ? returnUrl : home;
 
           router.replace(redirectURL as string);
         });

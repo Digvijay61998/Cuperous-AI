@@ -9,17 +9,13 @@ import Spinner from 'src/@core/components/spinner';
 
 // ** Hook Imports
 import { useAuth } from 'src/hooks/useAuth';
-import { AccessTypesEnum, RoleEnum } from 'src/utils';
-import { access } from 'src/helper/Access';
+import { homeRouteForRole } from 'src/utils/role-tabs';
 
 /**
  *  Set Home URL based on User Roles
  */
 
-export const getHomeRoute = (role: string) => {
-  if (role === 'agent') return '/dashboards/analytics';
-  else return '/dashboards/analytics';
-};
+export const getHomeRoute = (role: string) => homeRouteForRole(role);
 
 const Home = () => {
   // ** Hooks

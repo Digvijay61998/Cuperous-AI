@@ -1,6 +1,6 @@
 import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
 import { Model } from "mongoose";
-import { RoleEnum } from "src/agent/enums/agent-role.enum";
+import { Role } from "src/common/enums/role.enum";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 import { getDaySubtitle } from "src/util/get-subtitle";
 import { QUESTION_PROVIDER } from "./constants";
@@ -40,7 +40,7 @@ export class QuestionsService {
       //const intent = await this.getIntent(createQuestionDto.question);
 
       const status =
-        user.role === "admin"
+        user.role === Role.ORG_ADMIN
           ? QuestionStatusEnum.APPROVED
           : QuestionStatusEnum.UNDER_REVIEW;
 
@@ -219,7 +219,7 @@ export class QuestionsService {
       }
 
       question.status =
-        role === RoleEnum.ADMIN
+        role === Role.ORG_ADMIN
           ? QuestionStatusEnum.APPROVED
           : QuestionStatusEnum.UNDER_REVIEW;
       question.approvedBy = userId;

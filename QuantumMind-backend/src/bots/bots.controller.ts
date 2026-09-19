@@ -15,6 +15,10 @@ import { CreateBotDto } from './dto/create-bot.dto';
 import { BotQueryParams } from './dto/search-bot.dto';
 import { UpdateBotDto } from './dto/update-bot.dto';
 import { ReportParamsDto } from 'src/util/report-params.dto';
+import { CurrentUser } from 'src/util/current-user.decorator';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { Role } from 'src/common/enums/role.enum';
 
 @Controller('bots')
 @ApiTags('Bots')
@@ -22,19 +26,26 @@ import { ReportParamsDto } from 'src/util/report-params.dto';
 export class BotsController {
   constructor(private readonly botsService: BotsService) {}
 
+  @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Post()
-  async create(@Body() createBotDto: CreateBotDto) {
-    return await this.botsService.create(createBotDto);
+  async create(
+    @Body() createBotDto: CreateBotDto,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.create(createBotDto, user);
   }
 
   @Get()
-  async getBots(@Query() query: BotQueryParams) {
-    return await this.botsService.getAllBots(query);
+  async getBots(
+    @Query() query: BotQueryParams,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.getAllBots(query, user);
   }
 
   @Get('list')
-  async getBotsList() {
-    return await this.botsService.botlist();
+  async getBotsList(@CurrentUser() user: TenantContext) {
+    return await this.botsService.botlist(user);
   }
 
   @Get('stats')
@@ -64,14 +75,15 @@ export class BotsController {
     return await this.botsService.dateWiseConversations(query);
   }
 
+  @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Patch(':id')
   async updateBot(@Param('id') id: string, @Body() body: UpdateBotDto) {
     return await this.botsService.update(id, body);
   }
 
   @Get(':id')
-  async getBotById(@Param('id') id: string) {
-    return await this.botsService.getBotById(id);
+  async getBotById(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return await this.botsService.getBotById(id, user);
   }
 
   @Get(':id/setting')
@@ -104,6 +116,7 @@ export class BotsController {
     return await this.botsService.updateBotFlow(id, body);
   }
 
+  @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Delete(':id')
   async deleteBot(@Param('id') id: string) {
     return await this.botsService.remove(id);

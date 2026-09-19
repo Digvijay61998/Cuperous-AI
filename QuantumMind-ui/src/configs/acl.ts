@@ -19,7 +19,12 @@ export type ACLObj = {
 const defineRulesFor = (role: string, subject: string) => {
   const { can, rules } = new AbilityBuilder(AppAbility)
 
-  if (role === 'admin' || role === "agent") {
+  // Client-side ACL is not the security boundary (the backend enforces every
+  // API); it only unblocks page rendering. Fine-grained tab/route access is
+  // handled by helper/Access.ts. All platform roles may render pages.
+  if (
+    ['super_admin', 'org_admin', 'org_manager', 'agent', 'admin'].includes(role)
+  ) {
     can('manage', 'all')
   } else if (role === 'client') {
     can(['read'], 'acl-page')

@@ -1,7 +1,18 @@
 // ** Type import
 import { VerticalNavItemsType } from 'src/@core/layouts/types';
+import { RoleEnum } from 'src/utils/role.enum';
+import { NAV_TITLE_TAB, ROLE_TABS } from 'src/utils/role-tabs';
 
-const navigation = (): VerticalNavItemsType => {
+// Dedicated sidebar for the super-admin console.
+const superAdminNavigation = (): VerticalNavItemsType => [
+  {
+    title: 'Organizations',
+    icon: 'bx:buildings',
+    path: '/super-admin',
+  },
+];
+
+const orgNavigation = (): VerticalNavItemsType => {
   return [
     {
       title: 'Dashboards',
@@ -192,20 +203,23 @@ const navigation = (): VerticalNavItemsType => {
       //   },
       // ],
     },
-  
-    // {
-    //     title: 'Documentation',
-    //     icon: 'simple-icons:readthedocs',
-    //     path: '',
-    //     children: [
-    //       {
-    //         title: 'Webhooks',
-    //         // icon: 'mdi:hook',
-    //         path: '/documentation/webhook',
-    //       },
-    //     ],
-    // }
   ];
+};
+
+/**
+ * Role-aware sidebar. Super admin gets the console nav; everyone else gets the
+ * org nav filtered to the tabs their role may see (handles top-level groups,
+ * which the path-based access() check can't gate because their path is empty).
+ */
+const navigation = (role?: string): VerticalNavItemsType => {
+  if (role === RoleEnum.SUPER_ADMIN) return superAdminNavigation();
+
+  const allowedTabs = ROLE_TABS[role ?? ''] ?? ROLE_TABS[RoleEnum.ORG_ADMIN];
+  return orgNavigation().filter((item: any) => {
+    const tab = NAV_TITLE_TAB[item.title];
+    // Unmapped items stay visible; mapped items require the tab.
+    return tab === undefined || allowedTabs.includes(tab);
+  });
 };
 
 export default navigation;

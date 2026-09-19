@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
@@ -18,7 +20,9 @@ import mongoose, { Model } from "mongoose";
 
 import { AgentQueryParams } from "./agent-query.params";
 
-import { RoleEnum } from "./enums/agent-role.enum";
+import { Role, ROLE_LEVEL } from "src/common/enums/role.enum";
+import { scopedFilter, TenantContext } from "src/common/tenant/tenant-context";
+import { EntitlementService } from "src/billing/entitlement.service";
 import { AgentStatusEnum } from "./enums/agent-status.enum";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 import { getDaySubtitle } from "src/util/get-subtitle";
@@ -32,24 +36,30 @@ export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
 
   async onModuleInit() {
+    // Fresh-start bootstrap: seed exactly one SUPER_ADMIN (the platform owner),
+    // org-independent (organizationId = null). Idempotent — a restart with the
+    // account already present is a no-op. No organization is auto-created;
+    // organizations are provisioned by the SUPER_ADMIN (Phase 5).
     const email = this.configService.get("admin.email");
     const name = this.configService.get("admin.name");
     const admin = await this.agentModel.findOne({ email });
     if (!admin) {
       const originalPassword = this.configService.get("admin.password");
-      const admin = new this.agentModel({
+      const superAdmin = new this.agentModel({
         name,
         email,
         password: await this.encryptPassword(originalPassword),
-        role: RoleEnum.ADMIN,
+        role: Role.SUPER_ADMIN,
+        organizationId: null,
       });
 
-      await admin.save();
+      await superAdmin.save();
       this.logger.debug(
-        `Admin created with Email ${admin.email} and password: ${originalPassword}`
+        `Super admin created with Email ${superAdmin.email} and password: ${originalPassword}`
       );
+      return;
     }
-    this.logger.debug("Admin Credentials are already present");
+    this.logger.debug("Super admin credentials are already present");
   }
 
   constructor(
@@ -57,7 +67,8 @@ export class AgentService implements OnModuleInit {
     private readonly agentModel: Model<AgentDocument>,
     private readonly configService: ConfigService,
 
-    private readonly conversationService: ConversationService
+    private readonly conversationService: ConversationService,
+    private readonly entitlementService: EntitlementService
   ) {}
 
   async encryptPassword(password: string): Promise<string> {
@@ -91,27 +102,138 @@ export class AgentService implements OnModuleInit {
     return null;
   }
 
-  async create(createAgentDto: CreateAgentDto) {
+  /**
+   * Resolves the role and organization for a new user under delegated
+   * administration. The requested role and organization are validated against
+   * the creator's role; client-supplied values are never trusted for escalation
+   * or cross-org placement.
+   *
+   *  - SUPER_ADMIN may create an ORG_ADMIN only, into an explicit target org.
+   *  - ORG_ADMIN / ORG_MANAGER may create strictly-lower roles, always pinned
+   *    to their own organization.
+   *  - AGENT may not create anyone.
+   */
+  private resolveCreation(
+    actor: TenantContext | undefined,
+    requestedRole: Role,
+    targetOrgId?: string
+  ): { role: Role; organizationId: string | null } {
+    if (!actor?.role) {
+      throw new ForbiddenException("Authentication required");
+    }
+
+    if (actor.role === Role.SUPER_ADMIN) {
+      if (requestedRole !== Role.ORG_ADMIN) {
+        throw new ForbiddenException(
+          "A super admin can only create organization admins"
+        );
+      }
+      if (!targetOrgId) {
+        throw new BadRequestException(
+          "organizationId is required when creating an organization admin"
+        );
+      }
+      return { role: Role.ORG_ADMIN, organizationId: targetOrgId };
+    }
+
+    if (!actor.organizationId) {
+      throw new ForbiddenException(
+        "You are not associated with an organization"
+      );
+    }
+    // Delegated rule: you may only create roles strictly below your own.
+    if (ROLE_LEVEL[actor.role] <= ROLE_LEVEL[requestedRole]) {
+      throw new ForbiddenException(
+        `You do not have permission to create a user with role '${requestedRole}'`
+      );
+    }
+    // New user is always pinned to the creator's organization.
+    return { role: requestedRole, organizationId: actor.organizationId };
+  }
+
+  async create(createAgentDto: CreateAgentDto, actor?: TenantContext) {
     this.logger.log(
       `Creating Agent with name ${createAgentDto.name} and email ${createAgentDto.email}`
     );
     try {
-      const password = await this.encryptPassword(createAgentDto.password);
+      const requestedRole = createAgentDto.role ?? Role.AGENT;
+      const { role, organizationId } = this.resolveCreation(
+        actor,
+        requestedRole,
+        createAgentDto.organizationId
+      );
 
-      const agent = await this.agentModel.create({
-        ...createAgentDto,
-        password,
-      });
-      this.logger.log(`Agent created with name ${agent.name}`);
-      return agent;
+      // The org owner (SUPER_ADMIN provisioning an ORG_ADMIN) does not consume
+      // the org's agent quota; org-scoped user creation does.
+      const consumesQuota = actor?.role !== Role.SUPER_ADMIN;
+      if (consumesQuota) {
+        await this.entitlementService.reserveQuota(organizationId, "agent");
+      }
+
+      try {
+        const password = await this.encryptPassword(createAgentDto.password);
+
+        const agent = await this.agentModel.create({
+          ...createAgentDto,
+          // Server-derived; overrides anything the client sent.
+          role,
+          organizationId,
+          password,
+        });
+        this.logger.log(`Agent created with name ${agent.name}`);
+        return agent;
+      } catch (error) {
+        if (consumesQuota) {
+          await this.entitlementService.releaseQuota(organizationId, "agent");
+        }
+        throw error;
+      }
     } catch (error) {
       this.logger.error(`Error while creating Agent: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async agentList() {
+  /** Role -> count for one organization. Used by the super-admin console. */
+  async countsByOrganization(
+    organizationId: string
+  ): Promise<Record<string, number>> {
+    const rows = await this.agentModel.aggregate([
+      {
+        $match: {
+          organizationId: new mongoose.Types.ObjectId(String(organizationId)),
+        },
+      },
+      { $group: { _id: "$role", count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc: Record<string, number>, r: any) => {
+      acc[r._id] = r.count;
+      return acc;
+    }, {});
+  }
+
+  /** Role -> count across the whole platform. Used by the global overview. */
+  async globalRoleCounts(): Promise<Record<string, number>> {
+    const rows = await this.agentModel.aggregate([
+      { $group: { _id: "$role", count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc: Record<string, number>, r: any) => {
+      acc[r._id] = r.count;
+      return acc;
+    }, {});
+  }
+
+  async agentList(user?: JwtPayload) {
+    // Aggregation does not auto-cast; convert the org id to an ObjectId when
+    // the caller is org-scoped.
+    const scoped: Record<string, any> = scopedFilter(user, {});
+    if (scoped.organizationId) {
+      scoped.organizationId = new mongoose.Types.ObjectId(
+        String(scoped.organizationId),
+      );
+    }
     return await this.agentModel.aggregate([
+      { $match: scoped },
       {
         $project: {
           name: 1,
@@ -167,7 +289,7 @@ export class AgentService implements OnModuleInit {
     }
   }
 
-  async findAll(query: AgentQueryParams) {
+  async findAll(query: AgentQueryParams, user?: JwtPayload) {
     try {
       const {
         skip: documentsToSkip,
@@ -177,12 +299,13 @@ export class AgentService implements OnModuleInit {
         bot,
       } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (status) queryObject["status"] = status;
       if (tags) queryObject["tags"] = { $in: tags };
       if (bot) queryObject["assignedBots"] = { $in: [bot] };
+      const scoped = scopedFilter(user, queryObject);
       const agents = this.agentModel
-        .find(queryObject)
+        .find(scoped)
         .populate("assignedBots", "name")
         .populate("tags", "name")
         .sort({ createdAt: -1 })
@@ -191,7 +314,7 @@ export class AgentService implements OnModuleInit {
         agents.limit(limitOfDocuments);
       }
       const data = await agents;
-      const count = await this.agentModel.count();
+      const count = await this.agentModel.countDocuments(scoped);
       return { data, count };
     } catch (error) {
       this.logger.error(`Error while finding Agents: ${error.message}`);
@@ -224,7 +347,7 @@ export class AgentService implements OnModuleInit {
         .find({
           $or: [
             { assignedBots: { $in: [botId] } },
-            { role: RoleEnum.ADMIN },
+            { role: Role.ORG_ADMIN },
           ],
           active: true,
         })

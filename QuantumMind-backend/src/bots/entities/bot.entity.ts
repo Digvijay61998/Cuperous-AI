@@ -21,6 +21,15 @@ export class Bot {
   @Prop({ required: true })
   name: string;
 
+  /** Owning tenant. The organization is the hard data boundary for bots. */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
+
   @Prop({
     type: [{ type: mongoose.Schema.Types.ObjectId, ref: Agent.name }],
   })

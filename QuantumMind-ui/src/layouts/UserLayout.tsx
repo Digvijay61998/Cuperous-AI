@@ -45,6 +45,12 @@ const UserLayout = ({ children, contentHeightFixed }: Props) => {
   // ** Hooks
   const { settings, saveSettings } = useSettings();
 
+  // Role drives which sidebar the user sees (super-admin console vs org nav,
+  // filtered to the tabs the role may access).
+  const role = useSelector(
+    (state: RootState) => (state.user as any)?.userData?.role,
+  );
+
   // ** Vars for server side navigation
   // const { menuItems: verticalMenuItems } = ServerSideVerticalNavItems()
   // const { menuItems: horizontalMenuItems } = ServerSideHorizontalNavItems()
@@ -117,7 +123,7 @@ const UserLayout = ({ children, contentHeightFixed }: Props) => {
       contentHeightFixed={contentHeightFixed}
       verticalLayoutProps={{
         navMenu: {
-          navItems: VerticalNavItems(),
+          navItems: VerticalNavItems(role),
 
           // Uncomment the below line when using server-side menu in vertical layout and comment the above line
           // navItems: verticalMenuItems

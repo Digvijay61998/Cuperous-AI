@@ -26,17 +26,23 @@ export class AuthService {
         throw new HttpException('Invalid credentials', 400);
       }
 
+      // `organizationId` lives on the Agent from Phase 1 onward; read
+      // defensively so this compiles/works before and after that field lands.
+      const organizationId = (user as any).organizationId ?? null;
+
       const accessToken = await this.tokenService.sign({
         sub: user._id,
         _id: user._id,
         role: user.role,
         email: user.email,
+        organizationId,
       });
 
       const refreshToken = await this.tokenService.createRefreshToken({
         _id: user._id,
         email: user.email,
         role: user.role,
+        organizationId,
       });
 
       return {

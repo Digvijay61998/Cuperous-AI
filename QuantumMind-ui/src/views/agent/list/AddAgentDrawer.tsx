@@ -32,6 +32,22 @@ import { AppDispatch, RootState } from 'src/store'
 import { addNewAgent } from 'src/store/apps/agent'
 // import { gettag } from 'src/store/apps/tags'
 
+// ** Roles
+import { RoleEnum } from 'src/utils/role.enum'
+
+// Roles the current user may create (delegated administration). The backend
+// enforces the same rule; this just shapes the dropdown.
+const creatableRoles = (currentRole?: string) => {
+  if (currentRole === RoleEnum.ORG_ADMIN) {
+    return [
+      { value: RoleEnum.ORG_MANAGER, label: 'Manager' },
+      { value: RoleEnum.AGENT, label: 'Agent' },
+    ]
+  }
+  // ORG_MANAGER (and any other) can only create agents.
+  return [{ value: RoleEnum.AGENT, label: 'Agent' }]
+}
+
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
 const MenuProps = {
@@ -112,6 +128,11 @@ const SidebarAddNewAgent = (props: SidebarAddNewAgentType) => {
   // ** Hooks
   const dispatch = useDispatch<AppDispatch>();
   const tagList = useSelector((state: RootState) => state.tags.list);
+  const currentRole = useSelector(
+    (state: RootState) => (state.user as any)?.userData?.role,
+  );
+  const roleOptions = creatableRoles(currentRole);
+  const [role, setRole] = useState<string>(RoleEnum.AGENT);
 
   // useEffect(() => {
   //   dispatch(gettag());
@@ -131,14 +152,16 @@ const SidebarAddNewAgent = (props: SidebarAddNewAgentType) => {
 
   const onSubmit = (data: any) => {
     let result = tag.map(a => a?._id || a);
-    dispatch(addNewAgent({ ...data, tags:result}));
+    dispatch(addNewAgent({ ...data, role, tags:result}));
     setTag([]);
+    setRole(RoleEnum.AGENT);
     toggle();
     reset();
   }
 
   const handleClose = () => {
     setTag([]);
+    setRole(RoleEnum.AGENT);
     toggle();
     reset();
   }
@@ -233,6 +256,24 @@ const SidebarAddNewAgent = (props: SidebarAddNewAgentType) => {
             />
             {errors.activeHours && <FormHelperText sx={{ color: 'error.main' }}>{errors.activeHours.message}</FormHelperText>}
           </FormControl> */}
+
+          <FormControl fullWidth sx={{ mb: 6 }}>
+            <InputLabel id="select-role-label">Role</InputLabel>
+            <Select
+              labelId="select-role-label"
+              id="select-role"
+              value={role}
+              label="Role"
+              onChange={(e) => setRole(e.target.value as string)}
+              input={<OutlinedInput label="Role" />}
+            >
+              {roleOptions.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
           <FormControl fullWidth sx={{ mb:6 }}>
             <InputLabel id="select-multiple-chip-label">Tags</InputLabel>

@@ -3,6 +3,7 @@ import { LoadingButton } from '@mui/lab';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Link from 'next/link';
 // ** Icon Imports
 import Icon from 'src/@core/components/icon';
@@ -18,11 +19,13 @@ interface TableHeaderProps {
   isLoadingImportBot: any
   dispatch: AppDispatch;
   setOpen: any
+  disableCreate?: boolean;
+  disableReason?: string;
 }
 
 const TableHeader = (props: TableHeaderProps) => {
   // ** Props
-  const { handleFilter, toggle, value, isDisplay, selectExportBots, dispatch, isLoadingExportBot, setOpen, isLoadingImportBot } = props;
+  const { handleFilter, toggle, value, isDisplay, selectExportBots, dispatch, isLoadingExportBot, setOpen, isLoadingImportBot, disableCreate, disableReason } = props;
 const handleExport = () =>{
     dispatch(fetchExportBots(selectExportBots))
 }
@@ -59,15 +62,30 @@ const handleExport = () =>{
           }}
         >
       
-          <Link href="/bots/create/">
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Icon icon={'material-symbols:add'} />}
-            >
-              Create Bot
-            </Button>
-          </Link>
+          {disableCreate ? (
+            <Tooltip title={disableReason || ''}>
+              <span>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled
+                  startIcon={<Icon icon={'material-symbols:add'} />}
+                >
+                  Create Bot
+                </Button>
+              </span>
+            </Tooltip>
+          ) : (
+            <Link href="/bots/create/">
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<Icon icon={'material-symbols:add'} />}
+              >
+                Create Bot
+              </Button>
+            </Link>
+          )}
           <LoadingButton 
           loading={isLoadingImportBot}
             variant="contained"

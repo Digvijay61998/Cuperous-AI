@@ -9,10 +9,11 @@ import {
   Query,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
-import { Public } from "src/auth/Public/public.decorator";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 
 import { CurrentUser } from "src/util/current-user.decorator";
+import { Roles } from "src/common/decorators/roles.decorator";
+import { Role } from "src/common/enums/role.enum";
 import { ReportParamsDto } from "src/util/report-params.dto";
 import { AgentQueryParams } from "./agent-query.params";
 import { AgentService } from "./agent.service";
@@ -25,15 +26,22 @@ import { UpdateAgentDto } from "./dto/update-agent.dto";
 export class AgentController {
   constructor(private readonly agentService: AgentService) {}
 
+  @Roles(Role.SUPER_ADMIN, Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Post()
-  async create(@Body() createAgentDto: CreateAgentDto) {
-    return await this.agentService.create(createAgentDto);
+  async create(
+    @Body() createAgentDto: CreateAgentDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return await this.agentService.create(createAgentDto, actor);
   }
 
-  @Public()
+  @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Get()
-  async findAll(@Query() query: AgentQueryParams) {
-    return await this.agentService.findAll(query);
+  async findAll(
+    @Query() query: AgentQueryParams,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.agentService.findAll(query, user);
   }
 
   @Get("welcome")
@@ -42,8 +50,8 @@ export class AgentController {
   }
 
   @Get("list")
-  async getAgentList() {
-    return await this.agentService.agentList();
+  async getAgentList(@CurrentUser() user: JwtPayload) {
+    return await this.agentService.agentList(user);
   }
 
   @Get("stats")
@@ -84,6 +92,7 @@ export class AgentController {
     return await this.agentService.update(id, updateAgentDto);
   }
 
+  @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Delete(":id")
   async remove(@Param("id") id: string) {
     return await this.agentService.remove(id);

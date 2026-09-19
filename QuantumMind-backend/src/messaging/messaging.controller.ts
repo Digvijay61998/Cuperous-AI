@@ -5,6 +5,8 @@ import { CurrentUser } from 'src/util';
 import { FeatureFlagsService } from 'src/feature-flags/feature-flags.service';
 import { ChannelEnumList } from './enums/channel.enum';
 import { MessagingProviderRegistry } from './messaging-provider.registry';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { Role } from 'src/common/enums/role.enum';
 
 /**
  * Admin-facing endpoints powering the provider-toggle UI (#4/#6).
@@ -14,6 +16,7 @@ import { MessagingProviderRegistry } from './messaging-provider.registry';
 @Controller('messaging')
 @ApiTags('Messaging')
 @ApiSecurity('bearer')
+@Roles(Role.ORG_ADMIN) // Channel Providers tab is ORG_ADMIN-only per the tab matrix
 export class MessagingController {
   constructor(
     private readonly registry: MessagingProviderRegistry,

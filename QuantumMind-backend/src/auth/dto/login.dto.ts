@@ -6,8 +6,6 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { AuthRole } from '../enums/role.enum';
-
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {

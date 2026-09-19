@@ -23,9 +23,15 @@ import { firstValueFrom } from "rxjs";
 import { ConfigService } from "@nestjs/config";
 import { PlatformEnum } from "src/conversation/enums/platform.enum";
 
-export interface SocketJwtPayload extends JwtPayload {
+// Widget visitors are not platform users, so `role` is the literal 'visitor'
+// and `organizationId` is not applicable — kept separate from the dashboard
+// Role enum.
+export interface SocketJwtPayload
+  extends Omit<JwtPayload, 'role' | 'organizationId'> {
   name: string;
   mode: ModeEnum;
+  role: 'visitor';
+  organizationId?: string | null;
 }
 
 @Injectable()

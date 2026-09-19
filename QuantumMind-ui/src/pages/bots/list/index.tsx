@@ -44,6 +44,7 @@ import { UsersType } from 'src/types/apps/userTypes';
 // ** Custom Table Components Imports
 import { OutlinedInput, Tooltip } from '@mui/material';
 import TableHeader from 'src/views/bots/list/TableHeader';
+import { useEntitlements } from 'src/hooks/useEntitlements';
 import ImportBotView from 'src/views/bots/list/ImportBotsView';
 
 import { gettag } from 'src/store/apps/tags';
@@ -122,6 +123,8 @@ const BotList = () => {
   // ** State
 
   const [role, setRole] = useState<string>('');
+  const { canCreate } = useEntitlements();
+  const botQuotaReached = !canCreate('bots');
   const [plan, setPlan] = useState<string>('');
   const [value, setValue] = useState<string>('');
   const [status, setStatus] = useState<string>('');
@@ -413,6 +416,8 @@ const BotList = () => {
               isLoadingExportBot={isLoadingExportBot}
               setOpen={setOpenImportDrawer}
               isLoadingImportBot={isLoadingImportBot}
+              disableCreate={botQuotaReached}
+              disableReason="Bot limit reached for your plan. Upgrade to add more."
             />
           }
 

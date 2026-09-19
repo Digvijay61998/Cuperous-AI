@@ -2,6 +2,7 @@
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
+import Tooltip from '@mui/material/Tooltip';
 
 // ** Icon Imports
 import Icon from 'src/@core/components/icon';
@@ -10,11 +11,13 @@ interface TableHeaderProps {
   value: string;
   toggle: () => void;
   handleFilter: (val: string) => void;
+  disableAdd?: boolean;
+  disableReason?: string;
 }
 
 const TableHeader = (props: TableHeaderProps) => {
   // ** Props
-  const { handleFilter, toggle, value } = props;
+  const { handleFilter, toggle, value, disableAdd, disableReason } = props;
 
   return (
     <Box
@@ -42,14 +45,19 @@ const TableHeader = (props: TableHeaderProps) => {
       <Box
         sx={{ gap: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}
       >
-        <Button 
-          onClick={toggle} 
-          variant="contained" 
-          size="small"
-        >
-          Add Agent
-        </Button>
-    
+        <Tooltip title={disableAdd ? disableReason || '' : ''}>
+          <span>
+            <Button
+              onClick={toggle}
+              variant="contained"
+              size="small"
+              disabled={disableAdd}
+            >
+              Add Agent
+            </Button>
+          </span>
+        </Tooltip>
+
       </Box>
     </Box>
   );

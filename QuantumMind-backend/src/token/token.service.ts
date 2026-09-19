@@ -32,6 +32,7 @@ export class TokenService {
       userId: user._id,
       email: user.email,
       role: user.role,
+      organizationId: user.organizationId ?? null,
       expiresAt: new Date(
         Date.now() + refreshTokenExpiresIn * 24 * 60 * 60 * 1000,
       ),
@@ -46,7 +47,12 @@ export class TokenService {
     if (token) {
       const signoptions = this.configService.get('jwt.signOptions');
       const accessToken = await this.sign(
-        { _id: token.userId, email: token.email, role: token.role },
+        {
+          _id: token.userId,
+          email: token.email,
+          role: token.role,
+          organizationId: token.organizationId ?? null,
+        },
         signoptions,
       );
       return accessToken;

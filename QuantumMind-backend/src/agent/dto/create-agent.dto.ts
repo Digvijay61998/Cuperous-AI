@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -13,6 +14,7 @@ import { Tag } from "src/tag/entities/tag.entity";
 import { AgentStatusEnum } from "../enums/agent-status.enum";
 import { ApiProperty, ApiResponse } from "@nestjs/swagger";
 import { ObjectId } from "mongoose";
+import { Role } from "src/common/enums/role.enum";
 
 export class CreateAgentDto {
   @IsString()
@@ -72,4 +74,27 @@ export class CreateAgentDto {
     description: "base64 Profile picture of the agent",
   })
   profilePic: string;
+
+  /**
+   * Requested role for the new user. Validated server-side against the
+   * creator's role (delegated administration); a client can never escalate
+   * beyond what its own role permits. Defaults to AGENT.
+   */
+  @IsEnum(Role)
+  @IsOptional()
+  @ApiProperty({ enum: Role, required: false })
+  role?: Role;
+
+  /**
+   * Target organization. Only honored for a SUPER_ADMIN creating an ORG_ADMIN;
+   * for org-scoped creators the new user is always pinned to the creator's own
+   * organization regardless of this value.
+   */
+  @IsMongoId()
+  @IsOptional()
+  @ApiProperty({
+    required: false,
+    description: "Target organization (SUPER_ADMIN only)",
+  })
+  organizationId?: string;
 }

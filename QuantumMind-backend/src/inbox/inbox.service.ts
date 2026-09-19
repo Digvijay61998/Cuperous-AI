@@ -9,7 +9,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AgentService } from 'src/agent/agent.service';
 import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
-import { RoleEnum } from 'src/agent/enums/agent-role.enum';
+import { Role } from 'src/common/enums/role.enum';
 import { ChannelThreadService } from 'src/channel-thread/channel-thread.service';
 import { ConversationService } from 'src/conversation/conversation.service';
 import { ChatDirectionEnum } from 'src/conversation/enums/chat-direction.enum';
@@ -110,7 +110,7 @@ export class InboxService {
    * doing double duty.
    */
   private async scopeFilter(user: JwtPayload): Promise<string[] | null> {
-    if (user?.role === RoleEnum.ADMIN) return null;
+    if (user?.role === Role.ORG_ADMIN) return null;
 
     try {
       const agent = await this.agentService.findOne(user._id);
@@ -621,7 +621,7 @@ export class InboxService {
       if (
         currentOwner &&
         currentOwner !== user._id &&
-        user.role !== RoleEnum.ADMIN
+        user.role !== Role.ORG_ADMIN
       ) {
         throw new HttpException(
           {

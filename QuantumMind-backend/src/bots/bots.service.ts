@@ -35,6 +35,13 @@ import { Public } from "src/auth/Public/public.decorator";
 import { ReportParamsDto } from "src/util/report-params.dto";
 import { TicketPriorityEnumList } from "src/tickets/enums/ticket-priority";
 import { TagService } from "src/tag/tag.service";
+import * as mongoose from "mongoose";
+import {
+  assertOwnership,
+  scopedFilter,
+  TenantContext,
+} from "src/common/tenant/tenant-context";
+import { EntitlementService } from "src/billing/entitlement.service";
 @Injectable()
 export class BotsService {
   private readonly logger = new Logger(BotsService.name);
@@ -59,7 +66,8 @@ export class BotsService {
     private readonly agentService: AgentService,
     private readonly ticketService: TicketsService,
     private readonly conversationService: ConversationService,
-    private readonly tagsService: TagService
+    private readonly tagsService: TagService,
+    private readonly entitlementService: EntitlementService
   ) {}
 
   generateNodeAndEdegs() {
@@ -148,13 +156,19 @@ export class BotsService {
     );
   }
 
-  async botlist() {
+  async botlist(user?: TenantContext) {
+    // Aggregation does not auto-cast, so build the org match explicitly and
+    // convert the id to an ObjectId when the caller is org-scoped.
+    const scoped: Record<string, any> = scopedFilter(user, {
+      _id: { $ne: null },
+    });
+    if (scoped.organizationId) {
+      scoped.organizationId = new mongoose.Types.ObjectId(
+        String(scoped.organizationId),
+      );
+    }
     return await this.botModel.aggregate([
-      {
-        $match: {
-          _id: { $ne: null },
-        },
-      },
+      { $match: scoped },
       {
         $project: {
           name: 1,
@@ -165,12 +179,26 @@ export class BotsService {
     ]);
   }
 
-  async create(createBotDto: CreateBotDto) {
+  async create(createBotDto: CreateBotDto, actor?: TenantContext) {
+    this.logger.log(`Creating bot ${createBotDto.name}`);
+    const organizationId = (actor?.organizationId as any) ?? null;
+
+    // Reserve quota atomically before creating; release if the bot document
+    // itself fails to persist so the counter never drifts.
+    await this.entitlementService.reserveQuota(organizationId, "bot");
+    let bot: BotDocument;
     try {
-      this.logger.log(`Creating bot ${createBotDto.name}`);
-      const bot = await this.botModel.create({
+      bot = await this.botModel.create({
         ...createBotDto,
+        organizationId,
       });
+    } catch (error) {
+      await this.entitlementService.releaseQuota(organizationId, "bot");
+      this.logger.error(`Error in create bot: ${error.message}`);
+      throw new HttpException(error.message, error.status || 500);
+    }
+
+    try {
       const botStyle = await this.botStyleModel.create({
         botId: bot._id,
         primaryColor: createBotDto.primaryColor,
@@ -207,7 +235,7 @@ export class BotsService {
     }
   }
 
-  async getBotById(id: string) {
+  async getBotById(id: string, user?: TenantContext) {
     try {
       const bot = await this.botModel
         .findOne({
@@ -221,6 +249,8 @@ export class BotsService {
       if (!bot) {
         throw new HttpException("No Bot Found by this Id", 404);
       }
+      // Cross-org access returns 404 (no existence leak) for non-super-admins.
+      assertOwnership(user, bot as any);
       return bot;
     } catch (error) {
       this.logger.error(`Error in get bot by id: ${error.message}`);
@@ -228,7 +258,7 @@ export class BotsService {
     }
   }
 
-  async getAllBots(query?: BotQueryParams) {
+  async getAllBots(query?: BotQueryParams, user?: TenantContext) {
     try {
       const {
         skip: documentsToSkip,
@@ -237,7 +267,7 @@ export class BotsService {
         status,
       } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       // `remove()` is a SOFT delete — it only flips `status` to `deleted`, and the
       // row stays in the collection. So an unfiltered read returns bots the
       // operator has already deleted, which is how they kept appearing in the
@@ -253,7 +283,7 @@ export class BotsService {
       if (tags) queryObject["tags"] = { $in: tags };
 
       const agents = this.botModel
-        .find(queryObject)
+        .find(scopedFilter(user, queryObject))
 
         .populate("tags", "name")
         .populate("agents", "name")

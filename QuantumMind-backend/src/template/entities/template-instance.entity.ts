@@ -38,7 +38,20 @@ export class TemplateInstance {
   })
   botId: string;
 
-  /** Denormalized for dashboard listing/filtering; not used for resolution. */
+  /** Owning tenant. Server-derived from the caller's token; the data boundary. */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
+
+  /**
+   * @deprecated Client-supplied denormalized string, superseded by
+   * `organizationId`. Retained to avoid breaking the existing update path;
+   * to be removed once template create/update is org-stamped.
+   */
   @Prop({
     default: '',
     trim: true,

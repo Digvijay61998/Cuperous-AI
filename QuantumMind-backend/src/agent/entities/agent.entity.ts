@@ -5,7 +5,7 @@ import { generateId } from "src/util";
 import { AgentStatusEnum } from "../enums/agent-status.enum";
 import { Tag } from "src/tag/entities/tag.entity";
 import { Bot, BotDocument } from "src/bots/entities";
-import { RoleEnum } from "../enums/agent-role.enum";
+import { Role } from "src/common/enums/role.enum";
 import { FeedbackDocument } from "src/feedback/entities/feedback.entity";
 import { HttpException } from "@nestjs/common";
 
@@ -102,9 +102,21 @@ export class Agent {
   maxConcurrentChats: number;
 
   @Prop({
-    default: RoleEnum.AGENT,
+    default: Role.AGENT,
   })
-  role: RoleEnum;
+  role: Role;
+
+  /**
+   * Tenant this user belongs to. `null` only for SUPER_ADMIN (org-independent).
+   * Every non-super-admin query is scoped by this field.
+   */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Organization",
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
 
   @Prop({
     type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Feedback" }],
@@ -135,8 +147,24 @@ export const AgentSchema = SchemaFactory.createForClass(Agent);
 AgentSchema.pre("remove", async function (next) {
   const agent = this as any;
 
-  if (agent.role === RoleEnum.ADMIN) {
-    next(new HttpException("Admin cannot be deleted", 400));
+  // The platform owner is never deletable.
+  if (agent.role === Role.SUPER_ADMIN) {
+    return next(new HttpException("Super admin cannot be deleted", 400));
+  }
+
+  // An organization owner cannot be removed without first transferring
+  // ownership, otherwise the org would be left ownerless.
+  const Organization = mongoose.model("Organization");
+  const ownedOrg = await Organization.findOne({ ownerId: agent._id }).select(
+    "_id"
+  );
+  if (ownedOrg) {
+    return next(
+      new HttpException(
+        "Organization owner cannot be deleted; transfer ownership first",
+        400
+      )
+    );
   }
 
   const Feedback = mongoose.model<FeedbackDocument>("Feedback");

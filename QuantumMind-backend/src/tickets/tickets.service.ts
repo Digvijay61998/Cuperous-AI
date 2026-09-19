@@ -7,7 +7,6 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import { Model } from "mongoose";
-import { AuthRole } from "src/auth/enums/role.enum";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 import { TICKET_DETAILS_PROVIDER, TICKET_PROVIDER } from "./constant";
 import { CreateActivityDto } from "./dto/create-activity.dto";
@@ -18,7 +17,6 @@ import { TicketDocument } from "./entities/ticket.entity";
 import { TicketActivitiesEnum } from "./enums/ticket-activities.enum";
 import { VisitorService } from "src/visitor/visitor.service";
 import { TicketStatusEnum } from "./enums/ticket-status.enum";
-import { RoleEnum } from "src/agent/enums/agent-role.enum";
 import { getDaySubtitle } from "src/util/get-subtitle";
 import { ReportParamsDto } from "src/util/report-params.dto";
 import { SearchParamDto } from "./dto/search-param.dto";

@@ -51,6 +51,7 @@ import { getAgentsCardStats } from 'src/store/apps/states';
 import AddAgentDrawer from 'src/views/agent/list/AddAgentDrawer';
 import AgentDeleteDialog from 'src/views/agent/list/AgentDeleteDialog';
 import TableHeader from 'src/views/agent/list/TableHeader';
+import { useEntitlements } from 'src/hooks/useEntitlements';
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
 const MenuProps = {
@@ -221,6 +222,8 @@ const AgentList = () => {
   }, []);
 
   const toggleAddUserDrawer = () => setAddUserOpen(!addUserOpen);
+  const { canCreate } = useEntitlements();
+  const agentQuotaReached = !canCreate('agents');
   const columns = [
     {
       flex: 0.25,
@@ -435,6 +438,8 @@ const AgentList = () => {
             value={value}
             handleFilter={handleFilter}
             toggle={toggleAddUserDrawer}
+            disableAdd={agentQuotaReached}
+            disableReason="Agent limit reached for your plan. Upgrade to add more."
           />
           <Divider sx={{ m: '0 !important' }} />
           {/* <CardHeader title="Search Filters" /> */}
