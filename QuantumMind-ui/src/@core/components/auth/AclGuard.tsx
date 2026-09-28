@@ -36,15 +36,7 @@ const AclGuard = (props: AclGuardProps) => {
   // ** Hooks
   const auth = useAuth();
   const router = useRouter();
-  // console.log({route: router.route})
-  // useEffect(() => {
-  //   if (auth && auth?.user?.role) {
-  //     if (!access(auth.user.role, AccessTypesEnum.READ, router.route)) {
-  //       router.route = "/404";
-  //     }
-  //   }
-  // }, [auth]);
-  // console.log({NewRoute: router.route})
+
   // If guestGuard is true and user is not logged in or its an error page, render the page without checking access
   if (
     guestGuard ||
@@ -54,17 +46,15 @@ const AclGuard = (props: AclGuardProps) => {
   ) {
     return <>{children}</>;
   }
-// if(router.route=== "/404"){
-//   return (
-//     <BlankLayout>
-//       <NotAuthorized />
-//     </BlankLayout>
-//   );
-// }
-  // User is logged in, build ability for the user based on his role
 
+  // User is logged in, build ability for the user based on his role
   if (auth.user && auth.user.role && !ability) {
     setAbility(buildAbilityFor(auth.user.role, aclAbilities.subject))
+  }
+
+  // Wait for auth to load before deciding
+  if (auth.loading) {
+    return null; // or a loading spinner
   }
 
   // Check the access of current user and render pages
@@ -74,6 +64,11 @@ const AclGuard = (props: AclGuardProps) => {
         {children}
       </AbilityContext.Provider>
     );
+  }
+
+  // If user exists but ability hasn't been built yet, wait (don't show 401)
+  if (auth.user && auth.user.role && !ability) {
+    return null; // ability is being built, wait for next render
   }
 
   // Render Not Authorized component if the current user has limited access
