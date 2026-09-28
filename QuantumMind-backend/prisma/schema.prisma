@@ -1,0 +1,511 @@
+// CRM data model (Postgres / RDS).
+//
+// This schema is MULTI-TENANT. The reference open-source CRM it is adapted from
+// is single-tenant ("there are no organizations"), so every uniqueness and index
+// rule here differs deliberately:
+//   * organizationId is on every row (the Mongo org id, as a plain string).
+//   * every unique constraint is composite with organizationId.
+//   * every index leads with organizationId (all queries filter by it first).
+//   * identity (User/Org/Auth) lives in MongoDB, not here — owner/creator ids are
+//     plain strings referencing Mongo, never foreign keys.
+//
+// Uniqueness such as "one active email per org" is enforced in the service layer
+// (a scoped findFirst before create), not via partial unique indexes, to avoid a
+// preview-feature dependency. A hard DB partial-unique can be added by raw SQL
+// migration later without any code change.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CRM_DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum DealStage {
+  DEMO_BOOKED
+  QUALIFIED_TO_BUY
+  UNQUALIFIED_TO_BUY
+  DECISION_MAKER_BOUGHT_IN
+  CONTRACT_SENT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  TASK
+  STAGE_CHANGE
+  ENRICHMENT
+}
+
+enum RecordSource {
+  MANUAL
+  IMPORT
+  EMAIL
+  CALENDAR
+  TRACKING
+}
+
+// ---------------------------------------------------------------------------
+// Company (account)
+// ---------------------------------------------------------------------------
+
+model Company {
+  id             String @id @default(cuid())
+  organizationId String
+
+  name        String
+  domain      String?
+  website     String?
+  description String?
+
+  logoUrl    String?
+  brandColor String?
+  industry   String?
+  city       String?
+  country    String?
+
+  phone       String?
+  email       String?
+  linkedinUrl String?
+
+  // Mongo user id of the owner (no FK — identity lives in MongoDB).
+  ownerId          String?
+  primaryContactId String? @unique
+
+  source RecordSource @default(MANUAL)
+
+  lastActivityAt DateTime?
+  archivedAt     DateTime?
+
+  primaryContact Contact?     @relation("PrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+  contacts       Contact[]    @relation("CompanyContacts")
+  deals          Deal[]
+  activities     Activity[]
+  fieldValues    FieldValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, name])
+  @@index([organizationId, domain])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, lastActivityAt])
+  @@index([organizationId, archivedAt])
+  @@map("company")
+}
+
+// ---------------------------------------------------------------------------
+// Contact
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id             String @id @default(cuid())
+  organizationId String
+
+  firstName   String
+  lastName    String?
+  email       String?
+  phone       String?
+  title       String?
+  seniority   String?
+  function    String?
+  linkedinUrl String?
+  twitterUrl  String?
+  githubUrl   String?
+  imageUrl    String?
+
+  companyId String?
+  company   Company? @relation("CompanyContacts", fields: [companyId], references: [id], onDelete: SetNull)
+
+  // Mongo user id of the owner (no FK).
+  ownerId String?
+
+  source RecordSource @default(MANUAL)
+
+  enrichmentStatus EnrichmentStatus @default(PENDING)
+  enrichedAt       DateTime?
+  enrichmentError  String?
+
+  lastActivityAt DateTime?
+  archivedAt     DateTime?
+
+  primaryOf   Company?      @relation("PrimaryContact")
+  deals       DealContact[]
+  activities  Activity[]
+  fieldValues FieldValue[]
+  facts       ContactFact[]
+  brief       ContactBrief?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, email])
+  @@index([organizationId, companyId])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, lastActivityAt])
+  @@index([organizationId, archivedAt])
+  @@map("contact")
+}
+
+// ---------------------------------------------------------------------------
+// Deal (opportunity)
+// ---------------------------------------------------------------------------
+
+model Deal {
+  id             String @id @default(cuid())
+  organizationId String
+
+  name        String
+  description String?
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Mongo user id of the owner (no FK).
+  ownerId String?
+
+  stage          DealStage @default(DEMO_BOOKED)
+  stageChangedAt DateTime  @default(now())
+
+  amount            Decimal?  @db.Decimal(14, 2)
+  currency          String    @default("USD")
+  expectedCloseDate DateTime?
+  closedAt          DateTime?
+  closedReason      String?
+
+  lastActivityAt DateTime?
+  archivedAt     DateTime?
+
+  contacts    DealContact[]
+  activities  Activity[]
+  fieldValues FieldValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, stage])
+  @@index([organizationId, companyId])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, expectedCloseDate])
+  @@index([organizationId, lastActivityAt])
+  @@index([organizationId, archivedAt])
+  @@map("deal")
+}
+
+// Deal <-> Contact join (many-to-many with a role).
+model DealContact {
+  organizationId String
+
+  dealId    String
+  deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role      String?
+
+  @@id([dealId, contactId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@map("dealContact")
+}
+
+// ---------------------------------------------------------------------------
+// Activity (timeline: notes, calls, emails, meetings, tasks, stage changes)
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           ActivityType
+  subject        String?
+  body           String?
+
+  occurredAt  DateTime?
+  dueAt       DateTime?
+  completedAt DateTime?
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  // Mongo user id of the author (no FK).
+  createdById String
+  meta        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, companyId, createdAt])
+  @@index([organizationId, contactId, createdAt])
+  @@index([organizationId, dealId, createdAt])
+  @@index([organizationId, dueAt])
+  @@map("activity")
+}
+
+// ---------------------------------------------------------------------------
+// Custom fields (Phase 2)
+//
+// A workspace defines extra fields per entity, then fills a value per record.
+// Multi-tenant like everything else: a definition's key is unique per org+entity,
+// and a value is unique per field+record. userId/ownerId are Mongo user ids.
+// ---------------------------------------------------------------------------
+
+enum FieldEntity {
+  COMPANY
+  CONTACT
+  DEAL
+}
+
+enum FieldType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  DATE
+  CHECKBOX
+  SELECT
+  URL
+  EMAIL
+  PHONE
+  USER
+}
+
+model FieldDefinition {
+  id             String      @id @default(cuid())
+  organizationId String
+  entity         FieldEntity
+  key            String
+  label          String
+  type           FieldType
+
+  required     Boolean @default(false)
+  showOnSheet  Boolean @default(true)
+  showOnTable  Boolean @default(false)
+  showOnFilter Boolean @default(false)
+  position     Int     @default(0)
+
+  archivedAt DateTime?
+
+  options FieldOption[]
+  values  FieldValue[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, entity, key])
+  @@index([organizationId, entity, position])
+  @@map("fieldDefinition")
+}
+
+model FieldOption {
+  id             String @id @default(cuid())
+  organizationId String
+
+  fieldId  String
+  field    FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  label    String
+  position Int             @default(0)
+
+  archivedAt DateTime?
+  values     FieldValue[]
+
+  @@index([fieldId, position])
+  @@index([organizationId])
+  @@map("fieldOption")
+}
+
+model FieldValue {
+  id             String @id @default(cuid())
+  organizationId String
+
+  fieldId String
+  field   FieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  text     String?
+  number   Decimal?     @db.Decimal(24, 4)
+  date     DateTime?
+  bool     Boolean?
+  optionId String?
+  option   FieldOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
+  // Mongo user id, for USER-type fields (no FK).
+  userId   String?
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([fieldId, companyId])
+  @@unique([fieldId, contactId])
+  @@unique([fieldId, dealId])
+  @@index([organizationId])
+  @@index([fieldId, text])
+  @@index([fieldId, number])
+  @@index([fieldId, date])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([dealId])
+  @@index([optionId])
+  @@map("fieldValue")
+}
+
+// ---------------------------------------------------------------------------
+// Saved views (Phase 2) — a named, optionally-shared filter set per entity.
+// ---------------------------------------------------------------------------
+
+model SavedView {
+  id             String      @id @default(cuid())
+  organizationId String
+  entity         FieldEntity
+  name           String
+  shared         Boolean     @default(false)
+  filters        Json
+
+  // Mongo user id of the owner (no FK).
+  ownerId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, entity, ownerId, name])
+  @@index([organizationId, entity, shared])
+  @@map("savedView")
+}
+
+// ---------------------------------------------------------------------------
+// Intelligence — evidence-scored facts (Phase 3)
+//
+// A fact is a single claim about a contact (a field + value) with the typed
+// evidence behind it. The score/band are DERIVED from the evidence by the
+// evidence ledger, never supplied by a caller. VERIFIED facts are written to the
+// record; weaker ones are held as PROPOSED suggestions for a rep to decide.
+// ---------------------------------------------------------------------------
+
+enum FactBand {
+  VERIFIED
+  PROBABLE
+  POSSIBLE
+}
+
+enum FactStatus {
+  APPLIED
+  PROPOSED
+  DISMISSED
+  SUPERSEDED
+}
+
+model ContactFact {
+  id             String @id @default(cuid())
+  organizationId String
+
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  field String
+  value String
+
+  score Float
+  band  FactBand
+
+  // Array of observed evidence: [{ kind, detail, sourceUrl? }].
+  evidence Json
+
+  method    String
+  sourceUrl String?
+  sessionId String?
+
+  status      FactStatus @default(PROPOSED)
+  // Mongo user id of the rep who decided (no FK).
+  decidedById String?
+  decidedAt   DateTime?
+
+  observedAt   DateTime  @default(now())
+  supersededAt DateTime?
+
+  @@index([organizationId, contactId, field, status])
+  @@index([organizationId, status, observedAt])
+  @@map("contactFact")
+}
+
+model ContactBrief {
+  contactId      String  @id
+  organizationId String
+  contact        Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  narrative String
+  // Structured sections (currentRole, tenure, previousRoles, ...).
+  sections  Json
+
+  score     Float
+  sourceUrl String?
+  sessionId String?
+
+  refreshedAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("contactBrief")
+}
+
+// ---------------------------------------------------------------------------
+// Agent task queue (Phase 3)
+//
+// Durable background work: "research this contact", "recheck in 14 days". Leased
+// with FOR UPDATE SKIP LOCKED so multiple workers take disjoint work and a dead
+// worker's lease expires and frees the row. Record references are plain string
+// ids (the queue is infrastructure, decoupled from record lifecycles).
+// ---------------------------------------------------------------------------
+
+enum EnrichmentStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+  SKIPPED
+}
+
+model AgentTask {
+  id             String @id @default(cuid())
+  organizationId String
+
+  contactId String?
+  companyId String?
+  dealId    String?
+
+  kind    String
+  reason  String
+  payload Json?
+
+  priority Int @default(0)
+  budget   Int @default(4)
+  attempts Int @default(0)
+
+  dueAt       DateTime
+  leasedUntil DateTime?
+
+  sessionId  String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  outcome    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([dueAt, leasedUntil])
+  @@index([organizationId, contactId])
+  @@index([organizationId, kind, finishedAt])
+  @@map("agentTask")
+}

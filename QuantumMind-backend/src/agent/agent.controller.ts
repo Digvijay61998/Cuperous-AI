@@ -55,13 +55,13 @@ export class AgentController {
   }
 
   @Get("stats")
-  async getAgentStats() {
-    return await this.agentService.getStats();
+  async getAgentStats(@CurrentUser() user: JwtPayload) {
+    return await this.agentService.getStats(user as any);
   }
 
   @Get("report/total")
-  async getAgentReport() {
-    return await this.agentService.getTotalAgent();
+  async getAgentReport(@CurrentUser() user: JwtPayload) {
+    return await this.agentService.getTotalAgent(user as any);
   }
 
   @Get("report/day-wise-performance")

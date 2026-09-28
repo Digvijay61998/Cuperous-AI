@@ -60,16 +60,19 @@ export class QuestionsController {
   }
 
   @Get()
-  @Public()
   async getAllQuestions(
     @Query() query: SearchParamDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<{ data: QuestionDocument[]; count: number }> {
-    return await this.questionsService.getAllQuestions(query);
+    return await this.questionsService.getAllQuestions(query, user as any);
   }
 
   @Get(':id')
-  async getQuestionById(@Param('id') id: string): Promise<QuestionDocument> {
-    return await this.questionsService.getQuestionById(id);
+  async getQuestionById(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<QuestionDocument> {
+    return await this.questionsService.getQuestionById(id, user as any);
   }
 
   @Patch(':id')
@@ -86,8 +89,11 @@ export class QuestionsController {
   }
 
   @Delete(':id')
-  async deleteQuestion(@Param('id') id: string): Promise<QuestionDocument> {
-    return await this.questionsService.deleteQuestion(id);
+  async deleteQuestion(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<QuestionDocument> {
+    return await this.questionsService.deleteQuestion(id, user as any);
   }
 
   @Post(':id/approve')
@@ -96,7 +102,12 @@ export class QuestionsController {
     @CurrentUser() user: JwtPayload,
     @Body() updateStatus: UpdateQuestionStatusDto,
   ): Promise<QuestionDocument> {
-    return await this.questionsService.updateStatus(id, user._id, updateStatus);
+    return await this.questionsService.updateStatus(
+      id,
+      user._id,
+      updateStatus,
+      user as any,
+    );
   }
 
   @Post('find-answer')
@@ -109,7 +120,7 @@ export class QuestionsController {
   }
 
   @Get('report/stats')
-  async getReportStats() {
-    return await this.questionsService.stats();
+  async getReportStats(@CurrentUser() user: JwtPayload) {
+    return await this.questionsService.stats(30, user as any);
   }
 }

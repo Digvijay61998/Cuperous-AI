@@ -6,6 +6,8 @@ import { CreateVisitorDto } from './dto/create-visitor.dto';
 import { VisitorQueryParams } from './dto/visitor-query.params.dto';
 import { VisitorService } from './visitor.service';
 import { ReportParamsDto } from 'src/util/report-params.dto';
+import { CurrentUser } from 'src/util';
+import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
 
 @Controller('visitor')
 @ApiTags('Visitor')
@@ -13,10 +15,12 @@ import { ReportParamsDto } from 'src/util/report-params.dto';
 export class VisitorController {
   constructor(private readonly visitorService: VisitorService) {}
 
-  @Public()
   @Get()
-  async findAll(@Query() query: VisitorQueryParams) {
-    return this.visitorService.getAllVisitors(query);
+  async findAll(
+    @Query() query: VisitorQueryParams,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.visitorService.getAllVisitors(query, user as any);
   }
 
   @Get('/stat/home')
@@ -57,8 +61,8 @@ export class VisitorController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.visitorService.getVisitor(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.visitorService.getVisitor(id, user as any);
   }
 
   @Post()

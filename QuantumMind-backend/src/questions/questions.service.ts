@@ -16,6 +16,11 @@ import { QuestionStatusEnum } from "./enums/question-status.enum";
 import { HttpService } from "@nestjs/axios";
 import { firstValueFrom } from "rxjs";
 import { ConfigService } from "@nestjs/config";
+import {
+  assertOwnership,
+  scopedFilter,
+  TenantContext,
+} from "src/common/tenant/tenant-context";
 @Injectable()
 export class QuestionsService {
   private readonly logger = new Logger(QuestionsService.name);
@@ -32,8 +37,12 @@ export class QuestionsService {
     user: JwtPayload
   ): Promise<QuestionDocument> {
     try {
+      const organizationId = (user?.organizationId as any) ?? null;
+      // Dedup within the caller's own org — the same question text in another
+      // tenant must not collide with (or leak into) this one.
       let question = await this.questionModel.findOne({
         question: createQuestionDto.question,
+        organizationId,
       });
 
       // generate intent
@@ -50,6 +59,7 @@ export class QuestionsService {
         question = new this.questionModel({
           ...createQuestionDto,
           addedBy: user._id,
+          organizationId,
           status,
           //intent,
           // intent: response from getintent function
@@ -88,7 +98,8 @@ export class QuestionsService {
   }
 
   async getAllQuestions(
-    query?: SearchParamDto
+    query?: SearchParamDto,
+    user?: TenantContext
   ): Promise<{ data: QuestionDocument[]; count: number }> {
     try {
       const {
@@ -100,14 +111,15 @@ export class QuestionsService {
         question,
       } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (status) queryObject["status"] = status;
       if (tags) queryObject["tags"] = { $in: tags };
       if (language) queryObject["questionLanguage.label"] = language;
       if (question) queryObject["$text"] = { $search: question };
 
+      const scoped = scopedFilter(user, queryObject);
       const questions = this.questionModel
-        .find(queryObject)
+        .find(scoped)
         .sort({ createdAt: -1 })
         .populate("addedBy", "name")
         .populate("approvedBy", "name")
@@ -116,7 +128,7 @@ export class QuestionsService {
         questions.limit(limitOfDocuments);
       }
       const data = await questions.exec();
-      const count = await this.questionModel.countDocuments(queryObject);
+      const count = await this.questionModel.countDocuments(scoped);
       return { data, count };
     } catch (error) {
       this.logger.error(`Error getting all questions: ${error.message}`);
@@ -124,12 +136,13 @@ export class QuestionsService {
     }
   }
 
-  async getQuestionById(id: string): Promise<QuestionDocument> {
+  async getQuestionById(id: string, user?: TenantContext): Promise<QuestionDocument> {
     try {
       const question = await this.questionModel.findById(id);
       if (!question) {
         throw new HttpException("Question not found", 404);
       }
+      assertOwnership(user, question as any);
       return question;
     } catch (error) {
       this.logger.error(`Error getting question by id: ${error.message}`);
@@ -140,7 +153,8 @@ export class QuestionsService {
   async updateStatus(
     id: string,
     approvedBy: string,
-    updateQuestionStatusDto: UpdateQuestionStatusDto
+    updateQuestionStatusDto: UpdateQuestionStatusDto,
+    user?: TenantContext
   ): Promise<QuestionDocument> {
     try {
       const status = updateQuestionStatusDto.status;
@@ -149,6 +163,7 @@ export class QuestionsService {
       if (!question) {
         throw new HttpException("Question not found", 404);
       }
+      assertOwnership(user, question as any);
 
       if (status === QuestionStatusEnum.APPROVED) {
         question.status = status;
@@ -201,6 +216,7 @@ export class QuestionsService {
       if (!question) {
         throw new HttpException("Question not found", 404);
       }
+      assertOwnership(user as any, question as any);
       let keywords = [];
       if (updateQuestionDto.question) {
         question.question = updateQuestionDto.question;
@@ -243,12 +259,13 @@ export class QuestionsService {
     }
   }
 
-  async deleteQuestion(id: string): Promise<QuestionDocument> {
+  async deleteQuestion(id: string, user?: TenantContext): Promise<QuestionDocument> {
     try {
       const question = await this.questionModel.findById(id);
       if (!question) {
         throw new HttpException("Question not found", 404);
       }
+      assertOwnership(user, question as any);
       return await question.remove();
     } catch (error) {
       this.logger.error(`Error deleting question: ${error.message}`);
@@ -297,11 +314,13 @@ export class QuestionsService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.questionModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {});
+    const total = await this.questionModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.questionModel.countDocuments({
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -320,14 +339,15 @@ export class QuestionsService {
     };
   }
 
-  async getApprovedCount(days = 30) {
-    const total = await this.questionModel.countDocuments({
+  async getApprovedCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: QuestionStatusEnum.APPROVED,
     });
+    const total = await this.questionModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.questionModel.countDocuments({
-        status: QuestionStatusEnum.APPROVED,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -346,16 +366,17 @@ export class QuestionsService {
     };
   }
 
-  async getUnderReviewCount(days = 30) {
-    const total = await this.questionModel.countDocuments({
+  async getUnderReviewCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: QuestionStatusEnum.UNDER_REVIEW,
     });
+    const total = await this.questionModel.countDocuments(scoped);
 
     let percentageChange = 0;
 
     if (total) {
       const agoCount = await this.questionModel.countDocuments({
-        status: QuestionStatusEnum.UNDER_REVIEW,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -374,12 +395,12 @@ export class QuestionsService {
     };
   }
 
-  async stats(days = 30) {
+  async stats(days = 30, user?: TenantContext) {
     try {
       const result = await Promise.all([
-        this.getTotalCount(days),
-        this.getApprovedCount(days),
-        this.getUnderReviewCount(days),
+        this.getTotalCount(days, user),
+        this.getApprovedCount(days, user),
+        this.getUnderReviewCount(days, user),
       ]);
       return result;
     } catch (error) {

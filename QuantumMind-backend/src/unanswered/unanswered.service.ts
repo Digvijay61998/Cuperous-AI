@@ -10,6 +10,8 @@ import { CreateUnansweredDto } from './dto/create-unanswered.dto';
 import { UnansweredQuestionDocument } from './entities/unanswered-question.entity';
 import { UnansweredDocument } from './entities/unanswered.entity';
 import moment from 'moment';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
+import { TenantContext } from 'src/common/tenant/tenant-context';
 
 @Injectable()
 export class UnansweredService {
@@ -20,7 +22,21 @@ export class UnansweredService {
 
     @Inject(UNANSWERED_QUESTION_MODEL)
     private readonly unansweredQuestionModel: Model<UnansweredQuestionDocument>,
+
+    private readonly tenantScope: TenantScopeService,
   ) {}
+
+  /**
+   * Throws 404 when the caller's org does not own the given bot. SUPER_ADMIN
+   * (orgBotIds === null) passes. Used to gate bot-scoped reads.
+   */
+  private async assertBotInOrg(botId: string, user?: TenantContext) {
+    const botIds = await this.tenantScope.orgBotIds(user);
+    if (botIds === null) return;
+    if (!botId || !botIds.some((b) => String(b) === String(botId))) {
+      throw new HttpException('No unanswered questions found for this bot', 404);
+    }
+  }
 
   async create(unanswered: CreateUnansweredDto): Promise<any> {
     let unansweredQuestions = await this.unansweredModel.findOne({
@@ -43,7 +59,8 @@ export class UnansweredService {
     return await unansweredQuestions.save();
   }
 
-  async findOne(botId: string): Promise<any> {
+  async findOne(botId: string, user?: TenantContext): Promise<any> {
+    await this.assertBotInOrg(botId, user);
     const questions = await this.unansweredModel
       .findOne({
         botId: botId,
@@ -81,8 +98,9 @@ export class UnansweredService {
     }
   }
 
-  async getAllQuestionsInCSV(res: Response, botId?: string) {
+  async getAllQuestionsInCSV(res: Response, botId?: string, user?: TenantContext) {
     try {
+      await this.assertBotInOrg(botId, user);
       const questions = await this.unansweredQuestionModel
         .find({
           botid: botId,

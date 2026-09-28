@@ -59,6 +59,7 @@ import { SocialModule } from "./social/social.module";
 import { ScrapeModule } from "./scraper/scraper.module";
 import { AiModule } from "./ai/ai.module";
 import { TrainingDataModule } from "./trainingdata/trainingdata.module";
+import { CrmModule } from "./crm/crm.module";
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { TrainingDataModule } from "./trainingdata/trainingdata.module";
     }),
 
     DatabaseModule,
+    CrmModule,
     AuditModule,
     OrganizationModule,
     BillingModule,

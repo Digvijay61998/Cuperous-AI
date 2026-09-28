@@ -6,7 +6,7 @@ import {
   OnModuleInit,
 } from "@nestjs/common";
 import { ObjectId } from "bson";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import {
   CHAT_PROVIDER,
   CONVERSATION_ACTIVITIES_PROVIDER,
@@ -36,6 +36,8 @@ import {
   ChatStatusEnum,
 } from "./enums/chat-status.enum";
 import { ChatDirectionEnum } from "./enums/chat-direction.enum";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
+import { TenantContext } from "src/common/tenant/tenant-context";
 
 @Injectable()
 export class ConversationService {
@@ -50,7 +52,9 @@ export class ConversationService {
     @Inject(CONVERSATION_ACTIVITIES_PROVIDER)
     private readonly conversationActivitiesModel: Model<ConversationActivitiesDocument>,
 
-    private readonly eventEmitter: EventEmitter2
+    private readonly eventEmitter: EventEmitter2,
+
+    private readonly tenantScope: TenantScopeService
   ) {}
 
   // onModuleInit() {
@@ -530,10 +534,13 @@ export class ConversationService {
     }
   }
 
-  async getConversationByAgentId(id: string) {
+  async getConversationByAgentId(id: string, user?: TenantContext) {
     try {
+      const botIds = await this.tenantScope.orgBotIds(user);
+      const filter: Record<string, any> = { agent: id };
+      if (botIds !== null) filter.bot = { $in: botIds };
       const conversations = await this.conversationModel
-        .find({ agent: id })
+        .find(filter)
         .populate("visitor", "name")
         .populate("bot", "name")
         .populate("agent", "name")
@@ -546,10 +553,13 @@ export class ConversationService {
     }
   }
 
-  async getConversationByVisitorId(id: string) {
+  async getConversationByVisitorId(id: string, user?: TenantContext) {
     try {
+      const botIds = await this.tenantScope.orgBotIds(user);
+      const filter: Record<string, any> = { visitor: id };
+      if (botIds !== null) filter.bot = { $in: botIds };
       const conversations = await this.conversationModel
-        .find({ visitor: id })
+        .find(filter)
         .populate("visitor", "name")
         .populate("bot", "name")
         .populate("agent", "name")
@@ -589,8 +599,14 @@ export class ConversationService {
     }
   }
 
-  async getConversationByBotId(id: string) {
+  async getConversationByBotId(id: string, user?: TenantContext) {
     try {
+      // The caller is asking for one bot's conversations; make sure that bot
+      // belongs to their org (SUPER_ADMIN's orgBotIds is null => allowed).
+      const botIds = await this.tenantScope.orgBotIds(user);
+      if (botIds !== null && !botIds.some((b) => String(b) === String(id))) {
+        return [];
+      }
       const conversations = await this.conversationModel
         .find({
           bot: id,
@@ -606,10 +622,13 @@ export class ConversationService {
     }
   }
 
-  async getAllConversations(query?: {
-    status?: ConversationStatusEnum;
-    type?: ConversationTypeEnum;
-  }) {
+  async getAllConversations(
+    query?: {
+      status?: ConversationStatusEnum;
+      type?: ConversationTypeEnum;
+    },
+    user?: TenantContext
+  ) {
     try {
       const queryObj = {
         $match: { _id: { $ne: null } },
@@ -623,6 +642,12 @@ export class ConversationService {
 
       if (query.type) {
         queryObj.$match["type"] = query.type;
+      }
+
+      // Tenant scope: restrict to the org's bots (null => SUPER_ADMIN).
+      const botIds = await this.tenantScope.orgBotIds(user);
+      if (botIds !== null) {
+        queryObj.$match["bot"] = { $in: botIds };
       }
 
       const conversations = await this.conversationModel.aggregate([
@@ -888,7 +913,8 @@ export class ConversationService {
     title?: string,
     status?: ConversationStatusEnum,
     all?: boolean,
-    isHistorical?: boolean
+    isHistorical?: boolean,
+    botIds?: Types.ObjectId[] | null
   ) {
     const query = {};
 
@@ -904,6 +930,12 @@ export class ConversationService {
     }
     if (isHistorical) {
       query["status"] = { $ne: ConversationStatusEnum.IN_PROGRESS };
+    }
+    // Tenant scope: conversations carry no organizationId, so pin them to the
+    // caller's bots. `null` means SUPER_ADMIN (no restriction); `[]` means an
+    // org with no bots, which correctly matches nothing.
+    if (botIds !== undefined && botIds !== null) {
+      query["bot"] = { $in: botIds };
     }
 
     const total = await this.conversationModel.countDocuments(query);
@@ -1394,7 +1426,8 @@ export class ConversationService {
 
   async getActiveCount(
     query: { agentId?: string; anonymous?: boolean },
-    title?: string
+    title?: string,
+    botIds?: Types.ObjectId[] | null
   ) {
     const { agentId, anonymous } = query;
     const match = {
@@ -1406,6 +1439,10 @@ export class ConversationService {
     }
     if (anonymous) {
       match["anonymous"] = true;
+    }
+    // Tenant scope: pin to the caller's bots (null => SUPER_ADMIN, no limit).
+    if (botIds !== undefined && botIds !== null) {
+      match["bot"] = { $in: botIds };
     }
     const total = await this.conversationModel.countDocuments(match);
     return {
@@ -1419,14 +1456,23 @@ export class ConversationService {
   }
 
   async getActiveStats(user: JwtPayload) {
+    // "Total Active" spans the whole org, so scope it to the caller's bots.
+    // The "My *" tiles are already narrowed by agentId, but we still scope them
+    // so an agent can never see counts drawn from another tenant's bots.
+    const botIds = await this.tenantScope.orgBotIds(user as TenantContext);
     return Promise.all([
-      this.getActiveCount({}, "Total Active"),
-      this.getActiveCount({ agentId: user._id }, "My Active"),
+      this.getActiveCount({}, "Total Active", botIds),
+      this.getActiveCount({ agentId: user._id }, "My Active", botIds),
       this.getActiveCount(
         { agentId: user._id, anonymous: true },
-        "My Anonymous"
+        "My Anonymous",
+        botIds
       ),
-      this.getActiveCount({ agentId: user._id, anonymous: false }, "My Named"),
+      this.getActiveCount(
+        { agentId: user._id, anonymous: false },
+        "My Named",
+        botIds
+      ),
     ]);
   }
 

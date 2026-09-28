@@ -12,6 +12,11 @@ import { incrementClicksDto } from './dto/increment-count.dto';
 import { ObjectId } from 'bson';
 import { offerQueryParams } from './dto/get-offer.params.dto';
 import { ComparisonDto } from 'src/util/comparison.dto';
+import {
+  assertOwnership,
+  scopedFilter,
+  TenantContext,
+} from 'src/common/tenant/tenant-context';
 @Injectable()
 export class OfferService {
   private readonly logger = new Logger(OfferService.name);
@@ -21,9 +26,12 @@ export class OfferService {
     private readonly botsService: BotsService,
   ) {}
 
-  async create(createOfferDto: CreateOfferDto) {
+  async create(createOfferDto: CreateOfferDto, actor?: TenantContext) {
     try {
-      const offer = new this.offerModel(createOfferDto);
+      const offer = new this.offerModel({
+        ...createOfferDto,
+        organizationId: (actor?.organizationId as any) ?? null,
+      });
       return await offer.save();
     } catch (error) {
       this.logger.error(`Error in createOffer: ${error.message}`);
@@ -31,7 +39,7 @@ export class OfferService {
     }
   }
 
-  async findAll(query?: SearchParamDto) {
+  async findAll(query?: SearchParamDto, user?: TenantContext) {
     try {
       const {
         skip: documentsToSkip,
@@ -40,12 +48,13 @@ export class OfferService {
         bot,
       } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (status) queryObject['status'] = status;
       if (bot) queryObject['assignedToBots'] = { $in: [bot] };
 
+      const scoped = scopedFilter(user, queryObject);
       const offers = this.offerModel
-        .find(queryObject)
+        .find(scoped)
         .sort({ createdAt: -1 })
         .populate('assignedToBots', 'name')
         .skip(documentsToSkip);
@@ -53,7 +62,7 @@ export class OfferService {
         offers.limit(limitOfDocuments);
       }
       const data = await offers.exec();
-      const count = await this.offerModel.countDocuments(queryObject);
+      const count = await this.offerModel.countDocuments(scoped);
       return { data, count };
     } catch (error) {
       this.logger.error(`Error in findAllOffers: ${error.message}`);
@@ -61,7 +70,7 @@ export class OfferService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: TenantContext) {
     try {
       const offer = await this.offerModel
         .findById(id)
@@ -71,6 +80,7 @@ export class OfferService {
       if (!offer) {
         throw new HttpException('Offer not found', 404);
       }
+      assertOwnership(user, offer as any);
       return offer;
     } catch (error) {
       this.logger.error(`Error in findOneOffer: ${error.message}`);
@@ -78,8 +88,13 @@ export class OfferService {
     }
   }
 
-  async update(id: string, updateOfferDto: UpdateOfferDto) {
+  async update(id: string, updateOfferDto: UpdateOfferDto, user?: TenantContext) {
     try {
+      const existing = await this.offerModel.findById(id).select('organizationId');
+      if (!existing) {
+        throw new HttpException('Offer not found', 404);
+      }
+      assertOwnership(user, existing as any);
       const offer = await this.offerModel
         .findOneAndUpdate({ _id: id }, updateOfferDto, { new: true })
         .exec();
@@ -94,13 +109,14 @@ export class OfferService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, user?: TenantContext) {
     try {
       const offer = await this.offerModel.findById(id).exec();
 
       if (!offer) {
         throw new HttpException('Offer not found', 404);
       }
+      assertOwnership(user, offer as any);
       return await offer.remove();
     } catch (error) {
       this.logger.error(`Error in removeOffer: ${error.message}`);
@@ -126,11 +142,13 @@ export class OfferService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.offerModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {});
+    const total = await this.offerModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.offerModel.countDocuments({
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -148,14 +166,15 @@ export class OfferService {
     };
   }
 
-  async getPublishedCount(days = 30) {
-    const total = await this.offerModel.countDocuments({
+  async getPublishedCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: OfferStatusEnum.PUBLISHED,
     });
+    const total = await this.offerModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.offerModel.countDocuments({
-        status: OfferStatusEnum.PUBLISHED,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -173,14 +192,15 @@ export class OfferService {
     };
   }
 
-  async getDraftCount(days = 30) {
-    const total = await this.offerModel.countDocuments({
+  async getDraftCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: OfferStatusEnum.DRAFT,
     });
+    const total = await this.offerModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.offerModel.countDocuments({
-        status: OfferStatusEnum.DRAFT,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -198,12 +218,12 @@ export class OfferService {
     };
   }
 
-  async stats(days = 30) {
+  async stats(days = 30, user?: TenantContext) {
     try {
       const result = await Promise.all([
-        this.getTotalCount(days),
-        this.getPublishedCount(days),
-        this.getDraftCount(days),
+        this.getTotalCount(days, user),
+        this.getPublishedCount(days, user),
+        this.getDraftCount(days, user),
       ]);
       return result;
     } catch (error) {

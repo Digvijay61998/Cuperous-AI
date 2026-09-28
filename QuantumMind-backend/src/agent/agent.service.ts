@@ -543,12 +543,14 @@ export class AgentService implements OnModuleInit {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.agentModel.countDocuments();
+  async getTotalCount(user?: TenantContext, days = 30) {
+    const scoped = scopedFilter(user, {});
+    const total = await this.agentModel.countDocuments(scoped);
     let percentageChange = 0;
 
     if (total) {
       const agoCount = await this.agentModel.countDocuments({
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - 60)),
         },
@@ -565,18 +567,22 @@ export class AgentService implements OnModuleInit {
     };
   }
 
-  async getOnlineAgentsCount(days = 1) {
-    const total = await this.agentModel.countDocuments({
-      status: AgentStatusEnum.ONLINE,
-    });
+  async getOnlineAgentsCount(days = 1, user?: TenantContext) {
+    const total = await this.agentModel.countDocuments(
+      scopedFilter(user, {
+        status: AgentStatusEnum.ONLINE,
+      })
+    );
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.agentModel.countDocuments({
-        status: AgentStatusEnum.ONLINE,
-        lastSeen: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.agentModel.countDocuments(
+        scopedFilter(user, {
+          status: AgentStatusEnum.ONLINE,
+          lastSeen: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        })
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
     return {
@@ -589,18 +595,22 @@ export class AgentService implements OnModuleInit {
     };
   }
 
-  async getActiveAgentsCount(days = 30) {
-    const total = await this.agentModel.countDocuments({
-      active: true,
-    });
+  async getActiveAgentsCount(days = 30, user?: TenantContext) {
+    const total = await this.agentModel.countDocuments(
+      scopedFilter(user, {
+        active: true,
+      })
+    );
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.agentModel.countDocuments({
-        active: true,
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.agentModel.countDocuments(
+        scopedFilter(user, {
+          active: true,
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        })
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
     return {
@@ -613,12 +623,12 @@ export class AgentService implements OnModuleInit {
     };
   }
 
-  async getStats() {
+  async getStats(user?: TenantContext) {
     try {
       const result = await Promise.all([
-        this.getTotalCount(),
-        this.getOnlineAgentsCount(1),
-        this.getActiveAgentsCount(),
+        this.getTotalCount(user),
+        this.getOnlineAgentsCount(1, user),
+        this.getActiveAgentsCount(30, user),
       ]);
       return result;
     } catch (error) {
@@ -627,9 +637,18 @@ export class AgentService implements OnModuleInit {
     }
   }
 
-  async getTotalAgent() {
+  async getTotalAgent(user?: TenantContext) {
     try {
+      // Aggregation does not auto-cast; build the org match explicitly and
+      // convert the id to an ObjectId when the caller is org-scoped.
+      const scoped: Record<string, any> = scopedFilter(user, {});
+      if (scoped.organizationId) {
+        scoped.organizationId = new mongoose.Types.ObjectId(
+          String(scoped.organizationId)
+        );
+      }
       const response = await this.agentModel.aggregate([
+        { $match: scoped },
         {
           $group: {
             _id: null,

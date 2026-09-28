@@ -152,6 +152,9 @@ pm2 status
 pm2 logs jarcube-backend                    # live tail
 pm2 logs jarcube-backend --lines 500 --nostream | grep -i error
 The AI service is not on EC2 — per section 15 of your own infra guide it runs in Docker on this laptop, reached through a Cloudflare Tunnel. So its logs are local:
+pm2 reload jarcube-backend               
+
+
 
 bash
 

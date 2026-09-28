@@ -35,6 +35,16 @@ type CardsType = Cards[];
   },
 })
 export class Offer {
+  // Tenant owner. Null for legacy rows created before multi-tenancy; those are
+  // visible only to SUPER_ADMIN until backfilled.
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
+
   @Prop()
   title: string;
 

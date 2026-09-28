@@ -17,8 +17,14 @@ export class ConversationController {
   constructor(private readonly conversationService: ConversationService) {}
 
   @Get()
-  async findAll(@Query() query: SearchConversationDto) {
-    return await this.conversationService.getAllConversations(query);
+  async findAll(
+    @Query() query: SearchConversationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.conversationService.getAllConversations(
+      query,
+      user as any,
+    );
   }
 
   @Get("active-conversations")
@@ -64,17 +70,35 @@ export class ConversationController {
   }
 
   @Get("visitor/:visitorId")
-  async getConversationByVisitorId(@Param("visitorId") visitorId: string) {
-    return await this.conversationService.getConversationByVisitorId(visitorId);
+  async getConversationByVisitorId(
+    @Param("visitorId") visitorId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.conversationService.getConversationByVisitorId(
+      visitorId,
+      user as any,
+    );
   }
 
   @Get("agent/:agentId")
-  async getConversationByAgentId(@Param("agentId") agentId: string) {
-    return await this.conversationService.getConversationByAgentId(agentId);
+  async getConversationByAgentId(
+    @Param("agentId") agentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.conversationService.getConversationByAgentId(
+      agentId,
+      user as any,
+    );
   }
 
   @Get("bot/:botId")
-  async getConversationByBotId(@Param("botId") botId: string) {
-    return await this.conversationService.getConversationByBotId(botId);
+  async getConversationByBotId(
+    @Param("botId") botId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.conversationService.getConversationByBotId(
+      botId,
+      user as any,
+    );
   }
 }

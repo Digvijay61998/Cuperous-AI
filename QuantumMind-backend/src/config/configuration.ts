@@ -219,6 +219,17 @@ export default () => ({
     // Request timeout (ms) for AI query calls.
     timeout: parseInt(process.env.AI_TIMEOUT, 10) || 20000,
   },
+
+  // CRM module — its own Postgres (AWS RDS), separate from the Mongo above.
+  // Multi-tenant: one shared instance, every row scoped by organizationId.
+  // `databaseUrl` is the default/shared connection; per-tenant overrides (a
+  // client on its own database) are resolved at runtime by CrmPrismaService and
+  // do not require a code change.
+  crm: {
+    databaseUrl:
+      process.env.CRM_DATABASE_URL ||
+      "postgresql://postgres:postgres@localhost:5432/crm?schema=public",
+  },
   delay: {
     node: process.env.NODE_DELAY || 1000,
     message: process.env.MESSAGE_DELAY || 750,

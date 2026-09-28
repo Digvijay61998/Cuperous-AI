@@ -1,6 +1,9 @@
 // ** React Imports
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+// ** Next Import
+import { useRouter } from 'next/router';
+
 // ** MUI Imports
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -19,6 +22,8 @@ import { fetchDeals } from 'src/store/apps/crm';
 import CustomChip from 'src/@core/components/mui/chip';
 import CrmEmptyState from 'src/views/crm/CrmEmptyState';
 import CrmTableHeader from 'src/views/crm/CrmTableHeader';
+import DealDrawer from 'src/views/crm/DealDrawer';
+import SavedViewsBar from 'src/views/crm/SavedViewsBar';
 
 // ** Utils
 import {
@@ -30,17 +35,26 @@ import {
 
 const CrmDeals = () => {
   const dispatch = useDispatch<AppDispatch>();
+  const router = useRouter();
   const { data } = useSelector((state: RootState) => state.crm.deals);
   const loading = useSelector((state: RootState) => state.crm.loadingDeals);
 
   const [value, setValue] = useState<string>('');
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const [editing, setEditing] = useState<any>(null);
 
   const handleFilter = useCallback((val: string) => {
     setValue(val);
   }, []);
 
+  const openCreate = () => {
+    setEditing(null);
+    setDrawerOpen(true);
+  };
+  const toggleDrawer = () => setDrawerOpen((o) => !o);
+
   useEffect(() => {
-    dispatch(fetchDeals({ search: value, limit: 200 }));
+    dispatch(fetchDeals({ q: value, pageSize: 100 }));
   }, [dispatch, value]);
 
   // Group deals into their pipeline stages.
@@ -62,7 +76,8 @@ const CrmDeals = () => {
     deals.reduce((sum, d) => sum + Number(d?.amount || 0), 0);
 
   return (
-    <Grid container spacing={6}>
+    <>
+      <Grid container spacing={6}>
       <Grid item xs={12}>
         <Card
           sx={{
@@ -75,7 +90,13 @@ const CrmDeals = () => {
             searchPlaceholder="Search deals"
             addLabel="Add Deal"
             handleFilter={handleFilter}
-            toggle={() => {}}
+            toggle={openCreate}
+          />
+          <Divider sx={{ m: '0 !important' }} />
+          <SavedViewsBar
+            entity="DEAL"
+            currentFilters={{ q: value }}
+            onApply={(f) => setValue(f?.q || '')}
           />
           <Divider sx={{ m: '0 !important' }} />
 
@@ -89,7 +110,9 @@ const CrmDeals = () => {
             <CrmEmptyState
               icon="bx:trending-up"
               title="No deals yet"
-              subtitle="Create your first deal, or connect the CRM backend to load your pipeline."
+              subtitle="Create your first deal to start your pipeline."
+              actionLabel="Add Deal"
+              onAction={openCreate}
             />
           )}
 
@@ -150,7 +173,12 @@ const CrmDeals = () => {
                       {deals.map((deal: any) => (
                         <Card
                           key={deal?._id || deal?.id}
-                          sx={{ boxShadow: 'rgba(0, 0, 0, 0.12) 0px 1px 3px' }}
+                          onClick={() => router.push(`/crm/deals/${deal?._id || deal?.id}`)}
+                          sx={{
+                            boxShadow: 'rgba(0, 0, 0, 0.12) 0px 1px 3px',
+                            cursor: 'pointer',
+                            '&:hover': { boxShadow: 'rgba(0, 0, 0, 0.24) 0px 3px 8px' },
+                          }}
                         >
                           <CardContent sx={{ p: '12px !important' }}>
                             <Typography sx={{ fontWeight: 500, fontSize: 14 }}>
@@ -178,7 +206,9 @@ const CrmDeals = () => {
           )}
         </Card>
       </Grid>
-    </Grid>
+      </Grid>
+      <DealDrawer open={drawerOpen} toggle={toggleDrawer} deal={editing} />
+    </>
   );
 };
 

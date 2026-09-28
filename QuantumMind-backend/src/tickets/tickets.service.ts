@@ -6,8 +6,10 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
+import { TenantContext } from "src/common/tenant/tenant-context";
 import { TICKET_DETAILS_PROVIDER, TICKET_PROVIDER } from "./constant";
 import { CreateActivityDto } from "./dto/create-activity.dto";
 import { CreateTicketDto } from "./dto/create-ticket.dto";
@@ -33,7 +35,9 @@ export class TicketsService {
     private ticketDetailsModel: Model<TicketActivitiesDocument>,
     private readonly eventEmitter: EventEmitter2,
 
-    private visitorService: VisitorService
+    private visitorService: VisitorService,
+
+    private readonly tenantScope: TenantScopeService
   ) {}
 
   async create(createTicketDto: CreateTicketDto) {
@@ -115,7 +119,7 @@ export class TicketsService {
     }
   }
 
-  async findAll(query: SearchParamDto) {
+  async findAll(query: SearchParamDto, user?: TenantContext) {
     try {
       const {
         skip: documentsToSkip,
@@ -132,6 +136,19 @@ export class TicketsService {
       if (status) queryObject["status"] = status;
       if (tags) queryObject["tags"] = { $in: tags };
       if (bot) queryObject["bot"] = bot;
+
+      // Tenant scope: pin to the org's bots. If a specific bot was requested,
+      // it must belong to the org; otherwise restrict to all of the org's bots.
+      const botIds = await this.tenantScope.orgBotIds(user);
+      if (botIds !== null) {
+        if (bot) {
+          if (!botIds.some((b) => String(b) === String(bot))) {
+            return { data: [], count: 0 };
+          }
+        } else {
+          queryObject["bot"] = { $in: botIds };
+        }
+      }
 
       if (startDate && endDate) {
         queryObject["createdAt"] = {
@@ -162,7 +179,7 @@ export class TicketsService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: TenantContext) {
     try {
       const ticket = await this.ticketModel
         .findOne({ _id: id })
@@ -171,6 +188,7 @@ export class TicketsService {
         .populate("bot", "name")
         .populate("visitor", "name email phone");
       if (!ticket) throw new NotFoundException("No Ticket found by this id");
+      await this.assertTicketOwnership(ticket, user);
       return ticket;
     } catch (error) {
       this.logger.error(
@@ -180,8 +198,27 @@ export class TicketsService {
     }
   }
 
-  async update(id: string, updateTicketDto: UpdateTicketDto) {
+  /**
+   * Asserts the caller's org owns the ticket (via its bot). Throws 404 for a
+   * cross-org access so existence cannot be probed. `bot` may be populated
+   * (an object) or a raw id.
+   */
+  private async assertTicketOwnership(ticket: any, user?: TenantContext) {
+    const botIds = await this.tenantScope.orgBotIds(user);
+    if (botIds === null) return; // SUPER_ADMIN
+    const botId = ticket?.bot?._id ?? ticket?.bot;
+    if (!botId || !botIds.some((b) => String(b) === String(botId))) {
+      throw new NotFoundException("No Ticket found by this id");
+    }
+  }
+
+  async update(id: string, updateTicketDto: UpdateTicketDto, user?: TenantContext) {
     try {
+      const existing = await this.ticketModel.findById(id).select("bot");
+      if (!existing) {
+        throw new NotFoundException("No Ticket found by this id");
+      }
+      await this.assertTicketOwnership(existing, user);
       const ticket = await this.ticketModel.findByIdAndUpdate(
         id,
         updateTicketDto,
@@ -216,13 +253,24 @@ export class TicketsService {
     }
   }
 
-  async getTotalCount(days = 7) {
-    const total = await this.ticketModel.countDocuments();
+  /**
+   * Tickets carry no organizationId, only a `bot`. This turns the org's bot
+   * ids into a reusable match fragment (empty for SUPER_ADMIN).
+   */
+  private botScope(botIds?: Types.ObjectId[] | null): Record<string, any> {
+    if (botIds === undefined || botIds === null) return {};
+    return { bot: { $in: botIds } };
+  }
+
+  async getTotalCount(days = 7, botIds?: Types.ObjectId[] | null) {
+    const scope = this.botScope(botIds);
+    const total = await this.ticketModel.countDocuments(scope);
 
     let percentageChange = 0;
 
     if (total) {
       const agoCount = await this.ticketModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - 60)),
         },
@@ -239,13 +287,16 @@ export class TicketsService {
     };
   }
 
-  async closedTickets(days = 7) {
+  async closedTickets(days = 7, botIds?: Types.ObjectId[] | null) {
+    const scope = this.botScope(botIds);
     const total = await this.ticketModel.countDocuments({
+      ...scope,
       status: TicketStatusEnum.CLOSED,
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.ticketModel.countDocuments({
+        ...scope,
         status: TicketStatusEnum.CLOSED,
         closedAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -265,13 +316,16 @@ export class TicketsService {
     };
   }
 
-  async openTickets(days = 7) {
+  async openTickets(days = 7, botIds?: Types.ObjectId[] | null) {
+    const scope = this.botScope(botIds);
     const total = await this.ticketModel.countDocuments({
+      ...scope,
       status: TicketStatusEnum.OPEN,
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.ticketModel.countDocuments({
+        ...scope,
         status: TicketStatusEnum.OPEN,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -290,23 +344,28 @@ export class TicketsService {
     };
   }
 
-  async ticketStats(days = 7) {
+  async ticketStats(days = 7, user?: TenantContext) {
+    // Scope the whole dashboard to the caller's bots (null => SUPER_ADMIN).
+    const botIds = await this.tenantScope.orgBotIds(user);
     return await Promise.all([
-      this.getTotalCount(days),
-      this.closedTickets(days),
-      this.openTickets(days),
-      this.CriticalTickets(days),
+      this.getTotalCount(days, botIds),
+      this.closedTickets(days, botIds),
+      this.openTickets(days, botIds),
+      this.CriticalTickets(days, botIds),
     ]);
   }
 
-  async CriticalTickets(days = 7) {
+  async CriticalTickets(days = 7, botIds?: Types.ObjectId[] | null) {
     try {
+      const scope = this.botScope(botIds);
       const total = await this.ticketModel.countDocuments({
+        ...scope,
         priority: TicketPriorityEnum.CRITICAL,
       });
       let percentageChange = 0;
       if (total) {
         const agoCount = await this.ticketModel.countDocuments({
+          ...scope,
           priority: TicketPriorityEnum.CRITICAL,
           createdAt: {
             $gte: new Date(new Date().setDate(new Date().getDate() - days)),

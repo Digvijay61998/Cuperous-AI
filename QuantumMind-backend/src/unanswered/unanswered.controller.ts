@@ -15,6 +15,8 @@ import { CreateUnansweredDto } from './dto/create-unanswered.dto';
 import { UnansweredService } from './unanswered.service';
 import { Response } from 'express';
 import { QueryParamDto } from './dto/query-param.dto';
+import { CurrentUser } from 'src/util';
+import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
 @Controller('unanswered')
 @ApiTags('Unanswered Questions')
 @ApiSecurity('bearer')
@@ -33,13 +35,24 @@ export class UnansweredController {
   }
 
   @Get('download')
-  async download(@Res() res: Response, @Query() query: QueryParamDto) {
-    return await this.unansweredService.getAllQuestionsInCSV(res, query.botId);
+  async download(
+    @Res() res: Response,
+    @Query() query: QueryParamDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.unansweredService.getAllQuestionsInCSV(
+      res,
+      query.botId,
+      user as any,
+    );
   }
 
   @Get(':botId')
-  async findByBotId(@Param('botId') botId: string) {
-    return await this.unansweredService.findOne(botId);
+  async findByBotId(
+    @Param('botId') botId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.unansweredService.findOne(botId, user as any);
   }
 
   @Delete(':questionId')

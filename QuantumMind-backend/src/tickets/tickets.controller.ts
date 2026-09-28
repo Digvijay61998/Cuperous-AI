@@ -30,8 +30,11 @@ export class TicketsController {
   }
 
   @Get()
-  async findAll(@Query() query: SearchParamDto) {
-    return await this.ticketsService.findAll(query);
+  async findAll(
+    @Query() query: SearchParamDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.ticketsService.findAll(query, user as any);
   }
 
   @Get('assign-to-me')
@@ -48,8 +51,8 @@ export class TicketsController {
   }
 
   @Get('stats')
-  async getStats() {
-    return await this.ticketsService.ticketStats();
+  async getStats(@CurrentUser() user: JwtPayload) {
+    return await this.ticketsService.ticketStats(7, user as any);
   }
 
   @Get('stats/home')
@@ -68,8 +71,8 @@ export class TicketsController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return await this.ticketsService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return await this.ticketsService.findOne(id, user as any);
   }
 
   @Get('report/total')
@@ -91,7 +94,8 @@ export class TicketsController {
   async update(
     @Param('id') id: string,
     @Body() updateTicketDto: UpdateTicketDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return await this.ticketsService.update(id, updateTicketDto);
+    return await this.ticketsService.update(id, updateTicketDto, user as any);
   }
 }

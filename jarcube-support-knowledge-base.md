@@ -34,7 +34,7 @@ right person, and follows up automatically so nothing goes cold.
 
 **Is JarCube a chatbot or a support desk?**
 Both. JarCube includes an AI chatbot that answers from your own content, and a
-shared team inbox where human agents take over when needed. The bot handles the
+shared team inbox where human agents take over whenf needed. The bot handles the
 repetitive questions and hands off to a person when a conversation needs one.
 
 **Who is JarCube for?**

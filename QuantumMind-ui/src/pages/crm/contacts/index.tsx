@@ -1,6 +1,9 @@
 // ** React Imports
 import { useCallback, useEffect, useState } from 'react';
 
+// ** Next Import
+import { useRouter } from 'next/router';
+
 // ** MUI Imports
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -9,38 +12,62 @@ import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { DataGrid } from '@mui/x-data-grid';
 
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+
 // ** Custom Components
 import CustomAvatar from 'src/@core/components/mui/avatar';
 import CustomChip from 'src/@core/components/mui/chip';
+import Icon from 'src/@core/components/icon';
 
 // ** Store & Actions
 import { useDispatch, useSelector } from 'react-redux';
 import { AppDispatch, RootState } from 'src/store';
-import { fetchContacts } from 'src/store/apps/crm';
+import { deleteContact, fetchContacts } from 'src/store/apps/crm';
 
 // ** Components
 import CrmEmptyState from 'src/views/crm/CrmEmptyState';
 import CrmTableHeader from 'src/views/crm/CrmTableHeader';
+import ContactDrawer from 'src/views/crm/ContactDrawer';
+import SavedViewsBar from 'src/views/crm/SavedViewsBar';
 
 // ** Utils
 import { formatDate, initials, statusColor } from 'src/views/crm/utils';
 
 const CrmContacts = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { data, count } = useSelector((state: RootState) => state.crm.contacts);
+  const router = useRouter();
+  const { data, count, fieldColumns } = useSelector(
+    (state: RootState) => state.crm.contacts,
+  );
   const loading = useSelector((state: RootState) => state.crm.loadingContacts);
 
   const [value, setValue] = useState<string>('');
   const [page, setPage] = useState<number>(0);
   const [pageSize, setPageSize] = useState<number>(10);
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const [editing, setEditing] = useState<any>(null);
 
   const handleFilter = useCallback((val: string) => {
     setValue(val);
     setPage(0);
   }, []);
 
+  const openCreate = () => {
+    setEditing(null);
+    setDrawerOpen(true);
+  };
+  const openEdit = (row: any) => {
+    setEditing(row);
+    setDrawerOpen(true);
+  };
+  const toggleDrawer = () => setDrawerOpen((o) => !o);
+  const handleDelete = (id: string) => {
+    if (id) dispatch(deleteContact(id));
+  };
+
   useEffect(() => {
-    dispatch(fetchContacts({ skip: page * pageSize, limit: pageSize, search: value }));
+    dispatch(fetchContacts({ page: page + 1, pageSize, q: value }));
   }, [dispatch, page, pageSize, value]);
 
   const columns = [
@@ -66,7 +93,17 @@ const CrmContacts = () => {
               {initials(name)}
             </CustomAvatar>
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              <Typography sx={{ fontWeight: 500, lineHeight: 1.2 }}>{name}</Typography>
+              <Typography
+                onClick={() => router.push(`/crm/contacts/${row?._id || row?.id}`)}
+                sx={{
+                  fontWeight: 500,
+                  lineHeight: 1.2,
+                  cursor: 'pointer',
+                  '&:hover': { color: 'primary.main' },
+                }}
+              >
+                {name}
+              </Typography>
               {row?.title && (
                 <Typography variant="caption" color="text.secondary">
                   {row.title}
@@ -124,12 +161,65 @@ const CrmContacts = () => {
         <Typography variant="body2">{formatDate(row?.createdAt)}</Typography>
       ),
     },
+    {
+      flex: 0.12,
+      minWidth: 110,
+      field: 'actions',
+      headerName: 'Actions',
+      sortable: false,
+      renderCell: ({ row }: any) => (
+        <>
+          <Tooltip title="Edit" arrow placement="top">
+            <IconButton size="small" color="primary" onClick={() => openEdit(row)}>
+              <Icon icon="bx:pencil" fontSize={18} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Delete" arrow placement="top">
+            <IconButton
+              size="small"
+              color="error"
+              onClick={() => handleDelete(row?._id || row?.id)}
+            >
+              <Icon icon="bx:trash" fontSize={18} />
+            </IconButton>
+          </Tooltip>
+        </>
+      ),
+    },
+  ];
+
+  // Dynamic columns for custom fields marked show-on-table, inserted before Actions.
+  const dynamicColumns = (fieldColumns || []).map((col: any) => ({
+    flex: 0.15,
+    minWidth: 150,
+    field: `cf_${col.id}`,
+    headerName: col.label,
+    sortable: false,
+    renderCell: ({ row }: any) => {
+      const v = row?.fields?.[col.id];
+      const shown =
+        v === null || v === undefined || v === ''
+          ? '—'
+          : typeof v === 'boolean'
+          ? v
+            ? 'Yes'
+            : 'No'
+          : String(v);
+
+      return <Typography variant="body2">{shown}</Typography>;
+    },
+  }));
+  const allColumns = [
+    ...columns.slice(0, -1),
+    ...dynamicColumns,
+    columns[columns.length - 1],
   ];
 
   const hasData = (data?.length || 0) > 0;
 
   return (
-    <Grid container spacing={6}>
+    <>
+      <Grid container spacing={6}>
       <Grid item xs={12}>
         <Card
           sx={{
@@ -142,7 +232,16 @@ const CrmContacts = () => {
             searchPlaceholder="Search contacts"
             addLabel="Add Contact"
             handleFilter={handleFilter}
-            toggle={() => {}}
+            toggle={openCreate}
+          />
+          <Divider sx={{ m: '0 !important' }} />
+          <SavedViewsBar
+            entity="CONTACT"
+            currentFilters={{ q: value }}
+            onApply={(f) => {
+              setValue(f?.q || '');
+              setPage(0);
+            }}
           />
           <Divider sx={{ m: '0 !important' }} />
 
@@ -150,14 +249,16 @@ const CrmContacts = () => {
             <CrmEmptyState
               icon="bx:user"
               title="No contacts yet"
-              subtitle="Add your first contact, or connect the CRM backend to load your existing records."
+              subtitle="Add your first contact to start building your CRM."
+              actionLabel="Add Contact"
+              onAction={openCreate}
             />
           ) : (
             <DataGrid
               autoHeight
               loading={loading}
               rows={data ?? []}
-              columns={columns}
+              columns={allColumns}
               getRowId={(row: any) => row?._id || row?.id}
               rowCount={count || 0}
               paginationMode="server"
@@ -173,7 +274,9 @@ const CrmContacts = () => {
           )}
         </Card>
       </Grid>
-    </Grid>
+      </Grid>
+      <ContactDrawer open={drawerOpen} toggle={toggleDrawer} contact={editing} />
+    </>
   );
 };
 

@@ -16,6 +16,8 @@ import { ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { offerQueryParams } from './dto/get-offer.params.dto';
 import { Public } from 'src/auth/Public/public.decorator';
 import { ComparisonDto } from 'src/util/comparison.dto';
+import { CurrentUser } from 'src/util';
+import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
 
 @Controller('offer')
 @ApiTags('Offer')
@@ -24,36 +26,40 @@ export class OfferController {
   constructor(private readonly offerService: OfferService) {}
 
   @Post()
-  async create(@Body() createOfferDto: CreateOfferDto) {
-    return await this.offerService.create(createOfferDto);
+  async create(
+    @Body() createOfferDto: CreateOfferDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return await this.offerService.create(createOfferDto, user as any);
   }
 
   @Get()
-  async findAll(@Query() query: SearchParamDto) {
-    return await this.offerService.findAll(query);
+  async findAll(@Query() query: SearchParamDto, @CurrentUser() user: JwtPayload) {
+    return await this.offerService.findAll(query, user as any);
   }
 
   @Get('stats')
-  async getStats() {
-    return await this.offerService.stats();
+  async getStats(@CurrentUser() user: JwtPayload) {
+    return await this.offerService.stats(30, user as any);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return await this.offerService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return await this.offerService.findOne(id, user as any);
   }
 
   @Patch(':id')
   async update(
     @Param('id') id: string,
     @Body() updateOfferDto: UpdateOfferDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return await this.offerService.update(id, updateOfferDto);
+    return await this.offerService.update(id, updateOfferDto, user as any);
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return await this.offerService.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return await this.offerService.remove(id, user as any);
   }
 
   @Get('report/count')

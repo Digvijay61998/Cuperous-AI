@@ -38,6 +38,7 @@ import { TagService } from "src/tag/tag.service";
 import * as mongoose from "mongoose";
 import {
   assertOwnership,
+  isCrossOrg,
   scopedFilter,
   TenantContext,
 } from "src/common/tenant/tenant-context";
@@ -301,8 +302,25 @@ export class BotsService {
     }
   }
 
-  async update(id: string, updateBotDto: UpdateBotDto) {
+  /**
+   * Loads a bot by id (or custom botId) and asserts the caller owns it.
+   * Throws 404 for a cross-org access so existence cannot be probed. Call this
+   * before acting on a bot or any of its sub-resources (setting/style/flow).
+   */
+  private async assertBotOwnership(id: string, user?: TenantContext) {
+    const bot = await this.botModel
+      .findOne({ $or: [{ _id: id }, { botId: id }] })
+      .select("organizationId");
+    if (!bot) {
+      throw new HttpException("No Bot Found by this Id", 404);
+    }
+    assertOwnership(user, bot as any);
+    return bot;
+  }
+
+  async update(id: string, updateBotDto: UpdateBotDto, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const bot = await this.botModel.findOneAndUpdate(
         { _id: id },
         updateBotDto,
@@ -323,7 +341,7 @@ export class BotsService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, user?: TenantContext) {
     try {
       const bot = await this.botModel.findOne({
         _id: id,
@@ -331,6 +349,7 @@ export class BotsService {
       if (!bot) {
         throw new HttpException("No Bot Found by this Id", 404);
       }
+      assertOwnership(user, bot as any);
       bot.status = BotStatusEnum.DELETED;
       await bot.save();
       return bot;
@@ -340,8 +359,9 @@ export class BotsService {
     }
   }
 
-  async getBotSettingById(id: string) {
+  async getBotSettingById(id: string, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botSetting = await this.botSettingModel.findOne({ botId: id });
       if (!botSetting) {
         throw new HttpException("No Bot setting Found by this Id", 404);
@@ -353,8 +373,9 @@ export class BotsService {
     }
   }
 
-  async getBotStylesById(id: string) {
+  async getBotStylesById(id: string, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botStyles = await this.botStyleModel.findOne({ botId: id });
       if (!botStyles) {
         throw new HttpException("No Bot Styles Found by this Id", 404);
@@ -366,8 +387,9 @@ export class BotsService {
     }
   }
 
-  async updateBotSetting(id: string, updateBotSettingDto: any) {
+  async updateBotSetting(id: string, updateBotSettingDto: any, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botSetting = await this.botSettingModel.findOneAndUpdate(
         { botId: id },
         updateBotSettingDto,
@@ -383,8 +405,9 @@ export class BotsService {
     }
   }
 
-  async updateBotStyle(id: string, updateBotStyleDto: any) {
+  async updateBotStyle(id: string, updateBotStyleDto: any, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botStyle = await this.botStyleModel.findOneAndUpdate(
         { botId: id },
         updateBotStyleDto,
@@ -400,8 +423,9 @@ export class BotsService {
     }
   }
 
-  async getBotFlow(id: string) {
+  async getBotFlow(id: string, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botFlow = await this.botFlowModel.findOne({ botId: id });
       if (!botFlow) {
         throw new HttpException("No Bot Flow Found by this Id", 404);
@@ -413,8 +437,9 @@ export class BotsService {
     }
   }
 
-  async updateBotFlow(id: string, updateBotFlowDto: UpdateBotFlowDto) {
+  async updateBotFlow(id: string, updateBotFlowDto: UpdateBotFlowDto, user?: TenantContext) {
     try {
+      await this.assertBotOwnership(id, user);
       const botFlow = await this.botFlowModel.findOneAndUpdate(
         { botId: id },
         updateBotFlowDto,
@@ -556,13 +581,30 @@ export class BotsService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.botModel.countDocuments();
+  /**
+   * The org's bot `_id`s, or `null` for a SUPER_ADMIN (no org restriction).
+   * Used to scope the conversation/ticket dashboard tiles, which reference a
+   * bot but carry no organizationId of their own.
+   */
+  private async orgBotObjectIds(
+    user?: TenantContext,
+  ): Promise<mongoose.Types.ObjectId[] | null> {
+    if (isCrossOrg(user)) return null;
+    const scoped = scopedFilter(user, {});
+    const bots = await this.botModel.find(scoped).select("_id").lean();
+    return bots.map((b: any) => b._id as mongoose.Types.ObjectId);
+  }
+
+  async getTotalCount(user?: TenantContext, days = 30) {
+    // Pin the count to the caller's organization (unchanged for SUPER_ADMIN).
+    const scoped = scopedFilter(user, {});
+    const total = await this.botModel.countDocuments(scoped);
 
     let percentageChange = 0;
 
     if (total) {
-      const agoCount = await this.botFlowModel.countDocuments({
+      const agoCount = await this.botModel.countDocuments({
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - 60)),
         },
@@ -579,11 +621,22 @@ export class BotsService {
     };
   }
 
-  async stats() {
+  async stats(user?: TenantContext) {
+    // Conversations and tickets have no organizationId of their own, so scope
+    // them by the bots the org owns.
+    const botIds = await this.orgBotObjectIds(user);
     const result = await Promise.all([
-      this.getTotalCount(),
-      this.conversationService.getTotalCount(),
-      this.ticketService.getTotalCount(),
+      this.getTotalCount(user),
+      this.conversationService.getTotalCount(
+        30,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        botIds,
+      ),
+      this.ticketService.getTotalCount(7, botIds),
     ]);
 
     return result;
@@ -609,9 +662,18 @@ export class BotsService {
     }
   }
 
-  async totalBots() {
+  async totalBots(user?: TenantContext) {
     try {
+      // Aggregation does not auto-cast; build the org match explicitly and
+      // convert the id to an ObjectId when the caller is org-scoped.
+      const scoped: Record<string, any> = scopedFilter(user, {});
+      if (scoped.organizationId) {
+        scoped.organizationId = new mongoose.Types.ObjectId(
+          String(scoped.organizationId),
+        );
+      }
       const result = await this.botModel.aggregate([
+        { $match: scoped },
         {
           $facet: {
             total: [

@@ -49,8 +49,8 @@ export class BotsController {
   }
 
   @Get('stats')
-  async getBotsStats() {
-    return await this.botsService.stats();
+  async getBotsStats(@CurrentUser() user: TenantContext) {
+    return await this.botsService.stats(user);
   }
 
   @Get('languages')
@@ -59,8 +59,8 @@ export class BotsController {
   }
 
   @Get('report/total')
-  async totalReport() {
-    return await this.botsService.totalBots();
+  async totalReport(@CurrentUser() user: TenantContext) {
+    return await this.botsService.totalBots(user);
   }
 
   @Public()
@@ -77,8 +77,12 @@ export class BotsController {
 
   @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Patch(':id')
-  async updateBot(@Param('id') id: string, @Body() body: UpdateBotDto) {
-    return await this.botsService.update(id, body);
+  async updateBot(
+    @Param('id') id: string,
+    @Body() body: UpdateBotDto,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.update(id, body, user);
   }
 
   @Get(':id')
@@ -87,39 +91,63 @@ export class BotsController {
   }
 
   @Get(':id/setting')
-  async getBotSetting(@Param('id') id: string) {
-    return await this.botsService.getBotSettingById(id);
+  async getBotSetting(
+    @Param('id') id: string,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.getBotSettingById(id, user);
   }
 
   @Patch(':id/setting')
-  async updateBotSetting(@Param('id') id: string, @Body() body: any) {
-    return await this.botsService.updateBotSetting(id, body);
+  async updateBotSetting(
+    @Param('id') id: string,
+    @Body() body: any,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.updateBotSetting(id, body, user);
   }
 
   @Get(':id/style')
-  async getBotStyle(@Param('id') id: string) {
-    return await this.botsService.getBotStylesById(id);
+  async getBotStyle(
+    @Param('id') id: string,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.getBotStylesById(id, user);
   }
 
   @Patch(':id/style')
-  async updateBotStyle(@Param('id') id: string, @Body() body: any) {
-    return await this.botsService.updateBotStyle(id, body);
+  async updateBotStyle(
+    @Param('id') id: string,
+    @Body() body: any,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.updateBotStyle(id, body, user);
   }
 
   @Get(':id/flow')
-  async getBotFlow(@Param('id') id: string) {
-    return await this.botsService.getBotFlow(id);
+  async getBotFlow(
+    @Param('id') id: string,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.getBotFlow(id, user);
   }
 
   @Patch(':id/flow')
-  async updateBotFlow(@Param('id') id: string, @Body() body: any) {
-    return await this.botsService.updateBotFlow(id, body);
+  async updateBotFlow(
+    @Param('id') id: string,
+    @Body() body: any,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.updateBotFlow(id, body, user);
   }
 
   @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @Delete(':id')
-  async deleteBot(@Param('id') id: string) {
-    return await this.botsService.remove(id);
+  async deleteBot(
+    @Param('id') id: string,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return await this.botsService.remove(id, user);
   }
 
   @Get('flow/node/:id')

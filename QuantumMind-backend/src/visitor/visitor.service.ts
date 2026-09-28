@@ -22,6 +22,8 @@ import { ConversationService } from "src/conversation/conversation.service";
 import { ReportParamsDto } from "src/util/report-params.dto";
 import { pipeline } from "stream";
 import moment from "moment";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
+import { TenantContext } from "src/common/tenant/tenant-context";
 
 @Injectable()
 export class VisitorService {
@@ -34,7 +36,9 @@ export class VisitorService {
 
     private httpService: HttpService,
 
-    private conversationService: ConversationService
+    private conversationService: ConversationService,
+
+    private readonly tenantScope: TenantScopeService
   ) {}
 
   async createVisitor(createVisitorDto: CreateVisitorDto, req: any) {
@@ -76,7 +80,7 @@ export class VisitorService {
     return visitor;
   }
 
-  async getVisitor(visitorId: string) {
+  async getVisitor(visitorId: string, user?: TenantContext) {
     try {
       const visitor = await this.visitorModel
         .findById(visitorId)
@@ -97,6 +101,15 @@ export class VisitorService {
         })
         .populate("visitorDetails");
 
+      // Tenant scope: the visitor must belong to one of the org's bots.
+      const botIds = await this.tenantScope.orgBotIds(user);
+      if (botIds !== null && visitor) {
+        const botId = (visitor.bot as any)?._id ?? visitor.bot;
+        if (!botId || !botIds.some((b) => String(b) === String(botId))) {
+          throw new HttpException("No visitor found by this id", 404);
+        }
+      }
+
       return visitor;
     } catch (error) {
       this.logger.error(
@@ -107,7 +120,7 @@ export class VisitorService {
     }
   }
 
-  async getAllVisitors(query: VisitorQueryParams) {
+  async getAllVisitors(query: VisitorQueryParams, user?: TenantContext) {
     try {
       const {
         skip: documentsToSkip,
@@ -119,9 +132,19 @@ export class VisitorService {
         text,
       } = query;
 
+      // Tenant scope: pin to the org's bots. A specific requested bot must be
+      // within the org; otherwise restrict to all of the org's bots.
+      const botIds = await this.tenantScope.orgBotIds(user);
+      if (botIds !== null && bot && !botIds.some((b) => String(b) === String(bot))) {
+        return { data: [], count: 0, bots: [] } as any;
+      }
+      const orgBotScope =
+        botIds !== null && !bot ? { $in: botIds } : undefined;
+
       const queryObject = {};
       if (status) queryObject["status"] = status;
       if (bot) queryObject["bot"] = bot;
+      else if (orgBotScope) queryObject["bot"] = orgBotScope;
       if (startDate) queryObject["createdAt"] = { $gte: startDate };
       if (endDate) queryObject["createdAt"] = { $lte: endDate };
       if (startDate && endDate)
@@ -154,6 +177,7 @@ export class VisitorService {
 
       if (status) queryObject2["status"] = status;
       if (bot) queryObject2["bot"] = new mongoose.Types.ObjectId(bot);
+      else if (orgBotScope) queryObject2["bot"] = orgBotScope;
       if (startDate) queryObject2["createdAt"] = { $gte: startDate };
       if (endDate) queryObject2["createdAt"] = { $lte: endDate };
       if (startDate && endDate)

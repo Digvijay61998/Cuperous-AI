@@ -15,6 +15,11 @@ import { incrementClicksDto } from './dto/increment-count.dto';
 import { AdvertisementQueryParams } from './dto/get-advertisement.params.dto';
 import { ObjectId } from 'bson';
 import { ComparisonDto } from 'src/util/comparison.dto';
+import {
+  assertOwnership,
+  scopedFilter,
+  TenantContext,
+} from 'src/common/tenant/tenant-context';
 
 @Injectable()
 export class AdvertisementService {
@@ -27,10 +32,14 @@ export class AdvertisementService {
     private readonly botsService: BotsService,
   ) {}
 
-  async create(createAdvertisementDto: CreateAdvertisementDto) {
+  async create(
+    createAdvertisementDto: CreateAdvertisementDto,
+    actor?: TenantContext,
+  ) {
     try {
       const createdAdvertisement = new this.advertisementModel({
         ...createAdvertisementDto,
+        organizationId: (actor?.organizationId as any) ?? null,
         assignedToBots: [],
       });
 
@@ -58,7 +67,7 @@ export class AdvertisementService {
     }
   }
 
-  async findAll(query?: SearchParamDto) {
+  async findAll(query?: SearchParamDto, user?: TenantContext) {
     try {
       const {
         skip: documentsToSkip,
@@ -67,12 +76,13 @@ export class AdvertisementService {
         bot,
       } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (status) queryObject['status'] = status;
       if (bot) queryObject['assignedToBots'] = { $in: [bot] };
 
+      const scoped = scopedFilter(user, queryObject);
       const offers = this.advertisementModel
-        .find(queryObject)
+        .find(scoped)
         .sort({ createdAt: -1 })
         .populate('assignedToBots', 'name')
         .skip(documentsToSkip);
@@ -80,7 +90,7 @@ export class AdvertisementService {
         offers.limit(limitOfDocuments);
       }
       const data = await offers.exec();
-      const count = await this.advertisementModel.countDocuments(queryObject);
+      const count = await this.advertisementModel.countDocuments(scoped);
       return { data, count };
     } catch (error) {
       this.logger.error(`Error while getting advertisements: ${error}`);
@@ -88,7 +98,7 @@ export class AdvertisementService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: TenantContext) {
     try {
       const advertisement = await this.advertisementModel
         .findById(id)
@@ -97,6 +107,7 @@ export class AdvertisementService {
       if (!advertisement) {
         throw new HttpException('Advertisement not found', 404);
       }
+      assertOwnership(user, advertisement as any);
       return advertisement;
     } catch (error) {
       this.logger.error(`Error while getting advertisement: ${error}`);
@@ -104,8 +115,19 @@ export class AdvertisementService {
     }
   }
 
-  async update(id: string, updateAdvertisementDto: UpdateAdvertisementDto) {
+  async update(
+    id: string,
+    updateAdvertisementDto: UpdateAdvertisementDto,
+    user?: TenantContext,
+  ) {
     try {
+      const existing = await this.advertisementModel
+        .findById(id)
+        .select('organizationId');
+      if (!existing) {
+        throw new HttpException('Advertisement not found', 404);
+      }
+      assertOwnership(user, existing as any);
       const advertisement = await this.advertisementModel.findOneAndUpdate(
         { _id: id },
         updateAdvertisementDto,
@@ -121,8 +143,15 @@ export class AdvertisementService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, user?: TenantContext) {
     try {
+      const existing = await this.advertisementModel
+        .findById(id)
+        .select('organizationId');
+      if (!existing) {
+        throw new HttpException('Advertisement not found', 404);
+      }
+      assertOwnership(user, existing as any);
       const advertisement = await this.advertisementModel.findByIdAndDelete(id);
       if (!advertisement) {
         throw new HttpException('Advertisement not found', 404);
@@ -152,11 +181,13 @@ export class AdvertisementService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.advertisementModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {});
+    const total = await this.advertisementModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.advertisementModel.countDocuments({
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -174,14 +205,15 @@ export class AdvertisementService {
     };
   }
 
-  async getPublishedCount(days = 30) {
-    const total = await this.advertisementModel.countDocuments({
+  async getPublishedCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: AdvertisementStatus.PUBLISHED,
     });
+    const total = await this.advertisementModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.advertisementModel.countDocuments({
-        status: AdvertisementStatus.PUBLISHED,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -199,14 +231,15 @@ export class AdvertisementService {
     };
   }
 
-  async getDraftCount(days = 30) {
-    const total = await this.advertisementModel.countDocuments({
+  async getDraftCount(days = 30, user?: TenantContext) {
+    const scoped = scopedFilter(user, {
       status: AdvertisementStatus.DRAFT,
     });
+    const total = await this.advertisementModel.countDocuments(scoped);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.advertisementModel.countDocuments({
-        status: AdvertisementStatus.DRAFT,
+        ...scoped,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -224,12 +257,12 @@ export class AdvertisementService {
     };
   }
 
-  async stats(days = 30) {
+  async stats(days = 30, user?: TenantContext) {
     try {
       const result = await Promise.all([
-        this.getTotalCount(days),
-        this.getPublishedCount(days),
-        this.getDraftCount(days),
+        this.getTotalCount(days, user),
+        this.getPublishedCount(days, user),
+        this.getDraftCount(days, user),
       ]);
       return result;
     } catch (error) {
