@@ -37,7 +37,7 @@ import themeConfig from 'src/configs/themeConfig';
 
 // ** Layout Import
 import BlankLayout from 'src/@core/layouts/BlankLayout';
-import { Divider, Link } from '@mui/material';
+import { Link } from '@mui/material';
 
 // ** Styled Components
 const LoginIllustration = styled('img')({
@@ -278,34 +278,10 @@ const LoginPage = () => {
             >
               Log in
             </Button>
-            <Button
-              fullWidth
-              size="large"
-              type="submit"
-              variant="outlined"
-              sx={{ mb: 4,color:'gray' }}
-            >
-              <div style={{position:'absolute' , left:'10px', display:'flex', justifyContent:'center' }}><img src="./image-files/icons/search.png"style={{
-                  position: 'relative',  width: '30px', height: '30px'}} alt="" /></div>
-                  <div>Login with Google</div>
-            </Button>
-            <Button
-              fullWidth
-              size="large"
-              type="submit"
-              variant="outlined"
-              sx={{ mb: 4 ,color:'gray', position:'relative'}}
-            >
-          <div style={{position:'absolute' , left:'10px', display:'flex', justifyContent:'center' }}><img src="./image-files/icons/facebook.png"style={{
-                      position: 'relative',  width: '30px', height: '30px'}} alt="" />
-          </div>
-          <div>Login with Facebook</div>
-            </Button>
           </form>
-          <div>
+          {/* <div>
             Don't have an account?<Button >Sign up</Button>
-          </div>
-  
+          </div> */}
         </Box>
   
       </RightWrapper>

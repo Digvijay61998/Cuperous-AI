@@ -13,7 +13,10 @@ interface Redux {
   getState: any;
   dispatch: Dispatch<any>;
 }
-const API_URL : string = environments?.api?.includes('/api') ? environments?.api : `${environments?.api}/api`
+// Always derive from the origin: checking `environments.api.includes('/api')`
+// is unreliable because the prod host is `api.jarcube.com`, whose "//api"
+// substring falsely matches, so `/api` never got appended and requests 404'd.
+const API_URL: string = `${environments?.baseurl}/api`
 // get node details
 // ** Fetch Users
 export const fetchVisitor = createAsyncThunk(
