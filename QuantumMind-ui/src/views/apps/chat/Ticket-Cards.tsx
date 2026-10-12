@@ -1,4 +1,8 @@
+// ** Next Imports
+import Link from 'next/link';
+
 // ** MUI Imports
+import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardActions from '@mui/material/CardActions';
 import CardContent from '@mui/material/CardContent';
@@ -29,7 +33,7 @@ const TicketCards = () => {
   return (
     <Stack direction="column" flexWrap="wrap" gap="1">
       {visitorDataList?.serviceRequests &&
-      visitorDataList?.serviceRequests.legnth ? (
+      visitorDataList?.serviceRequests.length ? (
         visitorDataList?.serviceRequests.map((ticket: any, index: number) => (
           <Card key={index} sx={{ mb: 3 }}>
             <CardHeader title={ticket?.subject} sx={{ mb: -4 }} />
@@ -88,7 +92,13 @@ const TicketCards = () => {
                   </Stack>
                 )}
               </Stack>
-              {/* <Button>Read More</Button> */}
+              {(ticket?._id || ticket?.id) && (
+                <Link href={`/crm/service-requests/${encodeURIComponent(ticket._id || ticket.id)}`} passHref>
+                  <Button component="a" size="small" sx={{ mt: 2, whiteSpace: 'nowrap' }}>
+                    View
+                  </Button>
+                </Link>
+              )}
             </CardActions>
           </Card>
         ))

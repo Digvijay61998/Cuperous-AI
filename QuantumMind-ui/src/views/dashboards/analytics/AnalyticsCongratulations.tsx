@@ -64,7 +64,7 @@ const AnalyticsCongratulations = () => {
             <Grid container spacing={1}>
               <Grid item xs={12} md={12} sm={12}>
                 <Button
-                  onClick={() => router.replace('/service-request/list')}
+                  onClick={() => router.push('/crm/service-requests')}
                   size="small"
                   variant="outlined"
                   startIcon={<Icon icon="mdi:frequently-asked-questions" />}

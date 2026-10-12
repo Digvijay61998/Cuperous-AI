@@ -46,6 +46,12 @@ import { TelegramModule } from "./telegram/telegram.module";
 import { ChatInitializerModule } from "./chat-initializer/chat-initializer.module";
 import { ChannelThreadModule } from "./channel-thread/channel-thread.module";
 import { InboxModule } from "./inbox/inbox.module";
+import { HandoverAlertModule } from "./handover-alert/handover-alert.module";
+import { CrmOutboxModule } from "./crm-outbox/crm-outbox.module";
+import { IncidentModule } from "./incident/incident.module";
+import { CrmBridgeModule } from "./crm-bridge/crm-bridge.module";
+import { ProfileModule } from "./profile/profile.module";
+import { LearnModule } from "./learn/learn.module";
 import { VideoModule } from "./video/video.module";
 import { TemplateModule } from "./template/template.module";
 import { FeatureFlagsModule } from "./feature-flags/feature-flags.module";
@@ -90,6 +96,12 @@ import { CrmModule } from "./crm/crm.module";
     ConversationModule,
     ChannelThreadModule,
     InboxModule,
+    HandoverAlertModule,
+    CrmOutboxModule,
+    IncidentModule,
+    CrmBridgeModule,
+    ProfileModule,
+    LearnModule,
     RedisModule,
     SocketModule,
     RedisPropagateModule,

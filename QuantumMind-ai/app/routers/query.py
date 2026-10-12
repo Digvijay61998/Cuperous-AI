@@ -20,6 +20,7 @@ def ask(request: QueryRequest):
             question=request.question,
             chat_history=request.chat_history,
             company_name=request.company_name,
+            visitor_profile=request.visitor_profile,
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("Query failed")

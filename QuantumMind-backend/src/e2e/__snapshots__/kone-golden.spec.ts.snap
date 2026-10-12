@@ -1,0 +1,289 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`golden transcripts: flows without a handover (R15.2) delivery and invoices menus: identical with the flags on and off 1`] = `
+Array [
+  Object {
+    "bot": Array [
+      "text: Welcome to the bot, how can I help you?",
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "start",
+  },
+  Object {
+    "bot": Array [
+      "buttons: Delivery & projects. What would you like to know? [All my projects | Check one elevator | What do I need to do? | Delivery stages explained | Main menu]",
+    ],
+    "node": "kone_dlv_menu",
+    "visitor": "delivery",
+  },
+  Object {
+    "bot": Array [
+      "text: A new elevator goes through these stages in myKONE:
+1. Order confirmed
+2. Drawings approved
+3. Production started
+4. Equipment shipped
+5. Delivered to site
+6. Installation started
+7. Installation completed
+8. Final inspection completed
+9. Project handed over",
+      "text: Some stages have tasks for you, such as approving drawings, confirming installation and handover dates, or getting the site ready. Ask \\"What do I need to do?\\" to see yours.",
+      "buttons: Delivery & projects. What would you like to know? [All my projects | Check one elevator | What do I need to do? | Delivery stages explained | Main menu]",
+    ],
+    "node": "kone_dlv_menu",
+    "visitor": "delivery stages",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "menu",
+  },
+  Object {
+    "bot": Array [
+      "buttons: Invoices. What do you need? [Open or overdue invoices | Download an invoice | I can't see my invoices | Question about an invoice | Main menu]",
+    ],
+    "node": "kone_inv_menu",
+    "visitor": "invoices",
+  },
+  Object {
+    "bot": Array [
+      "text: In myKONE, go to Invoices, open the invoice you need and download it as a PDF.",
+      "buttons: Invoices. What do you need? [Open or overdue invoices | Download an invoice | I can't see my invoices | Question about an invoice | Main menu]",
+    ],
+    "node": "kone_inv_menu",
+    "visitor": "download invoice",
+  },
+  Object {
+    "bot": Array [
+      "text: Invoices are only shown to users who have invoice access. Ask your company's myKONE admin to give you access, or I can put you in touch with KONE.",
+      "buttons: Invoices. What do you need? [Open or overdue invoices | Download an invoice | I can't see my invoices | Question about an invoice | Main menu]",
+    ],
+    "node": "kone_inv_menu",
+    "visitor": "cant see invoices",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "menu",
+  },
+]
+`;
+
+exports[`golden transcripts: flows without a handover (R15.2) equipment with an unreachable connector, then goodbye: identical with the flags on and off 1`] = `
+Array [
+  Object {
+    "bot": Array [
+      "text: Welcome to the bot, how can I help you?",
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "start",
+  },
+  Object {
+    "bot": Array [
+      "text: Which equipment? Type the equipment number shown in myKONE under Equipment (for example 41230018).",
+    ],
+    "node": "kone_cap_eq",
+    "visitor": "equipment",
+  },
+  Object {
+    "bot": Array [
+      "buttons: What would you like to know about equipment 41230018? [Is it running? | Next service visit | Recent stops & callouts | Report a fault | Another equipment | Main menu]",
+    ],
+    "node": "kone_eq_menu",
+    "visitor": "41230018",
+  },
+  Object {
+    "bot": Array [
+      "text: I can't load live data for this equipment right now. You can see its status, service visits and work orders in myKONE under Equipment.",
+      "buttons: Would you like help from a person? [Yes, talk to KONE | Report a myKONE problem | Main menu | No thanks]",
+    ],
+    "node": "kone_help_menu",
+    "visitor": "status",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "menu",
+  },
+  Object {
+    "bot": Array [
+      "text: Thank you for contacting us.",
+    ],
+    "node": "kone_close",
+    "visitor": "bye",
+  },
+  Object {
+    "bot": Array [],
+    "node": "kone_close",
+    "visitor": "hello again",
+  },
+]
+`;
+
+exports[`golden transcripts: flows without a handover (R15.2) free questions answered by the AI: identical with the flags on and off 1`] = `
+Array [
+  Object {
+    "bot": Array [
+      "text: Welcome to the bot, how can I help you?",
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "start",
+  },
+  Object {
+    "bot": Array [
+      "text: Here is what I found.",
+    ],
+    "node": "kone_ai_open",
+    "visitor": "how do I add a new user to myKONE?",
+  },
+  Object {
+    "bot": Array [
+      "text: Here is what I found.",
+    ],
+    "node": "kone_ai_open",
+    "visitor": "ask a question",
+  },
+  Object {
+    "bot": Array [
+      "text: Here is what I found.",
+    ],
+    "node": "kone_ai_open",
+    "visitor": "what does waiting for PO number mean?",
+  },
+  Object {
+    "bot": Array [
+      "text: Here is what I found.",
+    ],
+    "node": "kone_ai_open",
+    "visitor": "and how long does approval take?",
+  },
+]
+`;
+
+exports[`golden transcripts: flows without a handover (R15.2) reports and tenders: identical with the flags on and off 1`] = `
+Array [
+  Object {
+    "bot": Array [
+      "text: Welcome to the bot, how can I help you?",
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "start",
+  },
+  Object {
+    "bot": Array [
+      "buttons: Inspection reports. What would you like to do? [Latest inspection report | Open findings & safety issues | Explain a finding | Can KONE fix these? | Main menu]",
+    ],
+    "node": "kone_rpt_menu",
+    "visitor": "reports",
+  },
+  Object {
+    "bot": Array [
+      "text: Type or paste the finding as it appears in the report, and I'll explain it in plain language.",
+    ],
+    "node": "kone_cap_finding",
+    "visitor": "explain a finding",
+  },
+  Object {
+    "bot": Array [
+      "text: Here is what I found.",
+      "buttons: Inspection reports. What would you like to do? [Latest inspection report | Open findings & safety issues | Explain a finding | Can KONE fix these? | Main menu]",
+    ],
+    "node": "kone_rpt_menu",
+    "visitor": "Rope wear on the hoist ropes",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "menu",
+  },
+  Object {
+    "bot": Array [
+      "buttons: Tenders & quotes. What do you need? [What needs my action? | All active tenders | What does a status mean? | How do I approve or add a PO? | Main menu]",
+    ],
+    "node": "kone_tnd_menu",
+    "visitor": "tenders",
+  },
+  Object {
+    "bot": Array [
+      "text: What tender statuses mean in myKONE:
+• Pending approval: KONE has sent you a tender. Review it, then approve, reject or request a change.
+• Waiting for PO number: you approved it. Add your purchase order number so KONE can plan the work.
+• Waiting for signed tender: it needs your signature before work can start.
+• Change requested: you asked for changes and KONE is updating the tender.
+• Approved, Rejected, Cancelled, Expired: the tender is closed. Expired means no decision was made in time. Ask KONE for a new one if you still need the work.",
+      "buttons: Tenders & quotes. What do you need? [What needs my action? | All active tenders | What does a status mean? | How do I approve or add a PO? | Main menu]",
+    ],
+    "node": "kone_tnd_menu",
+    "visitor": "status meaning",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "menu",
+  },
+]
+`;
+
+exports[`golden transcripts: flows without a handover (R15.2) unconfigured segment node: identical with the flags on and off 1`] = `
+Array [
+  Object {
+    "bot": Array [
+      "text: Welcome to the bot, how can I help you?",
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "start",
+  },
+  Object {
+    "bot": Array [
+      "text: fallback",
+    ],
+    "node": "kone_start",
+    "visitor": "stop reminders",
+  },
+  Object {
+    "bot": Array [
+      "text: Hi, I'm the myKONE Assistant. I can help with your delivery projects, equipment, tenders, inspection reports, invoices and using myKONE.",
+      "text: What can I help you with today?",
+      "buttons: Choose a topic, or just type your question. Type start at any time to come back here. [Delivery & projects | Equipment & visits | Tenders & quotes | Inspection reports | Invoices | How do I…? | Talk to KONE | 🚨 Emergency]",
+    ],
+    "node": "kone_menu",
+    "visitor": "invoices",
+  },
+]
+`;

@@ -191,6 +191,9 @@ class EvalRunner:
             case_id=case_id,
             tags=list(case.get("tags") or []),
             expected_confident=expect_confident,
+            expected_handover=(
+                bool(case["expect_handover"]) if "expect_handover" in case else None
+            ),
         )
 
         history = [
@@ -216,6 +219,9 @@ class EvalRunner:
 
         score.actual_confident = response.confident
         score.confidence_correct = response.confident == expect_confident
+        score.actual_handover = getattr(response, "handover", False) is True
+        if score.expected_handover is not None:
+            score.handover_correct = score.actual_handover == score.expected_handover
         score.answer = response.answer
         score.tokens_used = response.tokens_used
 
@@ -474,9 +480,29 @@ def print_report(report: dict[str, Any]) -> None:
             )
         print()
 
+    if s.get("handover_case_count"):
+        print("  HANDOVER SIGNAL")
+        print("  " + "-" * 50)
+        print(f"  {'cases':<24} {s['handover_case_count']:>8}")
+        print(f"  {'accuracy':<24} {s['handover_accuracy']:>8.3f}")
+        print(f"  {'false positive rate':<24} {s['handover_false_positive_rate']:>8.3f}")
+        print(f"  {'false negative rate':<24} {s['handover_false_negative_rate']:>8.3f}")
+        for c in report["cases"]:
+            if c.get("expected_handover") is None:
+                continue
+            mark = "PASS" if c["handover_correct"] else "FAIL"
+            print(
+                f"  {mark} {c['case_id']:<8} expected={str(c['expected_handover']).lower():<5} "
+                f"got={str(c['actual_handover']).lower()}"
+            )
+        print()
+
     failures = [
         c for c in report["cases"]
-        if c["error"] or not c["confidence_correct"] or c["context_recall"] < 0.999
+        if c["error"]
+        or not c["confidence_correct"]
+        or c["context_recall"] < 0.999
+        or c.get("handover_correct") is False
     ]
     if failures:
         print(f"  ATTENTION — {len(failures)} case(s) below target")
@@ -487,6 +513,8 @@ def print_report(report: dict[str, Any]) -> None:
                 if c["error"]
                 else "wrong confidence"
                 if not c["confidence_correct"]
+                else "wrong handover"
+                if c.get("handover_correct") is False
                 else f"recall {c['context_recall']:.2f}"
             )
             tags = ",".join(c["tags"][:2])

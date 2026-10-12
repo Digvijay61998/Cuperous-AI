@@ -121,6 +121,11 @@ class CaseScore:
     tokens_used: int = 0
     cost_usd: float = 0.0
 
+    # Handover signal — only scored for cases that declare `expect_handover`.
+    expected_handover: bool | None = None
+    actual_handover: bool = False
+    handover_correct: bool | None = None
+
     # Diagnostics
     retrieved_sources: list[str] = field(default_factory=list)
     top_score: float | None = None
@@ -144,6 +149,9 @@ class CaseScore:
             "latency_ms": round(self.latency_ms, 2),
             "tokens_used": self.tokens_used,
             "cost_usd": round(self.cost_usd, 8),
+            "expected_handover": self.expected_handover,
+            "actual_handover": self.actual_handover,
+            "handover_correct": self.handover_correct,
             "retrieved_sources": self.retrieved_sources,
             "top_score": self.top_score,
             "answer": self.answer,
@@ -462,6 +470,21 @@ def aggregate(scores: list[CaseScore]) -> dict[str, Any]:
         "total_tokens": sum(s.tokens_used for s in scores),
         "total_cost_usd": sum(s.cost_usd for s in scores),
     }
+
+    # Handover signal: averaged only over cases that declare an expectation, so
+    # adding the suite leaves every existing headline number unchanged.
+    handover_cases = [s for s in scores if s.expected_handover is not None]
+    if handover_cases:
+        summary["handover_case_count"] = len(handover_cases)
+        summary["handover_accuracy"] = _mean(
+            [1.0 if s.handover_correct else 0.0 for s in handover_cases]
+        )
+        summary["handover_false_positive_rate"] = _mean(
+            [1.0 if s.actual_handover else 0.0 for s in handover_cases if not s.expected_handover]
+        )
+        summary["handover_false_negative_rate"] = _mean(
+            [0.0 if s.actual_handover else 1.0 for s in handover_cases if s.expected_handover]
+        )
 
     # Per-tag breakdown so we can see, e.g., that multi_turn is at 0.0 while
     # baseline is at 0.9 — the aggregate alone would hide that.

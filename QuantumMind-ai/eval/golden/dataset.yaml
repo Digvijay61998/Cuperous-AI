@@ -370,3 +370,121 @@ cases:
     expected_sources: [shipping-policy]
     expected_facts: ["standard"]
     tags: [single_turn, paraphrase]
+
+  # ------------------------------------------------------------ handover (Req 3.9)
+  # `expect_handover` is scored separately (handover_accuracy) and never affects
+  # the confidence/retrieval headline numbers. Run alone with: --tags handover
+  #
+  # The backend raises an agent alert ONLY on `handover: true`, so a false
+  # positive here is an agent being pinged for nothing — the noise this exists
+  # to remove. The `false` cases therefore matter as much as the `true` ones.
+  - id: HO-01
+    question: I want to talk to a human
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request]
+
+  - id: HO-02
+    question: Can you connect me to a real person please?
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request]
+
+  - id: HO-03
+    question: agent
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request, terse]
+
+  - id: HO-04
+    question: My order arrived broken, I need to speak with a customer service representative
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request]
+
+  - id: HO-05
+    question: mujhe kisi agent se baat karni hai
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request, multilingual]
+
+  - id: HO-06
+    question: Thanks, but this isn't helping. Transfer me to your support team.
+    expect_confident: true
+    expect_handover: true
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, explicit_request, multi_turn]
+    chat_history:
+      - role: user
+        content: My device keeps showing ERR_AUTH_401.
+      - role: assistant
+        content: ERR_AUTH_401 means the device credentials expired. Open the Acme app, go to Settings, and tap Re-authenticate.
+
+  # Mentions agents/humans/support in passing — must NOT hand over.
+  - id: HO-N01
+    question: When is support open?
+    expect_confident: true
+    expect_handover: false
+    ground_truth: Support is open Monday through Friday, 9am to 5pm Pacific Time.
+    expected_sources: [support-hours]
+    expected_facts: ["Monday"]
+    tags: [handover, passing_mention]
+
+  - id: HO-N02
+    question: Can I email your support team on a weekend?
+    expect_confident: true
+    expect_handover: false
+    ground_truth: >
+      Yes, email help@acme.test and you will get a reply within one business day.
+    expected_sources: [support-hours]
+    expected_facts: ["help@acme.test"]
+    tags: [handover, passing_mention]
+
+  - id: HO-N03
+    question: I don't want to talk to an agent, just tell me the return window
+    expect_confident: true
+    expect_handover: false
+    ground_truth: Unused items can be returned within 30 days of delivery.
+    expected_sources: [returns-policy]
+    expected_facts: ["30 days"]
+    tags: [handover, passing_mention, negation]
+
+  - id: HO-N04
+    question: Is the Widget Pro made by humans or robots?
+    expect_confident: false
+    expect_handover: false
+    ground_truth: null
+    expected_sources: []
+    tags: [handover, passing_mention]
+
+  # The answer itself is the trap: the assistant may say it "can't connect you to
+  # an agent" — the backend must not escalate on that text, and the AI must not
+  # set the flag for it either.
+  - id: HO-N05
+    question: Do your support agents work on federal holidays?
+    expect_confident: true
+    expect_handover: false
+    ground_truth: Support is closed on all US federal holidays.
+    expected_sources: [support-hours]
+    expected_facts: ["holiday"]
+    tags: [handover, passing_mention, answer_mentions_agent]
+
+  - id: HO-N06
+    question: How fast do priority support customers get a response?
+    expect_confident: true
+    expect_handover: false
+    ground_truth: Priority support customers receive a response within 4 hours, including weekends.
+    expected_sources: [support-hours]
+    expected_facts: ["4 hours"]
+    tags: [handover, passing_mention]

@@ -8,6 +8,8 @@ import { StatsModule } from "./stats/stats.module";
 import { FieldsModule } from "./fields/fields.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { IntelligenceModule } from "./intelligence/intelligence.module";
+import { CrmPluginsModule } from "./plugins/crm-plugins.module";
+import { ServiceRequestsModule } from "./service-requests/service-requests.module";
 
 /**
  * Aggregates the CRM feature modules. Kept as one import in AppModule so the CRM
@@ -17,6 +19,8 @@ import { IntelligenceModule } from "./intelligence/intelligence.module";
 @Module({
   imports: [
     CrmDatabaseModule,
+    CrmPluginsModule,
+    ServiceRequestsModule,
     ContactsModule,
     CompaniesModule,
     DealsModule,

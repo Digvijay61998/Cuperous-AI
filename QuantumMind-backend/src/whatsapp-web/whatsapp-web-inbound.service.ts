@@ -322,6 +322,19 @@ export class WhatsappWebInboundService {
         platform: PlatformEnum.WHATSAPP_WEB,
       },
       botId,
+      {
+        source: 'whatsapp_web',
+        // A hidden number (`…@lid`) is still a lead: keep the account id so the
+        // team can reply on WhatsApp (crm-plugins-service-desk R1.4, R22).
+        details: {
+          name: msg.pushName || undefined,
+          phone: msg.phone || undefined,
+          channel:
+            !msg.phone && msg.jid?.endsWith('@lid')
+              ? { kind: 'WHATSAPP_LID', value: msg.jid }
+              : undefined,
+        },
+      },
     );
     if (!visitor?.visitorId) return null;
 

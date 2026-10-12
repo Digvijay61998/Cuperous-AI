@@ -32,7 +32,10 @@ const RoleRouteGuard = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!router.isReady) return;
     if (role && !canAccessPath(role, router.pathname)) {
-      router.replace(homeRouteForRole(role));
+      const home = homeRouteForRole(role);
+      // Never redirect to the page we are already on (prevents a loop for an
+      // unexpected role whose home is not itself allowed).
+      router.replace(home !== router.pathname ? home : '/401');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady, router.pathname, role]);

@@ -20,7 +20,7 @@ export default () => ({
   },
   port: parseInt(process.env.PORT, 10) || 4000,
   database: {
-    url: process.env.MONGO_URI || "mongodb://127.0.0.1:27017/Cuprous",
+    url: process.env.DATABASE_HOST || "mongodb://127.0.0.1:27017/Cuprous",
   },
   aws: {
     enabled: process.env.AWS_ENABLED || false,
@@ -229,6 +229,11 @@ export default () => ({
     databaseUrl:
       process.env.CRM_DATABASE_URL ||
       "postgresql://postgres:postgres@localhost:5432/crm?schema=public",
+    // crm-incident-handover rollout §2: chat deletion after the profile merge is
+    // irreversible. "dry_run" (default) merges profiles but only marks
+    // conversations `would_purge`; "live" deletes the chat rows.
+    profilePurgeMode:
+      process.env.PROFILE_PURGE_MODE === "live" ? "live" : "dry_run",
   },
   delay: {
     node: process.env.NODE_DELAY || 1000,

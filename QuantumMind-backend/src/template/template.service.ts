@@ -1,6 +1,8 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
-import { isValidObjectId, Model } from 'mongoose';
+import mongoose, { isValidObjectId, Model } from 'mongoose';
 import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
+import { EntitlementService } from 'src/billing/entitlement.service';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import { TEMPLATE_INSTANCE_PROVIDER, TEMPLATE_PROVIDER } from './constant';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { SearchTemplateDto } from './dto/search-template.dto';
@@ -37,6 +39,8 @@ export class TemplateService {
     @Inject(TEMPLATE_INSTANCE_PROVIDER)
     private readonly instanceModel: Model<TemplateInstanceDocument>,
     private readonly storageService: TemplateStorageService,
+    private readonly tenantScope: TenantScopeService,
+    private readonly entitlementService: EntitlementService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -235,6 +239,9 @@ export class TemplateService {
 
   async findOne(id: string) {
     try {
+      if (!id || !isValidObjectId(id)) {
+        throw new HttpException('Template not found', 404);
+      }
       const template = await this.templateModel
         .findOne({ _id: id, isDeleted: false })
         .populate('createdBy', 'name email')
@@ -340,18 +347,37 @@ export class TemplateService {
       );
 
       const trimmedBotId = botId.trim();
+
+      // Tenant boundary: the bot must belong to the caller's org (404 for
+      // missing AND cross-org bots). The owning org is derived from the bot,
+      // never from client input.
+      const bot = await this.tenantScope.assertBotInOrg(user, trimmedBotId);
+      const orgObjectId = bot.organizationId
+        ? new mongoose.Types.ObjectId(String(bot.organizationId))
+        : null;
+      const orgId = orgObjectId ? orgObjectId.toString() : null;
+
       const existing = await this.instanceModel.findOne({
         templateId: id,
         botId: trimmedBotId,
       });
       const merged = { ...(existing?.configValues || {}), ...normalized };
 
+      // `workspaceId` is deprecated and intentionally ignored: the tenant is
+      // always server-derived from the bot's organization.
+      void workspaceId;
       const update: Record<string, any> = {
         configValues: merged,
         updatedBy: (user?._id as any) || null,
         isDeleted: false,
+        organizationId: orgObjectId,
       };
-      if (workspaceId !== undefined) update.workspaceId = workspaceId;
+
+      // A new (or revived soft-deleted) instance consumes one template slot.
+      const needsQuota = !existing || existing.isDeleted === true;
+      if (needsQuota) {
+        await this.entitlementService.reserveQuota(orgId, 'template');
+      }
 
       try {
         return await this.instanceModel.findOneAndUpdate(
@@ -362,7 +388,13 @@ export class TemplateService {
       } catch (error) {
         // Two concurrent first-time saves can both miss the findOne above; the
         // unique (templateId, botId) index makes the loser throw E11000. The
-        // document now exists, so retry the update as a plain edit.
+        // document now exists (the winner holds the quota slot), so release
+        // ours and retry the update as a plain edit.
+        if (needsQuota) {
+          await this.entitlementService
+            .releaseQuota(orgId, 'template')
+            .catch(() => undefined);
+        }
         if (error?.code === 11000 || error?.code === 11001) {
           return await this.instanceModel.findOneAndUpdate(
             { templateId: id, botId: trimmedBotId },
@@ -614,6 +646,37 @@ export class TemplateService {
   // Soft delete
   // ---------------------------------------------------------------------------
 
+  /**
+   * Soft-deletes every live instance of a (now deleted) catalog template and
+   * frees one template quota slot per instance for its owning org.
+   * Best-effort: a failure here must not fail the catalog delete itself.
+   */
+  private async releaseInstancesForTemplate(templateId: string) {
+    try {
+      const instances = await this.instanceModel
+        .find({ templateId, isDeleted: false })
+        .select('_id organizationId')
+        .lean();
+      for (const inst of instances as any[]) {
+        const res = await this.instanceModel.updateOne(
+          { _id: inst._id, isDeleted: false },
+          { $set: { isDeleted: true } },
+        );
+        // Only the caller that actually flipped the flag releases the slot.
+        if (res.modifiedCount > 0) {
+          await this.entitlementService.releaseQuota(
+            inst.organizationId ? String(inst.organizationId) : null,
+            'template',
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error releasing instances for template ${templateId}: ${error.message}`,
+      );
+    }
+  }
+
   async softDelete(id: string, user?: JwtPayload) {
     try {
       const template = await this.templateModel.findOne({
@@ -627,6 +690,7 @@ export class TemplateService {
       template.deletedBy = (user?._id as any) || null;
       template.status = TemplateStatusEnum.ARCHIVED;
       await template.save();
+      await this.releaseInstancesForTemplate(id);
       return { success: true, id };
     } catch (error) {
       this.logger.error(`Error deleting template ${id}: ${error.message}`);

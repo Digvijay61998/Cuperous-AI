@@ -7,7 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from 'src/auth/constants';
 import { OrganizationService } from 'src/organization/organization.service';
-import { Role } from '../enums/role.enum';
+import { isPlatformRole, Role } from '../enums/role.enum';
 
 /**
  * Denies every request from a user whose organization is suspended, so a
@@ -34,11 +34,22 @@ export class SuspendedOrgGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    if (!user || user.role === Role.SUPER_ADMIN || !user.organizationId) {
+    // Widget/visitor tokens (non-platform roles) are org-less by design; their
+    // routes are resolved per-bot. SUPER_ADMIN is org-independent.
+    if (!user || user.role === Role.SUPER_ADMIN || !isPlatformRole(user.role)) {
       return true;
     }
+    // An org role without an org is a broken/legacy account: deny.
+    if (!user.organizationId) {
+      throw new ForbiddenException(
+        'You are not associated with an organization',
+      );
+    }
 
-    if (await this.organizationService.isSuspended(String(user.organizationId))) {
+    // Suspended OR deleted org: a token must not outlive its tenant.
+    if (
+      await this.organizationService.isUnavailable(String(user.organizationId))
+    ) {
       throw new ForbiddenException('Your organization has been suspended');
     }
     return true;

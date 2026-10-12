@@ -1,85 +1,107 @@
-# Tasks — Multi-Tenant RBAC & Subscriptions
+# Implementation Plan: Multi-Tenant RBAC & Subscriptions
+
+## Overview
 
 Phased so each phase is shippable and verifiable. Tenancy (the security boundary) lands
 before entitlements and UI. References point back to `requirements.md`.
 
----
+Verification assets:
+- Unit/negative tests: `QuantumMind-backend/src/common/tenant/rbac-security.spec.ts`,
+  `src/common/guards/roles.guard.spec.ts`, `src/common/constants/role-tabs.spec.ts`.
+- Live HTTP scenario suite (118 checks, isolated DB): `QuantumMind-backend/test/rbac-e2e.js`
+  — run the built backend against an empty database, then `node test/rbac-e2e.js`
+  (`BASE` env var overrides `http://localhost:4099/api`; super admin `root@e2e.test` /
+  `RootPass123!` via `ADMIN_EMAIL` / `ADMIN_PASSWORD`).
 
-## Phase 0 — Foundations: roles & JWT
+## Tasks
 
-- [ ] 0.1 Create unified `Role` enum (`super_admin`, `org_admin`, `org_manager`, `agent`) in a shared location; delete the two duplicated enums and update all imports. _(Req 1.1)_
-- [ ] 0.2 Add `organizationId` to the JWT payload; update `TokenService.sign`, refresh-token creation, and `JwtStrategy.validate`. _(Req 7.1)_
-- [ ] 0.3 Implement `@Roles()` decorator + `RolesGuard`; register as global `APP_GUARD` after `JwtAuthGuard`. _(Req 1, 5.3)_
-- [ ] 0.4 Add `role → allowedTabs[]` constant (single source of truth) in a shared module. _(Req 5.1)_
-- [ ] 0.5 Build succeeds; existing endpoints still authenticate. _(verification)_
+### Phase 0 — Foundations: roles & JWT
 
-## Phase 1 — Tenancy foundation (security boundary)
+- [x] 0.1 Unified `Role` enum + `ROLE_LEVEL`, `ORG_ROLES`, `ORG_STAFF`, `isPlatformRole`. _(Req 1.1)_
+- [x] 0.2 `organizationId` in JWT payload, refresh re-signs from current DB state. _(Req 7.1)_
+- [x] 0.3 `@Roles()` + global `RolesGuard`. Undecorated routes default to org roles (not super admin, not widget tokens); `@AllowVisitor()` opts widget tokens in. _(Req 1, 5.3)_
+- [x] 0.4 `role → allowedTabs[]` constant (backend + UI mirror). _(Req 5.1)_
+- [x] 0.5 Build succeeds; boots with all DI resolved. _(verification)_
 
-- [ ] 1.1 Create `Organization` entity/schema (name, slug, status, ownerId, counters, createdBy) + module/provider. _(Req 2.1)_
-- [ ] 1.2 Add `organizationId` to `Agent`, `Bot`, `TemplateInstance` (replace dead `workspaceId`), and each channel connection entity; add org-leading indexes. _(Req 2.2)_
-- [ ] 1.3 Implement `TenantContext` + `scopedFilter(user, filter)` helper. _(Req 2.3)_
-- [ ] 1.4 Apply `scopedFilter` to all list/find/update/delete in agent, bots, template, channels, conversations. _(Req 2.3, 2.4)_
-- [ ] 1.5 Add ownership guard: reject cross-org resource references with 403/404 (no existence leak); allow `SUPER_ADMIN`. _(Req 2.4, 2.5)_
-- [ ] 1.6 Enforce suspended-org denial at the guard layer. _(Req 6.3, 7.4)_
-- [ ] 1.7 Verify isolation: an org-B user cannot read/mutate org-A bot by id. _(verification, Req 2.4)_
+### Phase 1 — Tenancy foundation (security boundary)
 
-## Phase 2 — RBAC & role-aware user creation
+- [x] 1.1 `Organization` entity (+ `platformCount`), race-safe slug allocation. _(Req 2.1)_
+- [x] 1.2 `organizationId` on Agent, Bot, TemplateInstance, Social, WhatsappWebSession; bot-referencing collections scoped via `TenantScopeService`. _(Req 2.2)_
+- [x] 1.3 `scopedFilter` / `assertOwnership` / `TenantScopeService.assertBotInOrg`. _(Req 2.3)_
+- [x] 1.4 Scoping applied to agent, bots (incl. flow nodes, settings, styles), conversation, inbox, tickets, visitor, unanswered, questions (incl. bot-runtime Q&A lookup), social, whatsapp-web, telegram, trainingdata, scraper, template instances/submissions, messaging, reports & home stats. _(Req 2.3, 2.4)_
+- [x] 1.5 Cross-org references → 404 (no existence leak); malformed ids → 404 not 500. _(Req 2.4, 2.5)_
+- [x] 1.6 Suspended **or deleted** org denied at guard, login, refresh and socket handshake. _(Req 6.3, 7.4)_
+- [x] 1.7 Verified: org-B user cannot read/mutate org-A bots, flows, nodes, users, connections, training data, reports. _(verification)_
 
-- [ ] 2.1 Add `role` (+ optional `organizationId` for super-admin flow) to `CreateAgentDto` with validation. _(Req 1)_
-- [ ] 2.2 Implement delegated-creation rule in `AgentService.create`: derive org from actor's token, validate `actorLevel > targetLevel`, never trust client role/org. _(Req 1.2–1.6, 3.x)_
-- [ ] 2.3 Apply `@Roles(...)` to agent/bots/template/channel/management controllers per the tab matrix. _(Req 5.3, 5.4)_
-- [ ] 2.4 Remove `@Public()` from `GET /agent` (agent list); make it authenticated + org-scoped. _(Req 7.5)_
-- [ ] 2.5 Update Agent pre-remove hook to protect `SUPER_ADMIN` and org owners. _(Req 1.7)_
-- [ ] 2.6 Verify each role can only create the roles below it, within its own org. _(verification, Req 1)_
+### Phase 2 — RBAC & role-aware user creation
 
-## Phase 3 — Plans, subscriptions & entitlements
+- [x] 2.1 `role`/`organizationId` on `CreateAgentDto`; `UpdateAgentDto` cannot change `organizationId`. _(Req 1)_
+- [x] 2.2 Delegated creation (`actorLevel > targetLevel`, org from token, email normalized/unique → 409). _(Req 1.2–1.6)_
+- [x] 2.3 `@Roles` applied per tab matrix across controllers. _(Req 5.3, 5.4)_
+- [x] 2.4 Agent list authenticated + org-scoped. _(Req 7.5)_
+- [x] 2.5 Pre-remove hook protects SUPER_ADMIN and org owners; update/delete enforce outrank rule, no self-delete, no self-role change. _(Req 1.7)_
+- [x] 2.6 Verified each role can only create/edit roles below it within its org. _(verification)_
 
-- [ ] 3.1 Create `Plan` entity + module; define fixed feature-catalog constant + validator. _(Req 3.1, 4.1, 4.4)_
-- [ ] 3.2 Create `Subscription` entity (org↔plan + overrides, unique per org). _(Req 3.3)_
-- [ ] 3.3 Implement `EntitlementService`: `getEffective`, `assertCanCreate`, `isFeatureEnabled` with plan+override merge and per-org cache. _(Req 3.4, 4.2, 4.3)_
-- [ ] 3.4 Add race-safe quota: `Organization` counters via `findOneAndUpdate({ count: { $lt: max } }, { $inc })` + compensating decrement on create failure. _(Req 3.6, 3.7)_
-- [ ] 3.5 Wire `assertCanCreate` into bot create, agent create, template-instance create, and platform-connect paths. _(Req 3.6)_
-- [ ] 3.6 Implement `@RequiresFeature()` + `FeatureGuard`; apply to channel/feature endpoints. _(Req 4.3)_
-- [ ] 3.7 Verify: exceeding a limit is rejected; downgrade blocks new creates without deleting existing. _(verification, Req 3.6, 3.8)_
+### Phase 3 — Plans, subscriptions & entitlements
 
-## Phase 4 — Bootstrap & seeding (fresh start)
+- [x] 3.1 `Plan` entity + fixed feature catalog + validator. _(Req 3.1, 4.1, 4.4)_
+- [x] 3.2 `Subscription` entity (unique per org). _(Req 3.3)_
+- [x] 3.3 `EntitlementService` — **fail-closed** (no/canceled subscription ⇒ 0 limits, no features), catalog-only boolean features, sanitized limits. _(Req 3.4, 4.2, 4.3)_
+- [x] 3.4 Atomic counters with compensating release; release on delete (bots, users, platforms, template instances); double-delete safe. _(Req 3.6, 3.7)_
+- [x] 3.5 Quota wired into bot, agent, template-instance and platform-connect (social + WhatsApp Web). _(Req 3.6)_
+- [x] 3.6 `@RequiresFeature` + per-platform feature gate on connect and publish. _(Req 4.3)_
+- [x] 3.7 Verified: limit rejection, 8-way parallel race, downgrade keeps data but blocks creates. _(verification)_
 
-- [ ] 4.1 Idempotent `onModuleInit`: seed one `SUPER_ADMIN` (org = null) from config. _(Req 1.7, 8.2, 8.4)_
-- [ ] 4.2 Idempotent seed of Basic/Pro/Enterprise plans (defaults bots 5 / agents 10 / platforms 3 / templates 20, tuned per tier). _(Req 3.2, 8.2)_
-- [ ] 4.3 Ensure no organization is auto-created and no migration/backfill runs. _(Req 8.1, 8.3)_
-- [ ] 4.4 Verify clean-DB startup and restart idempotency. _(verification, Req 8.4)_
+### Phase 4 — Bootstrap & seeding (fresh start)
 
-## Phase 5 — Super-admin console API
+- [x] 4.1 Idempotent super-admin seed (race-safe, never logs password, refuses to hijack a non-super-admin email). _(Req 1.7, 8.2, 8.4)_
+- [x] 4.2 Idempotent plan seed (Basic/Pro/Enterprise). _(Req 3.2, 8.2)_
+- [x] 4.3 No org auto-created, no backfill. _(Req 8.1, 8.3)_
+- [x] 4.4 Verified clean-DB boot and restart idempotency (1 super admin, 3 plans). _(verification)_
 
-- [ ] 5.1 `POST /organizations`: atomic create of Organization + `ORG_ADMIN` owner + Subscription (plan, editable limits, feature toggles). _(Req 6.1)_
-- [ ] 5.2 `GET /organizations` (+ `/:id`): list with plan, bots used/limit, owner, counts, channels, active template(s), subscription/org status — metadata only. _(Req 6.2, 6.6)_
-- [ ] 5.3 `PATCH /organizations/:id`: suspend/reactivate + edit limits/features as subscription overrides. _(Req 3.5, 6.3)_
-- [ ] 5.4 `GET /admin/overview`: global totals. _(Req 6.4)_
-- [ ] 5.5 Impersonation endpoint + `actingAsOrgId` context + `AuditLog`; guard all console APIs with `@Roles(SUPER_ADMIN)`. _(Req 6.5, 6.7)_
-- [ ] 5.6 `GET /me/entitlements`: role, org, allowedTabs, limits, usage, features. _(Req 5.1, 7.3)_
-- [ ] 5.7 Verify all console APIs reject non-super-admins. _(verification, Req 6.5)_
+### Phase 5 — Super-admin console API
 
-## Phase 6 — UI
+- [x] 5.1 `POST /organizations` — validated up front, compensated on failure. _(Req 6.1)_
+- [x] 5.2 `GET /organizations` (+ `/:id`) — metadata only. _(Req 6.2, 6.6)_
+- [x] 5.3 `PATCH /organizations/:id` — rename, suspend/reactivate, plan, subscription status, limit/feature overrides. _(Req 3.5, 6.3)_
+- [x] 5.4 `GET /admin/overview`, `/admin/plans`, `/admin/features`, `/admin/audit-logs`; `POST /organizations/:id/reconcile`. _(Req 6.4)_
+- [x] 5.5 Impersonation: 1h ORG_ADMIN token with `impersonatedBy`, no refresh token, refused for suspended orgs, cannot reach console, audit-logged. _(Req 6.5, 6.7)_
+- [x] 5.6 `GET /me/entitlements` (incl. platform usage). _(Req 5.1, 7.3)_
+- [x] 5.7 Verified all console APIs reject non-super-admins. _(verification)_
 
-- [ ] 6.1 Add shared `Role` enum + role helper in `QuantumMind-ui`; store role/org from token. _(Req 5)_
-- [ ] 6.2 Make `navigation/vertical/index.ts` a function of role (filter tabs via matrix). _(Req 5.1, 5.2)_
-- [ ] 6.3 Add role-aware route guard: redirect direct URL access to disallowed tabs. _(Req 5.2)_
-- [ ] 6.4 Role-based post-login routing: SUPER_ADMIN→`/super-admin`, ORG_ADMIN/ORG_MANAGER→`/dashboard`, AGENT→`/inbox`. _(Req 7.2)_
-- [ ] 6.5 Add Role dropdown to the Add Agent drawer, options filtered by logged-in role. _(Req 1.2–1.4)_
-- [ ] 6.6 Gate create buttons/tabs on `/me/entitlements` usage vs limits and enabled features. _(Req 3.6, 4.3)_
-- [ ] 6.7 Build the `/super-admin` console: org list, create-org flow, org detail (limits/features/suspend/impersonate), global overview. _(Req 6.1–6.4)_
-- [ ] 6.8 Verify each role sees only its tabs and cannot reach others by URL. _(verification, Req 5)_
+### Phase 6 — UI
 
-## Phase 7 — Hardening
+- [x] 6.1 Shared role enum/helpers; role/org from `/agent/me`. _(Req 5)_
+- [x] 6.2 Role-aware navigation. _(Req 5.1, 5.2)_
+- [x] 6.3 Role-aware route guard. _(Req 5.2)_
+- [x] 6.4 Role-based post-login routing. _(Req 7.2)_
+- [x] 6.5 Role dropdown in Add Agent drawer. _(Req 1.2–1.4)_
+- [x] 6.6 Create buttons gated on `/me/entitlements`. _(Req 3.6, 4.3)_
+- [x] 6.7 `/super-admin` console (list, create, detail, suspend, impersonate + banner). _(Req 6.1–6.4)_
+- [ ] 6.8 Manual browser pass per role (tabs + direct URL). UI type-checks clean; not click-tested. _(verification)_
 
-- [ ] 7.1 Audit-log coverage: org create/suspend, limit/feature change, impersonation. _(Req 6.7)_
-- [ ] 7.2 Negative tests: cross-org access, quota race, disabled-feature calls, privilege escalation on create. _(Req 2, 3, 4)_
-- [ ] 7.3 Confirm no conversation content is reachable from console/impersonation logs. _(Req 6.6)_
+### Phase 7 — Hardening
 
----
+- [x] 7.1 Audit coverage: org create/rename/suspend/reactivate, subscription change (before/after), impersonation, reconcile; secrets redacted. _(Req 6.7)_
+- [x] 7.2 Negative tests: cross-org, quota race, disabled features, privilege escalation (unit + live). _(Req 2, 3, 4)_
+- [x] 7.3 Console / audit contain no conversation content or passwords (verified). _(Req 6.6)_
+- [x] 7.4 Closed previously-public data routes (whatsapp-web, social, trainingdata, scraper, upload, conversation transcript, all home/report stats, questions search, chat-initializer); socket requires a token and agent-only socket events check conversation ownership. _(Req 7.5)_
 
-## Review checkpoints (decide before/while building)
+## Known gaps / follow-ups
 
-- ORG_MANAGER tab row (design §5.1) — admin-minus-settings vs stricter.
-- Per-plan limit numbers for Basic/Pro/Enterprise.
-- Final feature-catalog keys.
+- Tag, Segment, Webhook, Video have no `organizationId` in the original model; tag/segment/webhook services were scoped in this pass but rows created before it are unowned (fresh-start assumption makes this moot).
+- Entitlement cache is per-process (30s TTL); in multi-instance deploys a limit change can take up to 30s to apply everywhere. Counters themselves are atomic in Mongo.
+- Inbound channel webhooks (WhatsApp/Facebook/Telegram) remain public by necessity; signature verification is outside this feature.
+- Channel Providers page must pass a `botId` for org admins (global switch is super-admin only).
+- A user deactivated mid-session keeps access until the access token expires (refresh is refused).
+
+## Notes
+
+Review checkpoints resolved: ORG_MANAGER = admin minus Channel Providers; plan limits Basic 1/3/1/5, Pro 5/10/3/20, Enterprise 20/50/10/100 (bots/agents/platforms/templates); feature catalog = the seven keys in Req 4.1.
+
+## Task Dependency Graph
+
+```
+Phase0 -> Phase1 -> Phase2 -> Phase3 -> Phase5 -> Phase6 -> Phase7
+                         \-> Phase4 --/
+```

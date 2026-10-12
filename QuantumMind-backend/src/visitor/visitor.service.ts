@@ -1,5 +1,7 @@
 import { HttpService } from "@nestjs/axios";
-import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
+import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
+import { TicketsService } from "src/tickets/tickets.service";
 import { OnEvent } from "@nestjs/event-emitter";
 import { isIP } from "class-validator";
 import { Request } from "express";
@@ -38,8 +40,19 @@ export class VisitorService {
 
     private conversationService: ConversationService,
 
-    private readonly tenantScope: TenantScopeService
+    private readonly tenantScope: TenantScopeService,
+    // ModuleRef, not TicketsService: TicketsService no longer depends on the
+    // visitor module, but resolving lazily keeps any future cycle impossible.
+    @Optional() private readonly moduleRef?: ModuleRef
   ) {}
+
+  private get tickets(): TicketsService | undefined {
+    try {
+      return this.moduleRef?.get(TicketsService, { strict: false });
+    } catch {
+      return undefined;
+    }
+  }
 
   async createVisitor(createVisitorDto: CreateVisitorDto, req: any) {
     if (req) {
@@ -84,10 +97,6 @@ export class VisitorService {
     try {
       const visitor = await this.visitorModel
         .findById(visitorId)
-        .populate(
-          "serviceRequests",
-          "subject status priority conversationId description tags"
-        )
         .populate("bot", "name")
         .populate("agents", "name email status rating ")
         .populate("feedbacks", "rating comment")
@@ -110,6 +119,15 @@ export class VisitorService {
         }
       }
 
+      // Service Requests live in the CRM (crm-plugins-service-desk R19.1).
+      if (visitor && this.tickets) {
+        const plain: any = visitor.toObject({ virtuals: true });
+        plain.serviceRequests = await this.tickets.listFor(
+          { visitorId: String(visitorId) },
+          user?.organizationId ? String(user.organizationId) : null,
+        );
+        return plain;
+      }
       return visitor;
     } catch (error) {
       this.logger.error(
@@ -230,6 +248,14 @@ export class VisitorService {
       this.logger.error(`Error while getting all visitors : ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
+  }
+
+  /** The visitor's id + bot, for the widget resume decision (R9.3). */
+  async resumeFacts(visitorId: string): Promise<{ id: string; botId: string; name?: string; email?: string } | null> {
+    if (!mongoose.isValidObjectId(visitorId)) return null;
+    const v: any = await this.visitorModel.findById(visitorId).select("bot name email").lean();
+    if (!v) return null;
+    return { id: String(v._id), botId: String(v.bot), name: v.name, email: v.email };
   }
 
   async addServiceRequests(visitorId: string, serviceRequestId: string) {
@@ -364,11 +390,18 @@ export class VisitorService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.visitorModel.countDocuments();
+  /** Mongo filter pinning visitors to the caller's bots ({} = unrestricted). */
+  async scopeFor(user?: TenantContext): Promise<Record<string, any>> {
+    if (!user) return {};
+    return this.tenantScope.orgBotMatch(user, "bot");
+  }
+
+  async getTotalCount(days = 30, scope: Record<string, any> = {}) {
+    const total = await this.visitorModel.countDocuments(scope);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.visitorModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -386,13 +419,15 @@ export class VisitorService {
     };
   }
 
-  async getActiveCount(days = 30) {
+  async getActiveCount(days = 30, scope: Record<string, any> = {}) {
     const total = await this.visitorModel.countDocuments({
+      ...scope,
       status: VisitorStatusEnum.ONLINE,
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.visitorModel.countDocuments({
+        ...scope,
         status: VisitorStatusEnum.ONLINE,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -410,13 +445,14 @@ export class VisitorService {
     };
   }
 
-  async getStats(days = 30) {
+  async getStats(days = 30, user?: TenantContext) {
     try {
+      const scope = await this.scopeFor(user);
       const result = await Promise.all([
-        this.getTotalCount(days),
-        this.getActiveCount(days),
-        this.handledByAgentCount(days),
-        this.handledByBotCount(days),
+        this.getTotalCount(days, scope),
+        this.getActiveCount(days, scope),
+        this.handledByAgentCount(days, scope),
+        this.handledByBotCount(days, scope),
       ]);
       return result;
     } catch (error) {
@@ -425,13 +461,15 @@ export class VisitorService {
     }
   }
 
-  async handledByAgentCount(days = 30) {
+  async handledByAgentCount(days = 30, scope: Record<string, any> = {}) {
     const total = await this.visitorModel.countDocuments({
+      ...scope,
       agents: { $exists: true, $not: { $size: 0 } },
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.visitorModel.countDocuments({
+        ...scope,
         agents: { $exists: true, $not: { $size: 0 } },
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -449,14 +487,16 @@ export class VisitorService {
     };
   }
 
-  async handledByBotCount(days = 30) {
+  async handledByBotCount(days = 30, scope: Record<string, any> = {}) {
     const total = await this.visitorModel.countDocuments({
+      ...scope,
       agents: { $size: 0 },
     });
 
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.visitorModel.countDocuments({
+        ...scope,
         agents: { $size: 0 },
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -474,9 +514,16 @@ export class VisitorService {
     };
   }
 
-  async getVisiorPattern() {
+  async getVisiorPattern(user?: TenantContext) {
     try {
+      const scope = await this.scopeFor(user);
+      const pre: any[] = [];
+      if (Object.keys(scope).length) {
+        const ids = await this.visitorModel.distinct("_id", scope);
+        pre.push({ $match: { visitorId: { $in: ids } } });
+      }
       const response = await this.visitorDetailsModel.aggregate([
+        ...pre,
         {
           $facet: {
             countries: [
@@ -535,9 +582,11 @@ export class VisitorService {
     }
   }
 
-  async getVisitorReport() {
+  async getVisitorReport(user?: TenantContext) {
     try {
+      const scope = await this.scopeFor(user);
       const response = await this.visitorModel.aggregate([
+        { $match: scope },
         {
           $group: {
             _id: null,
@@ -593,20 +642,27 @@ export class VisitorService {
       throw error;
     }
   }
-  async getHandledByAgentReport(query: ReportParamsDto) {
-    return await this.conversationService.getDateWiseConversations(query, true);
-  }
-  async getHandledByBotReport(query: ReportParamsDto) {
+  async getHandledByAgentReport(query: ReportParamsDto, user?: TenantContext) {
     return await this.conversationService.getDateWiseConversations(
       query,
-      false
+      true,
+      user ? await this.tenantScope.orgBotIds(user) : undefined
+    );
+  }
+  async getHandledByBotReport(query: ReportParamsDto, user?: TenantContext) {
+    return await this.conversationService.getDateWiseConversations(
+      query,
+      false,
+      user ? await this.tenantScope.orgBotIds(user) : undefined
     );
   }
 
-  async homeVisitorCount(filter: any) {
-    if (!filter) filter = "day";
+  async homeVisitorCount(filter: any, user?: TenantContext) {
+    if (!["day", "week", "month", "year"].includes(filter)) filter = "day";
+    const scope = await this.scopeFor(user);
     try {
       const total = await this.visitorModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(moment().startOf(filter).toISOString()),
         },
@@ -614,6 +670,7 @@ export class VisitorService {
 
       let percentageChange = 0;
       const previousTotal = await this.visitorModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(
             moment().subtract(1, filter).startOf(filter).toISOString()
@@ -640,13 +697,15 @@ export class VisitorService {
     }
   }
 
-  async monthWiseVisitor() {
+  async monthWiseVisitor(user?: TenantContext) {
     try {
-      const totalVisitor = await this.visitorModel.countDocuments({});
+      const scope = await this.scopeFor(user);
+      const totalVisitor = await this.visitorModel.countDocuments(scope);
       const chart = await this.visitorModel.aggregate([
         // current year
         {
           $match: {
+            ...scope,
             createdAt: {
               $gte: new Date(new Date().getFullYear(), 0, 1),
             },
@@ -676,6 +735,7 @@ export class VisitorService {
       ]);
 
       const yearWise = await this.visitorModel.aggregate([
+        { $match: scope },
         {
           $group: {
             _id: {
@@ -707,7 +767,7 @@ export class VisitorService {
       ]);
 
       const yearWiseData = yearWise.map((year) => {
-        const growth = year.total / totalVisitor;
+        const growth = totalVisitor ? year.total / totalVisitor : 0;
         return {
           ...year,
           growth: growth > 1 ? 100 : Math.round(growth * 100),

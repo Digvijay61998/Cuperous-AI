@@ -18,8 +18,11 @@ import CustomAvatar from 'src/@core/components/mui/avatar';
 import SendMsgForm from 'src/views/apps/active-chat/SendMsgForm';
 import UserProfileRight from 'src/views/apps/active-chat/UserProfileRight';
 import ChatLog from './ChatLog';
-import CreateTicketRight from './CreateTicket';
+import { setOpenChat } from 'src/services/alerts/chatViewport';
+import SrWrapUpDialog from 'src/views/crm/service-requests/SrWrapUpDialog';
+import type { WrapUpMode } from 'src/views/crm/service-requests/wrapUp';
 import QuestionBank from './QuestionBankOption';
+import ConversationContactBadge from 'src/views/crm/ConversationContactBadge';
 
 // ** Types
 
@@ -98,6 +101,12 @@ const ChatContent = (props: any) => {
     dispatch(loadOldChats(activeChatId));
   };
 
+  // Which conversation this tab shows, for notification suppression.
+  useEffect(() => {
+    setOpenChat(activeChatId);
+    return () => setOpenChat(null);
+  }, [activeChatId]);
+
   const blockVisitor = () => {
     setLoading(true);
     socket.reportChat({
@@ -145,8 +154,8 @@ const ChatContent = (props: any) => {
     );
   };
 
-  const [closeChatDialog, setCloseChatDialog] = useState<boolean>(false);
-  const handleCloseChatDialog = () => setCloseChatDialog(false);
+  // Which wrap-up the request dialog is open for (null = closed).
+  const [wrapUp, setWrapUp] = useState<WrapUpMode | null>(null);
   const closeChat = () => {
     setLoading(true);
     socket.endChat({
@@ -160,39 +169,7 @@ const ChatContent = (props: any) => {
     dispatch(removedChat({ id: activeChatId }));
 
     setLoading(false);
-    setCloseChatDialog(false);
-    toast.success('conversation has been closed');
-  };
-  const CloseChatActionComponent = () => {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          mt: -2,
-          width: '100%',
-        }}
-      >
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleCloseChatDialog}
-          color="primary"
-          sx={{ mr: 2 }}
-        >
-          Cancel
-        </Button>
-        <LoadingButton
-          loading={loading}
-          variant="contained"
-          size="small"
-          onClick={closeChat}
-          color="primary"
-        >
-          Confirm
-        </LoadingButton>
-      </Box>
-    );
+    toast.success('Conversation closed');
   };
   const renderContent = () => {
     if (store) {
@@ -359,7 +336,9 @@ const ChatContent = (props: any) => {
                           )}
                         </IconButton>
                       </Tooltip>
-                      
+                      <ConversationContactBadge
+                        conversationId={selectedChat?._id || activeChatId}
+                      />
                     </Stack>
                     <Typography
                       variant="caption"
@@ -384,9 +363,10 @@ const ChatContent = (props: any) => {
                       </IconButton>
                     </Tooltip>
 
-                    <Tooltip title="Create Ticket" placement="top">
+                    <Tooltip title="Service request" placement="top">
                       <IconButton
-                        onClick={handleCreateTicketRightSidebarToggle}
+                        aria-label="Service request"
+                        onClick={() => setWrapUp('save')}
                         size="small"
                         sx={{ color: 'text.secondary' }}
                       >
@@ -424,7 +404,9 @@ const ChatContent = (props: any) => {
                     </Tooltip>
                     <Tooltip title="Close Conversation" placement="top">
                       <IconButton
-                        onClick={(e: any) => setCloseChatDialog((pre) => !pre)}
+                        aria-label="Close conversation"
+                        // The request card must be confirmed before a chat closes.
+                        onClick={() => setWrapUp('close')}
                         size="small"
                         sx={{ color: 'text.secondary' }}
                       >
@@ -471,16 +453,19 @@ const ChatContent = (props: any) => {
               />
             )}
 
-            <CreateTicketRight
-              store={selectedChat.visitor?._id}
-              hidden={hidden}
-              statusObj={statusObj}
-              getInitials={getInitials}
-              sidebarWidth={sidebarWidth}
-              createTicketRightOpen={createTicketRightOpen}
-              handleCreateTicketRightSidebarToggle={
-                handleCreateTicketRightSidebarToggle
-              }
+            {/* One card per chat: "Service request" and "Close" both open the
+                chat's request (created only when it has none), AI-prefilled
+                and confirmed by the agent. Replaces the old Create Ticket form. */}
+            <SrWrapUpDialog
+              open={!!wrapUp}
+              mode={wrapUp || 'save'}
+              conversationId={selectedChat?._id || activeChatId}
+              onCancel={() => setWrapUp(null)}
+              onSaved={() => {
+                const closing = wrapUp === 'close';
+                setWrapUp(null);
+                if (closing) closeChat();
+              }}
             />
 
             <QuestionBank
@@ -504,14 +489,7 @@ const ChatContent = (props: any) => {
               ActionComponent={ActionComponent}
             />
 
-            <CommonDialog
-              title={'Close Conversation Confirmation'}
-              description={'Are you sure you want to close this conversation?'}
-              open={closeChatDialog}
-              onClose={handleCloseChatDialog}
-              Component={''}
-              ActionComponent={CloseChatActionComponent}
-            />
+
           </Box>
         );
       }

@@ -3,8 +3,10 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Socket } from "socket.io";
 import { BotFlowNode, BotSetting } from "src/bots/entities";
 import { BotNodeStateEnum } from "src/message-handler/enums/bot-node-state.enum";
@@ -67,12 +69,60 @@ export interface SocketState {
   // ---------------------------------------------------------------------------
   /** Display name of the visitor, used when handing a chat to an agent. */
   visitorName?: string;
+  /**
+   * crm-plugins-service-desk R4.3: `visitorName` came from what the visitor
+   * told us in this conversation, so the widget token's name (often
+   * "Anonymous") must not overwrite it on later messages.
+   */
+  nameCaptured?: boolean;
   /** Language of the current turn, used for question-bank lookups. */
   language?: string;
   /** Id of the chat row created for the current inbound message (PII masking). */
   currentChatId?: string;
   /** Accumulated send-delay baseline for staggering this turn's bot messages. */
   messageDelay?: number;
+  /**
+   * crm-incident-handover R4: the problem question is waiting for an answer.
+   * `nodeId` is the handover node to resume once the problem is accepted.
+   */
+  awaitingProblem?: { attempt: number; askedAt: number; nodeId: string };
+  /** An accepted problem waiting to be picked up by the resumed handover node. */
+  acceptedProblem?: { problem: string; flags: string[]; nodeId: string };
+  /** crm-incident-handover R17.2: identity question awaiting an answer. */
+  pendingIdentity?: {
+    field: "email" | "phone";
+    newValue: string;
+    contactId: string;
+    askedAt: number;
+    turns: number;
+  };
+  /**
+   * R16.2/R16.3: "I have you as …" confirm awaiting Yes / Update details.
+   * `fields` are the known ones on offer; `nodeId` is the skipped node.
+   */
+  pendingConfirm?: {
+    nodeId: string;
+    fields: string[];
+    values: Record<string, string>;
+    /** First question of the node still to ask after "Yes" (crm-plugins-service-desk R23). */
+    resumeAt?: number;
+  };
+  /** After "Update details", ask this node normally once (no pre-fill). */
+  skipPrefillFor?: string;
+  /** Agent the visitor was last told about, so the notice is sent once (R19.4). */
+  announcedAgentId?: string;
+  /** Rebuilt from a widget resume: the gateway must not send "start" (R9.3). */
+  resumed?: boolean;
+  /** The resumed conversation already has chats (R9.3, R14.7). */
+  hasHistory?: boolean;
+  /** Last flow node persisted to Conversation.flowPosition (debounce key). */
+  persistedNodeId?: string;
+  /** crm-incident-handover R14.1: a Closure_Prompt awaiting the first reply. */
+  awaitingClosure?: { sentAt: number; idleMinutes: number };
+  /** When the last Closure_Prompt was answered; later clicks are ignored. */
+  closureAnsweredAt?: number;
+  /** R14.2/R14.5: the conversation is closed; the widget is in Ended_State. */
+  conversationEnded?: boolean;
   /**
    * Last time this entry was read or written, in epoch ms. Drives idle eviction
    * — see the sweep in SocketStateService.
@@ -88,7 +138,8 @@ export class SocketStateService implements OnModuleInit, OnModuleDestroy {
     private conversationService: ConversationService,
     private readonly agentService: AgentService,
     private readonly visitorService: VisitorService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    @Optional() private readonly eventEmitter?: EventEmitter2
   ) {}
   private socketState = new Map<string, SocketState>();
   private sweepTimer?: ReturnType<typeof setInterval>;
@@ -205,8 +256,17 @@ export class SocketStateService implements OnModuleInit, OnModuleDestroy {
         this.socketState.get(userId)?.mode !== ModeEnum.preview
       )
         this.visitorService.updateStatus(userId, VisitorStatusEnum.ONLINE);
-      else this.agentService.updateAgentStatus(userId, AgentStatusEnum.ONLINE);
+      else if (role !== "visitor") {
+        this.agentService.updateAgentStatus(userId, AgentStatusEnum.ONLINE);
+        // First dashboard socket for this agent: replay pending handover alerts.
+        this.eventEmitter?.emit("agent.online", { agentId: userId });
+      }
     }
+
+    // Remember which conversation this socket was opened for, so its later
+    // disconnect cannot tear down a newer conversation's state (see remove).
+    const convAtConnect = this.socketState.get(userId)?.conversationId;
+    if (convAtConnect) (socket as any).jcConversationId = String(convAtConnect);
 
     const sockets = [...existingSockets, socket];
 
@@ -236,12 +296,28 @@ export class SocketStateService implements OnModuleInit, OnModuleDestroy {
 
     if (!sockets.length) {
       const role = socket.auth.role;
+      // The widget rebuilt this entry for a NEW conversation after this
+      // socket connected ("Start new chat" disconnects the old socket only
+      // after the new session exists, R14.9). The socket belonged to the
+      // old conversation: drop it, keep the fresh state for the new socket,
+      // and never end the new conversation because the old socket left.
+      const socketConv = (socket as any)?.jcConversationId;
+      if (
+        role === "visitor" &&
+        socketConv &&
+        entry.conversationId &&
+        String(socketConv) !== String(entry.conversationId)
+      ) {
+        this.socketState.set(userId, { ...entry, socket: [] });
+        return true;
+      }
       if (role === "visitor" && entry.handledByAgent) {
         const conversationId = entry.conversationId;
         this.visitorService.updateStatus(userId, VisitorStatusEnum.OFFLINE);
         this.conversationService.endConversation(
           conversationId,
-          ConversationStatusEnum.EXPIRED
+          ConversationStatusEnum.EXPIRED,
+          "disconnect"
         );
       } else {
         this.agentService.updateAgentStatus(userId, AgentStatusEnum.OFFLINE);

@@ -1,4 +1,5 @@
 // ** MUI Imports
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -18,7 +19,10 @@ import {
   requestInboxHistory,
   retryInboxMessage,
   setInboxBotControl,
+  overrideInboxOwner,
 } from 'src/store/apps/inbox';
+import OwnershipControls from './OwnershipControls';
+import { ownershipView } from './ownership';
 
 // ** Utils
 import Icon from 'src/@core/components/icon';
@@ -30,6 +34,11 @@ import { capabilitiesFor } from './channelConfig';
 import { contactInitialsSource, contactSubtitle } from './contactDisplay';
 import ThreadComposer from './ThreadComposer';
 import ThreadLog from './ThreadLog';
+import { setOpenChat } from 'src/services/alerts/chatViewport';
+import ConversationContactBadge from 'src/views/crm/ConversationContactBadge';
+import VisitorProfilePanel from 'src/views/crm/VisitorProfilePanel';
+import { WIDGET_CHANNEL } from 'src/views/crm/contactLinks';
+import SrWrapUpDialog from 'src/views/crm/service-requests/SrWrapUpDialog';
 
 interface Props {
   channel: string;
@@ -51,6 +60,7 @@ const ThreadContent = ({ channel }: Props) => {
     messageCursorByThread,
     hasMoreByThread,
     loadingMessages,
+    messagesErrorByThread,
   } = useSelector((state: RootState) => state.inbox);
 
   // Stamped onto the optimistic row as its sender so the bubble aligns right
@@ -63,6 +73,29 @@ const ThreadContent = ({ channel }: Props) => {
   const threads = threadsByChannel[channel] || [];
   const thread = threads.find((t) => t.id === selectedThreadId);
 
+  // Ownership matrix (R8.1–R8.3). Recomputed on every thread-updated event.
+  const userRole = useSelector((state: RootState) => (state.user as any)?.userData?.role);
+  const ownership = ownershipView({
+    handledByAgent: thread?.handledByAgent,
+    assignedAgent: thread?.assignedAgent as any,
+    meId: senderId,
+    isOrgAdmin: userRole === 'org_admin',
+  });
+  const typingByKey = useSelector((state: RootState) => state.inbox.typingByKey);
+  const typing = (thread && (typingByKey[thread.id] || (thread.chatId && typingByKey[thread.chatId]))) || null;
+
+  const [controlBusy, setControlBusy] = useState(false);
+  const [ticketOpen, setTicketOpen] = useState(false);
+  const runControl = async (action: 'takeover' | 'release') => {
+    if (!thread) return;
+    setControlBusy(true);
+    try {
+      await dispatch(setInboxBotControl({ threadId: thread.id, action }));
+    } finally {
+      setControlBusy(false);
+    }
+  };
+
   // The message the composer is quoting, if any. Held here rather than in the
   // composer because the composer unmounts when the thread closes, which would
   // silently discard the selection.
@@ -71,6 +104,13 @@ const ThreadContent = ({ channel }: Props) => {
   // Cleared on thread change so a quote never leaks into a different conversation.
   useEffect(() => {
     setReplyTo(null);
+  }, [selectedThreadId]);
+
+  // Tell the alert client which thread this tab is showing (and clear on close),
+  // so a visitor message here does not notify while the agent is reading it.
+  useEffect(() => {
+    setOpenChat(selectedThreadId);
+    return () => setOpenChat(null);
   }, [selectedThreadId]);
 
   /**
@@ -109,7 +149,8 @@ const ThreadContent = ({ channel }: Props) => {
     : undefined;
 
   useEffect(() => {
-    if (selectedThreadId && cachedMessages === undefined) {
+    // After a failure, wait for Retry instead of re-requesting on every render.
+    if (selectedThreadId && cachedMessages === undefined && !messagesErrorByThread?.[selectedThreadId]) {
       dispatch(getInboxMessages({ threadId: selectedThreadId }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,6 +189,7 @@ const ThreadContent = ({ channel }: Props) => {
   const messages = messagesByThread[thread.id];
   const cursor = messageCursorByThread[thread.id] || null;
   const hasMore = !!hasMoreByThread[thread.id];
+  const historyFailed = !!messagesErrorByThread?.[thread.id] && messages === undefined;
 
   /**
    * Load older messages.
@@ -227,6 +269,12 @@ const ThreadContent = ({ channel }: Props) => {
                   {returnPlatformIcon(channel)}
                 </Box>
               </Tooltip>
+              {/* Widget threads are keyed by the conversation id (chatId); other
+                  channels key by the customer's address, so there is no single
+                  conversation to look up and nothing is shown. */}
+              {channel === WIDGET_CHANNEL && (
+                <ConversationContactBadge conversationId={thread.chatId} />
+              )}
             </Box>
             <Typography variant="caption" sx={{ color: 'text.disabled' }}>
               {/* `contactSubtitle` is empty when the heading above already IS the
@@ -240,63 +288,72 @@ const ThreadContent = ({ channel }: Props) => {
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          {/* Who is answering right now. The thread's own flags are the authority
-              (they survive a restart), which is why this is read from the thread
-              rather than inferred from the conversation. */}
-          <Chip
-            size="small"
-            label={
-              thread.handledByAgent
-                ? `Agent${
-                    thread.assignedAgent?.name
-                      ? `: ${thread.assignedAgent.name}`
-                      : ''
-                  }`
-                : thread.botEnabled
-                ? 'Bot active'
-                : 'Bot paused'
-            }
-            color={
-              thread.handledByAgent
-                ? 'success'
-                : thread.botEnabled
-                ? 'info'
-                : 'warning'
-            }
-            variant="outlined"
-          />
-
-          {/* Takeover is reversible, which is the whole point: an agent steps in
-              for one exchange and hands the thread back, without touching the
-              bot's behaviour on any other conversation. */}
-          {capabilities.botToggle ? (
-            <Tooltip
-              title={
-                thread.handledByAgent
-                  ? 'Hand this conversation back to the bot'
-                  : 'Take this conversation over from the bot'
-              }
-              placement="top"
+          {/* The thread's own flags are the authority (they survive a restart). */}
+          {ownership.kind === 'bot' && (
+            <Chip
+              size="small"
+              label={thread.botEnabled ? 'Bot active' : 'Bot paused'}
+              color={thread.botEnabled ? 'info' : 'warning'}
+              variant="outlined"
+            />
+          )}
+          <Tooltip title="Create or update the service request for this chat" arrow>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Icon icon="fontisto:ticket" fontSize={14} />}
+              onClick={() => setTicketOpen(true)}
             >
-              <Button
-                size="small"
-                variant="outlined"
-                color={thread.handledByAgent ? 'warning' : 'primary'}
-                onClick={() =>
-                  dispatch(
-                    setInboxBotControl({
-                      threadId: thread.id,
-                      action: thread.handledByAgent ? 'release' : 'takeover',
-                    }),
-                  )
-                }
-              >
-                {thread.handledByAgent ? 'Release to bot' : 'Take over'}
-              </Button>
-            </Tooltip>
-          ) : null}
+              Create ticket
+            </Button>
+          </Tooltip>
+          <OwnershipControls
+            view={ownership}
+            canControl={!!capabilities.botToggle}
+            busy={controlBusy}
+            typing={typing}
+            onTakeover={() => runControl('takeover')}
+            // Taking over a bot reply and handing it back needs no ticket;
+            // "Create ticket" next to it is the agent's choice.
+            onRelease={() => runControl('release')}
+            onOverride={async () => {
+              const res: any = await dispatch(overrideInboxOwner({ threadId: thread.id }));
+              if (res?.error) throw new Error(res?.payload?.message || 'The override did not complete.');
+            }}
+          />
         </Box>
       </Box>
+
+      <SrWrapUpDialog
+        open={ticketOpen}
+        mode="save"
+        threadId={thread.id}
+        conversationId={channel === WIDGET_CHANNEL ? thread.chatId : undefined}
+        onCancel={() => setTicketOpen(false)}
+        onSaved={() => setTicketOpen(false)}
+      />
+      {/* R9.10: never show a failed load as an empty conversation. The
+          composer below stays mounted, so unsent text is kept. */}
+      {historyFailed && (
+        <Alert
+          severity="error"
+          sx={{ mx: 5, mt: 3 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => dispatch(getInboxMessages({ threadId: thread.id }))}>
+              Retry
+            </Button>
+          }
+        >
+          The conversation history could not be loaded.
+        </Alert>
+      )}
+      {/* R18.8: the profile replaces earlier transcripts. Widget threads only:
+          they are keyed by one conversation id. */}
+      {channel === WIDGET_CHANNEL && (
+        <Box sx={{ mx: 5, mt: 3 }}>
+          <VisitorProfilePanel conversationId={thread.chatId} />
+        </Box>
+      )}
 
       <ThreadLog
         messages={messages || []}
@@ -322,6 +379,8 @@ const ThreadContent = ({ channel }: Props) => {
         thread={thread}
         capabilities={capabilities}
         senderId={senderId}
+        disabledReason={ownership.composerDisabledReason || undefined}
+        canSignalTyping={ownership.kind === 'mine' && channel === WIDGET_CHANNEL}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
       />

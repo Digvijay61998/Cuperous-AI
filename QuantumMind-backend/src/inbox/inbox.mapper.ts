@@ -70,6 +70,37 @@ export interface InboxMessageView {
    * renders twice.
    */
   correlationId?: string;
+  /**
+   * Author category: `visitor` | `bot` | `agent` | `system`. Derived (see
+   * `deriveSenderRole`) until rows carry it explicitly. The dashboard decides
+   * notifications on this, never on `direction` (which legacy widget rows lack).
+   */
+  senderRole?: SenderRole;
+}
+
+export type SenderRole = 'visitor' | 'bot' | 'agent' | 'system';
+
+/**
+ * Derive the author role of a stored row.
+ *
+ * Order: explicit direction for channel rows, then id comparison against the
+ * conversation's bot and visitor. Unknown stays undefined so the client stays
+ * silent rather than guessing.
+ */
+export function deriveSenderRole(
+  chat: { sender?: any; direction?: string },
+  ctx: { botId?: any; visitorId?: any } = {},
+): SenderRole | undefined {
+  const sender = chat?.sender != null ? String(chat.sender) : '';
+  if (ctx.botId && sender && sender === String(ctx.botId)) return 'bot';
+  if (ctx.visitorId && sender && sender === String(ctx.visitorId)) return 'visitor';
+  if (chat?.direction === 'inbound') return 'visitor';
+  if (chat?.direction === 'outbound') {
+    // An outbound row that is not the bot is an agent (or the operator's phone).
+    return ctx.botId && sender === String(ctx.botId) ? 'bot' : 'agent';
+  }
+  if (ctx.botId && ctx.visitorId && sender) return 'agent';
+  return undefined;
 }
 
 export interface InboxThreadView {
@@ -147,8 +178,12 @@ function refView(ref: any, fields: string[]): Record<string, any> | null {
   return out;
 }
 
-export function toMessageView(chat: ChatDocument): InboxMessageView {
+export function toMessageView(
+  chat: ChatDocument,
+  roleCtx: { botId?: any; visitorId?: any } = {},
+): InboxMessageView {
   return {
+    senderRole: deriveSenderRole(chat, roleCtx),
     id: (chat._id as any).toString(),
     // A `pending:` placeholder is an internal device for keeping the unique index
     // satisfied before the channel answers (see PENDING_EXTERNAL_ID_PREFIX); it is

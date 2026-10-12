@@ -14,12 +14,18 @@ import { CreateTemplateActionDto } from './dto/create-template-action.dto';
 import { SearchTemplateActionDto } from './dto/search-template-action.dto';
 import { TemplateActionTypeEnum } from './enums/template-action-type.enum';
 import { TemplateActionService } from './template-action.service';
+import { CurrentUser } from 'src/util/current-user.decorator';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { ORG_STAFF } from 'src/common/enums/role.enum';
 
 @Controller('template/actions')
 @ApiTags('Template Actions')
 export class TemplateActionController {
   constructor(
     private readonly templateActionService: TemplateActionService,
+    private readonly tenantScope: TenantScopeService,
   ) {}
 
   @Post('appointment')
@@ -106,9 +112,17 @@ export class TemplateActionController {
     return this.templateActionService.listProducts();
   }
 
+  /** Captured submissions (leads, bookings, ...) — the caller's org bots only. */
   @Get('submissions')
   @ApiSecurity('bearer')
-  async findAll(@Query() query: SearchTemplateActionDto) {
-    return this.templateActionService.findAll(query);
+  @Roles(...ORG_STAFF)
+  async findAll(
+    @Query() query: SearchTemplateActionDto,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return this.templateActionService.findAll(
+      query,
+      await this.tenantScope.orgBotIdStrings(user),
+    );
   }
 }

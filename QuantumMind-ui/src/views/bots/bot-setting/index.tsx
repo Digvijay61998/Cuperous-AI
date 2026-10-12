@@ -64,6 +64,8 @@ import {
   UpdateBotSettingData,
   UpdateBotStyleData,
 } from 'src/store/apps/bots';
+import IncidentSettings from './IncidentSettings';
+import { hasIncidentSettingErrors } from './incidentSettings';
 
 import { LoadingButton } from '@mui/lab';
 import MuiAlert, { AlertProps } from '@mui/material/Alert';
@@ -287,12 +289,15 @@ const BotSetting = () => {
   const handleUploadBotImage = async (e: any) => {
     var file = e.target.files[0];
     const imageUrl = await uploadFileServer(e, file);
+    // Upload failed / rejected: keep the current image instead of "/apiundefined".
+    if (!imageUrl) return;
     setImgSrcBot(`${env.baseurl}/api${imageUrl}`);
   };
 
   const handleUploadWidgetImage = async (e: any) => {
     var file = e.target.files[0];
     const imageUrl = await uploadFileServer(e, file);
+    if (!imageUrl) return;
     setImgSrcWidget(`${env.baseurl}/api${imageUrl}`);
   };
 
@@ -314,6 +319,10 @@ const BotSetting = () => {
     }
 
     if (value === 'setting') {
+      if (hasIncidentSettingErrors(botSettingMainData)) {
+        toast.error('Fix the highlighted attribute names before saving.');
+        return;
+      }
       let langsList: any = [];
       langList.map((itm: any) => {
         if (botSettingLanguages.includes(itm.label)) {
@@ -1408,6 +1417,7 @@ React.useEffect(() => {
                   />
                 </Grid>
               </Grid>
+              <IncidentSettings value={botSettingMainData} onChange={setBotSettingMainData} />
               <br />
             </TabPanel>
 

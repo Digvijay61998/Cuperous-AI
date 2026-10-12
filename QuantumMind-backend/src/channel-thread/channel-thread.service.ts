@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import mongoose, { Model } from 'mongoose';
+import mongoose, { Model, Types } from 'mongoose';
 import { CHANNEL_THREAD_PROVIDER } from './constant';
 import { ChannelThreadDocument } from './entities/channel-thread.entity';
 
@@ -41,6 +41,16 @@ export interface ThreadPreview {
  * means "this caller can see nothing" and must return nothing rather than
  * everything.
  */
+export interface ThreadOwner {
+  id: string;
+  /** Display name, or the email when the agent has no name (R8.1). */
+  name: string;
+}
+
+export type ClaimResult =
+  | { ok: true; changed: boolean }
+  | { ok: false; owner: ThreadOwner | null };
+
 export interface ListThreadsOptions {
   channel?: string;
   botIds?: string[] | null;
@@ -381,6 +391,84 @@ export class ChannelThreadService {
     );
   }
 
+  /**
+   * Single-owner takeover (crm-incident-handover R7.1, Property 5): one
+   * conditional write that succeeds only when nobody owns the thread or the
+   * caller already does. Concurrent claims serialise on the document, so
+   * exactly one wins. `changed` is false for a re-claim by the owner (no-op,
+   * no event, R7.5).
+   */
+  async claim(threadId: string, userId: string): Promise<ClaimResult> {
+    const me = String(userId);
+    const before: any = await this.threadModel
+      .findOneAndUpdate(
+        {
+          _id: threadId,
+          $or: [{ assignedAgent: null }, { assignedAgent: { $exists: false } }, { assignedAgent: me }],
+        },
+        { $set: { handledByAgent: true, assignedAgent: me, botEnabled: false } },
+        // The pre-image tells a fresh claim from a re-claim.
+        { new: false },
+      )
+      .select('assignedAgent handledByAgent')
+      .lean();
+    if (before) {
+      const wasMine = before.assignedAgent && String(before.assignedAgent) === me && before.handledByAgent === true;
+      return { ok: true, changed: !wasMine };
+    }
+    return { ok: false, owner: await this.ownerOf(threadId) };
+  }
+
+  /** Owner-only release (R7.6). `changed` false when the caller is not the owner. */
+  async releaseIfOwner(threadId: string, userId: string): Promise<ClaimResult> {
+    const res: any = await this.threadModel
+      .findOneAndUpdate(
+        { _id: threadId, assignedAgent: String(userId) },
+        { $set: { handledByAgent: false, botEnabled: true }, $unset: { assignedAgent: '' } },
+        { new: false },
+      )
+      .select('_id')
+      .lean();
+    if (res) return { ok: true, changed: true };
+    const owner = await this.ownerOf(threadId);
+    // Nobody owns it: releasing is a no-op, not a conflict.
+    if (!owner) return { ok: true, changed: false };
+    return { ok: false, owner };
+  }
+
+  /**
+   * Admin override (R7.3): move ownership from the current owner to `toId`,
+   * conditional on the owner not having changed since the admin looked.
+   */
+  async overrideOwner(threadId: string, expectedOwnerId: string | null, toId: string): Promise<ClaimResult> {
+    const filter: any = { _id: threadId };
+    if (expectedOwnerId) filter.assignedAgent = String(expectedOwnerId);
+    else filter.$or = [{ assignedAgent: null }, { assignedAgent: { $exists: false } }];
+    const res: any = await this.threadModel
+      .findOneAndUpdate(
+        filter,
+        { $set: { handledByAgent: true, assignedAgent: String(toId), botEnabled: false } },
+        { new: false },
+      )
+      .select('_id')
+      .lean();
+    if (res) return { ok: true, changed: String(expectedOwnerId ?? '') !== String(toId) };
+    return { ok: false, owner: await this.ownerOf(threadId) };
+  }
+
+  /** The current owner's id and display name (email when nameless, R8.1). */
+  async ownerOf(threadId: string): Promise<ThreadOwner | null> {
+    const t: any = await this.threadModel
+      .findById(threadId)
+      .select('assignedAgent')
+      .populate('assignedAgent', 'name email')
+      .lean();
+    const a = t?.assignedAgent;
+    if (!a) return null;
+    const id = a._id ? String(a._id) : String(a);
+    return { id, name: (a.name || '').trim() || a.email || 'another agent' };
+  }
+
   /** Hand the thread back to the bot. */
   async releaseToBot(threadId: string): Promise<void> {
     await this.threadModel.updateOne(
@@ -510,6 +598,27 @@ export class ChannelThreadService {
         : null;
 
     return { threads, nextCursor };
+  }
+
+  /**
+   * Threads showing this visitor or conversation, populated for the inbox
+   * list (crm-plugins-service-desk R4.4: republished when the name changes).
+   * Social threads span conversations, so the visitor is matched too.
+   */
+  async findForVisitorOrConversation(
+    visitorId: string,
+    conversationId: string,
+  ): Promise<ChannelThreadDocument[]> {
+    const or: any[] = [];
+    if (Types.ObjectId.isValid(visitorId)) or.push({ visitor: visitorId });
+    if (Types.ObjectId.isValid(conversationId)) or.push({ conversation: conversationId });
+    if (!or.length) return [];
+    return this.threadModel
+      .find({ $or: or })
+      .limit(10)
+      .populate('bot', 'name')
+      .populate('visitor', 'name email phone')
+      .populate('assignedAgent', 'name email');
   }
 
   /** One thread with its relations, for the inbox detail header. */

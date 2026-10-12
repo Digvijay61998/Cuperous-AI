@@ -4,8 +4,9 @@ import { UpdateOfferDto } from './dto/update-offer.dto';
 import { SearchParamDto } from './dto/search-param.dto';
 import { OfferDocument } from './entities/offer.entity';
 import { OFFER_PROVIDER } from './constants';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import { BotsService } from 'src/bots/bots.service';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import { getDaySubtitle } from 'src/util/get-subtitle';
 import { OfferStatusEnum } from './enums/offer-status.enum';
 import { incrementClicksDto } from './dto/increment-count.dto';
@@ -14,6 +15,7 @@ import { offerQueryParams } from './dto/get-offer.params.dto';
 import { ComparisonDto } from 'src/util/comparison.dto';
 import {
   assertOwnership,
+  isCrossOrg,
   scopedFilter,
   TenantContext,
 } from 'src/common/tenant/tenant-context';
@@ -24,10 +26,49 @@ export class OfferService {
     @Inject(OFFER_PROVIDER)
     private readonly offerModel: Model<OfferDocument>,
     private readonly botsService: BotsService,
+    private readonly tenantScope: TenantScopeService,
   ) {}
+
+  /**
+   * `$match` fragment pinning an aggregation to the caller's organization.
+   * Aggregations do not auto-cast, so the org id is converted explicitly.
+   * Empty for SUPER_ADMIN; `{ organizationId: null }` when the caller has no org.
+   */
+  private orgMatch(user?: TenantContext): Record<string, any> {
+    if (isCrossOrg(user)) return {};
+    const orgId = user?.organizationId;
+    return {
+      organizationId:
+        orgId && mongoose.isValidObjectId(orgId)
+          ? new mongoose.Types.ObjectId(String(orgId))
+          : null,
+    };
+  }
+
+  /**
+   * False when the client supplied a bot id that is malformed or outside the
+   * caller's organization (callers then return an empty result).
+   */
+  private async botAllowed(user: TenantContext | undefined, bot?: string) {
+    if (!bot) return true;
+    if (!mongoose.isValidObjectId(bot)) return false;
+    return this.tenantScope.isBotInOrg(user, bot);
+  }
+
+  /** Rejects assigning an offer to bots outside the caller's organization. */
+  private async assertBotsInOrg(user: TenantContext | undefined, bots?: any[]) {
+    if (!Array.isArray(bots)) return;
+    for (const bot of bots) {
+      if (!mongoose.isValidObjectId(bot?._id ?? bot)) {
+        throw new HttpException('Bot not found', 404);
+      }
+      await this.tenantScope.assertBotInOrg(user, bot);
+    }
+  }
 
   async create(createOfferDto: CreateOfferDto, actor?: TenantContext) {
     try {
+      await this.assertBotsInOrg(actor, (createOfferDto as any).assignedToBots);
       const offer = new this.offerModel({
         ...createOfferDto,
         organizationId: (actor?.organizationId as any) ?? null,
@@ -95,8 +136,14 @@ export class OfferService {
         throw new HttpException('Offer not found', 404);
       }
       assertOwnership(user, existing as any);
+      await this.assertBotsInOrg(user, (updateOfferDto as any).assignedToBots);
+      // Tenant fields are never client-writable (ValidationPipe does not
+      // whitelist, so strip explicitly).
+      const changes: Record<string, any> = { ...(updateOfferDto as any) };
+      delete changes.organizationId;
+      delete changes._id;
       const offer = await this.offerModel
-        .findOneAndUpdate({ _id: id }, updateOfferDto, { new: true })
+        .findOneAndUpdate({ _id: id }, changes, { new: true })
         .exec();
 
       if (!offer) {
@@ -232,9 +279,10 @@ export class OfferService {
     }
   }
 
-  async findOfferClickCount() {
+  async findOfferClickCount(user?: TenantContext) {
     try {
       const offer = this.offerModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $project: {
             clicksCount: { $size: '$clicks' },
@@ -250,14 +298,22 @@ export class OfferService {
     }
   }
 
-  async findBotClicksCount(query?: SearchParamDto) {
+  async findBotClicksCount(query?: SearchParamDto, user?: TenantContext) {
     try {
+      if (!(await this.botAllowed(user, query?.bot))) return [];
+      // Only count clicks attributed to the caller's own bots so the joined
+      // bot names never expose another tenant's bots.
+      const botIds = await this.tenantScope.orgBotIds(user);
+      const clickBotMatch =
+        botIds === null ? {} : { 'clicks.botId': { $in: botIds } };
       const offer = this.offerModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: {
             path: '$clicks',
           },
         },
+        { $match: clickBotMatch },
         {
           $lookup: {
             from: 'bots',
@@ -296,9 +352,11 @@ export class OfferService {
       // throw new HttpException(error.message, error.status || 500);
     }
   }
-  async findTagsClicksCount(query?: SearchParamDto) {
+  async findTagsClicksCount(query?: SearchParamDto, user?: TenantContext) {
     try {
+      if (!(await this.botAllowed(user, query?.bot))) return [];
       const advertisement = this.offerModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: {
             path: '$clicks',
@@ -324,14 +382,19 @@ export class OfferService {
       // throw new HttpException(error.message, error.status || 500);
     }
   }
-  async getDateWisePerformance(params: offerQueryParams) {
+  async getDateWisePerformance(
+    params: offerQueryParams,
+    user?: TenantContext,
+  ) {
     let { offerId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
+    if (offerId && !mongoose.isValidObjectId(offerId)) return [];
 
-    const match = {};
+    // Org scope: a cross-org offerId simply matches nothing.
+    const match: Record<string, any> = this.orgMatch(user);
 
     if (startDate) {
       match['createdAt'] = {
@@ -387,15 +450,23 @@ export class OfferService {
     }
   }
 
-  async dateWiseComparison(query: ComparisonDto) {
+  async dateWiseComparison(query: ComparisonDto, user?: TenantContext) {
     try {
       const { param1, param2, startDate } = query;
       let endDate = query.endDate;
       if (!endDate) {
         endDate = new Date().toISOString();
       }
+      // Unknown/malformed ids never match; cross-org ids are excluded by the
+      // org $match below, so their series come back as zeros.
+      const id1 = mongoose.isValidObjectId(param1)
+        ? new ObjectId(param1)
+        : null;
+      const id2 = mongoose.isValidObjectId(param2)
+        ? new ObjectId(param2)
+        : null;
 
-      const match = {};
+      const match: Record<string, any> = {};
       if (!startDate) {
         match['clicks.date'] = {
           $lte: new Date(endDate),
@@ -409,6 +480,7 @@ export class OfferService {
       }
 
       const data = await this.offerModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: '$clicks',
         },
@@ -427,7 +499,7 @@ export class OfferService {
             offer1: {
               $sum: {
                 $cond: {
-                  if: { $eq: ['$_id', new ObjectId(param1)] },
+                  if: { $eq: ['$_id', id1] },
                   then: 1,
                   else: 0,
                 },
@@ -436,7 +508,7 @@ export class OfferService {
             offer2: {
               $sum: {
                 $cond: {
-                  if: { $eq: ['$_id', new ObjectId(param2)] },
+                  if: { $eq: ['$_id', id2] },
                   then: 1,
                   else: 0,
                 },
@@ -466,14 +538,19 @@ export class OfferService {
       throw new HttpException(err.message, err.status || 500);
     }
   }
-  async getDayWisePerformance(params: offerQueryParams) {
+  async getDayWisePerformance(
+    params: offerQueryParams,
+    user?: TenantContext,
+  ) {
     let { offerId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
+    if (offerId && !mongoose.isValidObjectId(offerId)) return [];
 
-    const match = {};
+    // Org scope: a cross-org offerId simply matches nothing.
+    const match: Record<string, any> = this.orgMatch(user);
 
     if (startDate) {
       match['createdAt'] = {
@@ -538,18 +615,20 @@ export class OfferService {
     }
   }
 
-  async findOfferDateVisitorsStats(query: offerQueryParams) {
+  async findOfferDateVisitorsStats(
+    query: offerQueryParams,
+    user?: TenantContext,
+  ) {
     try {
       const { startDate, endDate, offerId } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (offerId) queryObject['id'] = offerId;
       if (startDate) queryObject['createdAt'] = { $gte: startDate };
       if (endDate) queryObject['createdAt'] = { $lte: endDate };
       if (startDate && endDate)
         queryObject['createdAt'] = { $gte: startDate, $lte: endDate };
-      console.log('query', queryObject);
-      const offer = this.offerModel.find(queryObject);
+      const offer = this.offerModel.find(scopedFilter(user, queryObject));
       return offer;
     } catch (error) {
       this.logger.error(`Error while getting all offer : ${error.message}`);

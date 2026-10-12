@@ -25,6 +25,8 @@ import { getNodeDetails, nodeUpdate } from 'src/store/apps/bot-flow';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import { Tooltip } from '@mui/material';
 import env from 'src/configs/environments';
+import TerminalToggle from '../bot-flow/TerminalToggle';
+import { isTerminal, withTerminal } from '../bot-flow/terminal';
 
 type TabPanelProps = {
   children?: React.ReactNode;
@@ -91,10 +93,14 @@ const BotResponseEditor = (props: BotResponseProps) => {
     }
   }, [dispatch, id]);
 
+  // crm-incident-handover 6.6: "End of conversation" toggle (R14.1).
+  const [terminal, setTerminal] = useState<boolean>(false);
+
   useEffect(() => {
     if (nodeDetails?.id) {
       if (nodeDetails.responses.length > 0)
         setBotResponseList(nodeDetails.responses);
+      setTerminal(nodeDetails.id === id && isTerminal(nodeDetails.payload));
       setTitle('');
       if (nodeDetails?.title?.length > 0) {
         setTitle(nodeDetails?.title);
@@ -275,7 +281,15 @@ const BotResponseEditor = (props: BotResponseProps) => {
 
   const handleSubmit = (e: any) => {
     e.preventDefault();
-    dispatch(nodeUpdate({ id, title, responses: botResponseList }));
+    dispatch(
+      nodeUpdate({
+        id,
+        title,
+        responses: botResponseList,
+        // The save replaces the whole payload: keep its other keys.
+        payload: withTerminal(nodeDetails?.id === id ? nodeDetails?.payload : {}, terminal),
+      }),
+    );
     setOpen(false);
   };
   const handleUpdateBotResponseList = (
@@ -456,6 +470,9 @@ const BotResponseEditor = (props: BotResponseProps) => {
       >
         <Icon fontSize={24} icon="bi:check-lg" />
       </IconButton>
+      <div style={{ padding: '0 0.5rem 0.5rem' }}>
+        <TerminalToggle idPrefix={`node-${id}`} checked={terminal} onChange={setTerminal} />
+      </div>
       {/* <div
           style={{
             // paddingRight: '25px',

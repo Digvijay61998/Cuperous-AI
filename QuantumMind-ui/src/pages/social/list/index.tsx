@@ -45,6 +45,7 @@ import { getSocialsCardStats } from 'src/store/apps/states';
 import DeleteDialog from 'src/views/social/DeleteDialog';
 import AddEditSocial from 'src/views/social/list/AddEditSocial';
 import TableHeader from 'src/views/social/TableHeader';
+import { useEntitlements } from 'src/hooks/useEntitlements';
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
 const MenuProps = {
@@ -91,6 +92,8 @@ const SocialList = () => {
   const [platform, setPlatform] = useState<string>('');
   const [pageSize, setPageSize] = useState<number>(10);
   const [addSocialOpen, setAddSocialOpen] = useState<boolean>(false);
+  const { canCreate } = useEntitlements();
+  const platformQuotaReached = !canCreate('platforms');
 
   const initAddData:any = {
     method: 'add',
@@ -411,6 +414,8 @@ console.log("filteredDatafilteredData",platform)
             buttonName={'Add Messenger'}
             handleFilter={handleFilter}
             toggle={toggleAddSocialDrawer}
+            disabled={platformQuotaReached}
+            disabledReason="Channel limit reached for your plan"
           />
           <Divider sx={{ m: '0 !important' }} />
           <CardContent>

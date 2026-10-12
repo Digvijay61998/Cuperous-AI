@@ -28,6 +28,7 @@ import {
 } from 'src/views/bots/bot-flow/nodes/CustomNode';
 import RightClickOption from 'src/views/bots/bot-flow/RightClickMenuOptions';
 import BotWidget from 'src/views/bots/widget';
+import FlowViewport from 'src/views/bots/bot-flow/FlowViewport';
 const nodeTypes = {
   start_node: StartNode,
   custom_node: CustomNode,
@@ -137,6 +138,7 @@ function Flow() {
   };
 
   return (
+    <FlowViewport>
     <ReactFlow
       nodes={nodes}
       onNodesChange={onNodesChange}
@@ -257,6 +259,7 @@ function Flow() {
         selectedNode={selectedNode}
       />
     </ReactFlow>
+    </FlowViewport>
   );
 }
 

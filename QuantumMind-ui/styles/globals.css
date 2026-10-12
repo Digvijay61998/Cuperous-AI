@@ -7,7 +7,7 @@ body {
   height: 100%;
 }
 .react-flow {
-  overflow: none !important;
+  overflow: hidden !important;
   background-color: rgba(239, 239, 239, 0.518);
   border-radius: 10px;
   

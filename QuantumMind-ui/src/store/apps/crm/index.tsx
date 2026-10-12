@@ -26,6 +26,8 @@ type FilterListProps = {
   owner?: string;
   company?: string;
   source?: string;
+  /** Capture channel (widget_form, whatsapp, telegram, …; 'unassigned' = not from chat). */
+  channel?: string;
   sort?: string;
   dir?: 'asc' | 'desc';
 };
@@ -42,6 +44,10 @@ const buildQuery = (resource: string, query: FilterListProps = {}): string => {
   if (query.owner) parts.push(`owner=${query.owner}`);
   if (query.company) parts.push(`company=${query.company}`);
   if (query.source) parts.push(`source=${query.source}`);
+  // Comma-separated in the UI ("whatsapp,whatsapp_web"), repeated params on the wire.
+  if (query.channel) {
+    for (const c of query.channel.split(',').filter(Boolean)) parts.push(`channel=${encodeURIComponent(c)}`);
+  }
   if (query.sort) parts.push(`sort=${query.sort}`);
   if (query.dir) parts.push(`dir=${query.dir}`);
   if (parts.length) urlString += `?${parts.join('&')}`;

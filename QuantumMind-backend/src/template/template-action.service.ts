@@ -1,6 +1,6 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { isValidObjectId, Model } from 'mongoose';
+import mongoose, { isValidObjectId, Model } from 'mongoose';
 import { UploadService } from 'src/upload/upload.service';
 import {
   TEMPLATE_ACTION_SUBMISSION_PROVIDER,
@@ -72,6 +72,33 @@ export class TemplateActionService {
     }
   }
 
+  /**
+   * These endpoints are public (hosted templates carry no admin JWT), so the
+   * attribution fields are client-supplied. Reject combinations that do not
+   * exist in our data so a caller cannot plant submissions into — or resume
+   * the chat flow of — another tenant's bot/conversation:
+   *  - `botId`, when present, must be an existing bot;
+   *  - `conversationId`, when present, must exist AND belong to that bot.
+   */
+  private async assertContextIntegrity(context: Record<string, any>) {
+    const { botId, conversationId } = context ?? {};
+    if (!botId && !conversationId) return;
+    const Bot = mongoose.model('Bot');
+    if (botId) {
+      const ok =
+        isValidObjectId(botId) && (await Bot.exists({ _id: botId }));
+      if (!ok) throw new HttpException('Invalid bot', 400);
+    }
+    if (conversationId) {
+      if (!botId || !isValidObjectId(conversationId)) {
+        throw new HttpException('Invalid conversation', 400);
+      }
+      const Conversation = mongoose.model('Conversation');
+      const ok = await Conversation.exists({ _id: conversationId, bot: botId });
+      if (!ok) throw new HttpException('Invalid conversation', 400);
+    }
+  }
+
   /** Mongo duplicate-key (E11000/11001) — raised by the unique requestId index. */
   private isDuplicateKeyError(error: any): boolean {
     return error?.code === 11000 || error?.code === 11001;
@@ -88,6 +115,7 @@ export class TemplateActionService {
       await this.assertTemplateExists(body.templateId);
 
       const { context, payload } = this.splitContext(body);
+      await this.assertContextIntegrity(context);
 
       if (context.requestId) {
         const existing = await this.submissionModel.findOne({
@@ -196,7 +224,8 @@ export class TemplateActionService {
   }
 
   /** Dashboard-facing listing of stored submissions, filterable by template/bot/conversation/actionType. */
-  async findAll(query: SearchTemplateActionDto) {
+  /** @param botIds tenant scope (string bot ids); null = unrestricted. */
+  async findAll(query: SearchTemplateActionDto, botIds: string[] | null = null) {
     try {
       const {
         skip = 0,
@@ -214,6 +243,14 @@ export class TemplateActionService {
         queryObj.templateId = templateId;
       }
       if (botId) queryObj.botId = botId;
+      if (botIds !== null) {
+        queryObj.botId =
+          botId && !botIds.includes(String(botId))
+            ? { $in: [] }
+            : botId
+            ? botId
+            : { $in: botIds };
+      }
       if (conversationId) queryObj.conversationId = conversationId;
       if (actionType) queryObj.actionType = actionType;
 

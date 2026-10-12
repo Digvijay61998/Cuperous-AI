@@ -8,6 +8,12 @@ import Axios from 'src/helper/Axios';
 // ** Toasters Imports
 import { toast } from 'react-hot-toast';
 import { ChatMessage, onNewVisitorAdded } from 'src/services/socket.services';
+import { mergeHistory } from 'src/views/apps/active-chat/historyMerge';
+import {
+  renameConversationVisitor,
+  renameInList,
+  VisitorUpdatedEvent,
+} from './visitorRename';
 
 interface Redux {
   getState: any;
@@ -84,16 +90,49 @@ export const selectChat = createAsyncThunk(
     }
   },
 );
+/**
+ * Full history of a conversation from the server (R9.1). Uses the incident
+ * context endpoint (every chat row, oldest first, with sender roles), and
+ * falls back to the conversation endpoint for older backends. 10 s budget;
+ * a failure rejects so the view shows "could not load" + Retry instead of an
+ * empty chat (R9.10).
+ */
 export const loadOldChats = createAsyncThunk(
   'appChat/oldChats',
-  async (id: number | string) => {
+  async (id: number | string, { rejectWithValue }) => {
     try {
-      const response = await Axios.get('/conversation/' + id);
-
-      return response.data;
+      const response = await Axios.get(
+        `/incidents/by-conversation/${encodeURIComponent(String(id))}/context`,
+        { timeout: 10_000 },
+      );
+      const data = response.data || {};
+      return {
+        _id: String(id),
+        // `sender` is resolved in the reducer, where the visitor id is known:
+        // the legacy log puts a row on the visitor side only when
+        // sender === visitor._id.
+        chats: (data.chats || []).map((c: any) => ({
+          ...c,
+          _id: c.id,
+          value: c.message,
+        })),
+        earlier: data.earlier || [],
+        earlierHasMore: !!data.earlierHasMore,
+        earlierCursor: data.earlierCursor || null,
+        profile: data.profile ?? null,
+        incident: data.incident ?? null,
+      };
     } catch (error: any) {
-      console.log('Conversation detail API:Error >>>>', error);
-      toast.error(error.response.data.message || error.message || error);
+      if (error?.response?.status === 404) {
+        try {
+          const response = await Axios.get('/conversation/' + id, { timeout: 10_000 });
+          return response.data;
+        } catch (e: any) {
+          return rejectWithValue({ message: e?.response?.data?.message || e?.message });
+        }
+      }
+      console.log('Conversation history API:Error >>>>', error);
+      return rejectWithValue({ message: error?.response?.data?.message || error?.message });
     }
   },
 );
@@ -144,6 +183,8 @@ export const conversationsSlice = createSlice({
     chatContext: null as any,
     enableSound: true,
     isLoadingOldChat: false,
+    /** Conversations whose history failed to load (R9.10). */
+    historyErrorById: {} as Record<string, boolean>,
   },
   reducers: {
     removedSelectedConversation: (state) => {
@@ -177,6 +218,13 @@ export const conversationsSlice = createSlice({
     },
     removedSelectedChat: (state, action) => {
       state.activeSelectedChat = null;
+    },
+    /** `visitor-updated`: the visitor told the bot their name (R4.5). */
+    renameVisitor: (state, action: { payload: VisitorUpdatedEvent }) => {
+      state.activeConversations = renameInList(current(state.activeConversations), action.payload);
+      if (state.activeSelectedChat) {
+        state.activeSelectedChat = renameConversationVisitor(current(state.activeSelectedChat), action.payload);
+      }
     },
   },
   extraReducers: (builder) => {
@@ -293,22 +341,40 @@ export const conversationsSlice = createSlice({
       state.isLoadingOldChat = true;
     });
     // add old chat message into the active chat
+    builder.addCase(loadOldChats.rejected, (state, action) => {
+      state.isLoadingOldChat = false;
+      state.historyErrorById[String(action.meta.arg)] = true;
+    });
     builder.addCase(loadOldChats.fulfilled, (state, action) => {
+      state.isLoadingOldChat = false;
+      if (!action.payload?._id) return;
+      delete state.historyErrorById[String(action.payload._id)];
       const conversations = current(state.activeConversations).map(
         (conv: any, index: number) => {
           if (conv._id === action.payload._id) {
-            // remove dublicate chats
-            const chats = [...action.payload.chats, ...conv.chats].filter(
-              (v, i, a) => a.findIndex((t) => t.id === v.id) === i,
+            // Server history + live rows, oldest first, no duplicates (R9.8).
+            const visitorId = conv?.visitor?._id;
+            const server = (action.payload.chats || []).map((c: any) =>
+              c.senderRole
+                ? { ...c, sender: c.senderRole === 'visitor' ? visitorId : c.senderRole === 'agent' ? 'agent' : 'bot' }
+                : c,
             );
-            state.activeSelectedChat = {
-              ...conv,
-              chats,
+            const chats = mergeHistory(server, conv.chats || []);
+            const extra = {
+              historyLoaded: true,
+              earlier: action.payload.earlier ?? conv.earlier ?? [],
+              earlierHasMore: action.payload.earlierHasMore ?? false,
+              earlierCursor: action.payload.earlierCursor ?? null,
+              profile: action.payload.profile ?? conv.profile ?? null,
+              incident: action.payload.incident ?? conv.incident ?? null,
             };
-            return {
-              ...conv,
-              chats,
-            };
+            const next = { ...conv, ...extra, chats };
+            // Only replace the open chat when this IS the open chat; loading a
+            // background conversation must not switch the agent's view.
+            if (state.activeChatId === conv._id || !state.activeSelectedChat) {
+              state.activeSelectedChat = next;
+            }
+            return next;
           } else {
             return { ...conv };
           }
@@ -332,6 +398,7 @@ export const {
   removedSelectedConversation,
   handleChatContext,
   handleSoundToggle,
+  renameVisitor,
 } = conversationsSlice.actions;
 
 export default conversationsSlice.reducer;

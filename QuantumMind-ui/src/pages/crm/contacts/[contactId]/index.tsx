@@ -33,6 +33,13 @@ import ActivityTimeline from 'src/views/crm/ActivityTimeline';
 import CustomFieldsPanel from 'src/views/crm/CustomFieldsPanel';
 import ContactDrawer from 'src/views/crm/ContactDrawer';
 import ContactFactsPanel from 'src/views/crm/ContactFactsPanel';
+import ContactLinksList from 'src/views/crm/ContactLinksList';
+import VisitorProfileCard from 'src/views/crm/VisitorProfileCard';
+import { LINK_KINDS } from 'src/views/crm/contactLinks';
+import ContactIdentifiersList from 'src/views/crm/ContactIdentifiersList';
+import { captureSourceLabel } from 'src/views/crm/contactIdentifiers';
+import useCrmPlugins from 'src/views/crm/plugins/useCrmPlugins';
+import ContactServiceRequests from 'src/views/crm/service-requests/ContactServiceRequests';
 
 // ** Utils
 import { formatCurrency, humanize, initials, stageColor } from 'src/views/crm/utils';
@@ -44,8 +51,12 @@ const ContactDetail = () => {
 
   const record = useSelector((state: RootState) => state.crm.selectedRecord);
   const loading = useSelector((state: RootState) => state.crm.loadingDetail);
+  // R18.12: only org admins correct the Visitor_Profile (the API enforces it too).
+  const userRole = useSelector((state: RootState) => (state.user as any)?.userData?.role);
 
   const [tab, setTab] = useState<string>('overview');
+  // Company and deal parts follow their plugins (crm-plugins-service-desk R8.4).
+  const { isOn } = useCrmPlugins();
   const [editOpen, setEditOpen] = useState<boolean>(false);
 
   useEffect(() => {
@@ -97,6 +108,16 @@ const ContactDetail = () => {
                 {initials(name)}
               </CustomAvatar>
               <Typography variant="h6">{name}</Typography>
+              {record.isAnonymous && (
+                <CustomChip
+                  rounded
+                  skin="light"
+                  size="small"
+                  color="secondary"
+                  label="Anonymous"
+                  sx={{ mt: 1 }}
+                />
+              )}
               {record.title && (
                 <Typography variant="body2" color="text.secondary">
                   {record.title}
@@ -125,14 +146,17 @@ const ContactDetail = () => {
               </Box>
 
               <Box sx={{ mt: 5, textAlign: 'left' }}>
-                <DetailRow icon="bx:envelope" label="Email" value={record.email} />
-                <DetailRow icon="bx:phone" label="Phone" value={record.phone} />
-                <DetailRow
-                  icon="bx:buildings"
-                  label="Company"
-                  value={record.company?.name}
-                  href={record.company ? `/crm/companies/${record.company.id}` : undefined}
-                />
+                {/* Current email/phone first, earlier ones and platform ids after (R21.6). */}
+                <ContactIdentifiersList record={record} />
+                <DetailRow icon="bx:target-lock" label="Source" value={captureSourceLabel(record.sourceChannel)} />
+                {isOn('companies') && (
+                  <DetailRow
+                    icon="bx:buildings"
+                    label="Company"
+                    value={record.company?.name}
+                    href={record.company ? `/crm/companies/${record.company.id}` : undefined}
+                  />
+                )}
                 <DetailRow icon="bx:briefcase" label="Function" value={humanize(record.function)} />
                 <DetailRow icon="bx:link" label="LinkedIn" value={record.linkedinUrl} />
               </Box>
@@ -149,12 +173,20 @@ const ContactDetail = () => {
               sx={{ borderBottom: (t) => `1px solid ${t.palette.divider}`, px: 2 }}
             >
               <Tab value="overview" label="Overview" />
+              <Tab value="profile" label="Visitor profile" />
+              <Tab value="requests" label="Service Requests" />
+              <Tab value="links" label="Conversations & Requests" />
               <Tab value="facts" label={factsTabLabel} />
               <Tab value="activity" label="Activity" />
               <Tab value="fields" label="Custom Fields" />
             </Tabs>
             <CardContent>
-              {tab === 'overview' && (
+              {tab === 'overview' && !isOn('deals') && (
+                <Typography variant="body2" color="text.disabled">
+                  Notes, calls and follow-up tasks are on the Activity tab.
+                </Typography>
+              )}
+              {tab === 'overview' && isOn('deals') && (
                 <Box>
                   <Typography variant="subtitle2" sx={{ mb: 3 }}>
                     Deals
@@ -195,6 +227,12 @@ const ContactDetail = () => {
                   )}
                 </Box>
               )}
+              {tab === 'profile' && <VisitorProfileCard contactId={id} canEdit={userRole === 'org_admin'} />}
+              {tab === 'requests' && <ContactServiceRequests contactId={id} />}
+              {tab === 'links' &&
+                LINK_KINDS.map((kind) => (
+                  <ContactLinksList key={kind} contactId={id} kind={kind} />
+                ))}
               {tab === 'facts' && <ContactFactsPanel facts={record.facts || []} contactId={id} />}
               {tab === 'activity' && <ActivityTimeline scope={{ contactId: id }} />}
               {tab === 'fields' && <CustomFieldsPanel entity="CONTACT" recordId={id} />}

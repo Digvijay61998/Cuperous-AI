@@ -8,7 +8,10 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { Public } from 'src/auth/Public/public.decorator';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { ORG_STAFF } from 'src/common/enums/role.enum';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { CurrentUser } from 'src/util';
 import { AddVisitorToSegmentDto } from './dto/add-visitor-to-segement.dto';
 
 import { CreateSegmentDto } from './dto/create-segment.dto';
@@ -23,78 +26,120 @@ export class SegmentsController {
   constructor(private readonly segmentsService: SegmentsService) {}
 
   @Post()
-  async createSegment(@Body() createSegmentDto: CreateSegmentDto) {
-    return this.segmentsService.create(createSegmentDto);
+  @Roles(...ORG_STAFF)
+  async createSegment(
+    @Body() createSegmentDto: CreateSegmentDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.segmentsService.create(
+      createSegmentDto,
+      user as TenantContext,
+    );
   }
 
   @Get()
-  async findAll() {
-    return this.segmentsService.findAll();
+  async findAll(@CurrentUser() user: any) {
+    return this.segmentsService.findAll(user as TenantContext);
   }
 
-  @Public()
   @Get('report/count')
-  async segmentSummary() {
-    return this.segmentsService.findSegmentsVisitorsCount();
+  async segmentSummary(@CurrentUser() user: any) {
+    return this.segmentsService.findSegmentsVisitorsCount(
+      user as TenantContext,
+    );
   }
 
   @Get('report/day-wise-performance')
-  @Public()
-  async segmentSummaryStats(@Query() query: SegmentQueryParams) {
-    return this.segmentsService.getDayWisePerformance(query);
+  async segmentSummaryStats(
+    @Query() query: SegmentQueryParams,
+    @CurrentUser() user: any,
+  ) {
+    return this.segmentsService.getDayWisePerformance(
+      query,
+      user as TenantContext,
+    );
   }
 
-  @Public()
   @Get('report/date-wise-performance')
-  @Public()
-  async segmentDateWiseStats(@Query() query: SegmentQueryParams) {
-    return this.segmentsService.getDateWiseSegmentVisitors(query);
+  async segmentDateWiseStats(
+    @Query() query: SegmentQueryParams,
+    @CurrentUser() user: any,
+  ) {
+    return this.segmentsService.getDateWiseSegmentVisitors(
+      query,
+      user as TenantContext,
+    );
   }
 
-  @Public()
   @Get('report/date-wise-compare')
-  async segmentDateWiseCompare(@Query() query: ComparisonDto) {
-    return this.segmentsService.getDateWiseSegmentCompare(query);
+  async segmentDateWiseCompare(
+    @Query() query: ComparisonDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.segmentsService.getDateWiseSegmentCompare(
+      query,
+      user as TenantContext,
+    );
   }
 
-  @Public()
   @Get('stats')
-  async getStats() {
-    return this.segmentsService.getSegmentStats();
+  async getStats(@CurrentUser() user: any) {
+    return this.segmentsService.getSegmentStats(
+      undefined,
+      user as TenantContext,
+    );
   }
 
   @Get(':visitorId')
-  @Public()
-  async getSegmentsByVisitorId(@Param('visitorId') visitorId: string) {
-    return await this.segmentsService.getAllSegmentsOfVisitor(visitorId);
+  async getSegmentsByVisitorId(
+    @Param('visitorId') visitorId: string,
+    @CurrentUser() user: any,
+  ) {
+    return await this.segmentsService.getAllSegmentsOfVisitor(
+      visitorId,
+      user as TenantContext,
+    );
   }
 
   @Get(':id/visitors')
-  @Public()
-  async getVisitors(@Param('id') segmentId: string) {
-    return this.segmentsService.getVisitors(segmentId);
+  async getVisitors(@Param('id') segmentId: string, @CurrentUser() user: any) {
+    return this.segmentsService.getVisitors(segmentId, user as TenantContext);
   }
 
   @Delete(':id')
-  async delete(@Param('id') segmentId: string) {
-    return this.segmentsService.removeSegment(segmentId);
+  @Roles(...ORG_STAFF)
+  async delete(@Param('id') segmentId: string, @CurrentUser() user: any) {
+    return this.segmentsService.removeSegment(
+      segmentId,
+      user as TenantContext,
+    );
   }
 
-  @Public()
   @Post(':id/add-visitor')
+  @Roles(...ORG_STAFF)
   async addUser(
     @Param('id') segmentId: string,
     @Body() body: AddVisitorToSegmentDto,
+    @CurrentUser() user: any,
   ) {
-    return this.segmentsService.addVisitor(segmentId, body.visitorId);
+    return this.segmentsService.addVisitor(
+      segmentId,
+      body.visitorId,
+      user as TenantContext,
+    );
   }
 
   @Post(':id/remove-visitor')
-  @Public()
+  @Roles(...ORG_STAFF)
   async removeUser(
     @Param('id') segmentId: string,
     @Body() body: AddVisitorToSegmentDto,
+    @CurrentUser() user: any,
   ) {
-    return this.segmentsService.removeVisitor(segmentId, body.visitorId);
+    return this.segmentsService.removeVisitor(
+      segmentId,
+      body.visitorId,
+      user as TenantContext,
+    );
   }
 }

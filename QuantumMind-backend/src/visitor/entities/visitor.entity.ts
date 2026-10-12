@@ -108,6 +108,10 @@ export class Visitor {
 
   @Prop({})
   username: string;
+
+  /** CRM (Postgres) contact cuid for this visitor (R3.1). No FK. */
+  @Prop({ type: String, index: true })
+  crmContactId?: string;
 }
 
 export const VisitorSchema = SchemaFactory.createForClass(Visitor);
@@ -120,9 +124,19 @@ VisitorSchema.index({
 
 // Unique constraint: one visitor per (username, bot) pair.
 // Prevents duplicate visitors for the same WhatsApp contact.
+//
+// Must be a PARTIAL index, not sparse: widget visitors have no `username` but
+// always have `bot`, so a compound sparse index still indexes them with
+// `username: null` and the second anonymous visitor on a bot collides
+// (E11000 { username: null, bot }). partialFilterExpression only indexes
+// documents whose username is a string, so username-less widget visitors are
+// never part of this constraint.
 VisitorSchema.index(
   { username: 1, bot: 1 },
-  { unique: true, sparse: true },
+  {
+    unique: true,
+    partialFilterExpression: { username: { $type: "string" } },
+  },
 );
 
 VisitorSchema.virtual("details").get(function () {

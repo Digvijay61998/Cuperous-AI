@@ -11,7 +11,10 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
+import { UseGuards } from "@nestjs/common";
 import { OrgId } from "../common/org-id.decorator";
+import { CrmPluginGuard } from "../plugins/crm-plugin.guard";
+import { pluginForEntity, RequiresCrmPlugin } from "../plugins/requires-crm-plugin.decorator";
 import {
   CreateFieldDefinitionDto,
   ListFieldsDto,
@@ -21,6 +24,8 @@ import { ApplyFieldValuesDto, GetFieldValuesDto } from "./dto/field-values.dto";
 import { FieldsService } from "./fields.service";
 
 @Controller("crm/fields")
+@UseGuards(CrmPluginGuard)
+@RequiresCrmPlugin(pluginForEntity)
 @ApiTags("CRM Fields")
 @ApiSecurity("bearer")
 export class FieldsController {

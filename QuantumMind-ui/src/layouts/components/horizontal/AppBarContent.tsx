@@ -7,6 +7,7 @@ import { Settings } from 'src/@core/context/settingsContext'
 // ** Components
 import Autocomplete from 'src/layouts/components/Autocomplete'
 import ModeToggler from 'src/@core/layouts/components/shared-components/ModeToggler'
+import HandoverAlertBell from 'src/components/alerts/HandoverAlertBell'
 import UserDropdown from 'src/@core/layouts/components/shared-components/UserDropdown'
 import LanguageDropdown from 'src/@core/layouts/components/shared-components/LanguageDropdown'
 import NotificationDropdown, {
@@ -125,6 +126,7 @@ const AppBarContent = (props: Props) => {
       <Autocomplete hidden={hidden} settings={settings} />
       <LanguageDropdown settings={settings} saveSettings={saveSettings} />
       <ModeToggler settings={settings} saveSettings={saveSettings} />
+      <HandoverAlertBell />
       <ShortcutsDropdown settings={settings} shortcuts={shortcuts} />
       <NotificationDropdown settings={settings} notifications={notifications} />
       <UserDropdown settings={settings} />

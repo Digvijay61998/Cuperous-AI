@@ -43,6 +43,15 @@ export class WhatsappWebSession {
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Bot' })
   jarcubeBot: any;
 
+  /** Owning tenant (derived from `jarcubeBot` on create). */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: any;
+
   /** The Social messenger row that represents this session in the UI list. */
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Social' })
   social: any;

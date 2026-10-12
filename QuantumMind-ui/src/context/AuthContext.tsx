@@ -18,20 +18,25 @@ import axios from 'axios';
 import authConfig from 'src/configs/auth';
 import { homeRouteForRole } from 'src/utils/role-tabs';
 import { ChatContext } from './SocketContext';
+import { toast } from 'react-hot-toast';
 import { addUser, addUserData } from 'src/store/apps/user';
-import { useDispatch, useSelector } from 'react-redux';
-import pushNotification from 'src/utils/notification';
+import { useDispatch, useStore } from 'react-redux';
+import { currentAlertClient, getAlertClient } from 'src/services/alerts/alertClient';
+import { openHandoverAlert } from 'src/services/alerts/openAlert';
+import { clearAlerts } from 'src/store/apps/alerts';
 
 import { AppDispatch, RootState } from 'src/store';
 import {
   selectChat,
   getActiveconversations,
   pushToActiveConversations,
+  loadOldChats,
   addActiveMessage,
   clearActiveMessage,
   updateActiveConversation,
   updateConversationChats,
   handleChatContext,
+  renameVisitor,
 } from 'src/store/apps/conversation';
 import {
   getInboxChannels,
@@ -39,7 +44,9 @@ import {
   inboxMessageStatusReceived,
   inboxSocketGap,
   inboxThreadUpdated,
+  inboxAgentTyping,
 } from 'src/store/apps/inbox';
+import { setSrMe, srRealtime, srSocketGap } from 'src/store/apps/crm-service-requests';
 // ** Types
 import {
   AuthValuesType,
@@ -75,14 +82,8 @@ const AuthProvider = ({ children }: Props) => {
   const router = useRouter();
 
   const chatContext = useContext(ChatContext);
-  const enSound = useRef<boolean>(true);
-  const { enableSound } = useSelector(
-    (state: RootState) => state.conversations,
-  );
   const dispatch = useDispatch<AppDispatch>();
-  useEffect(() => {
-    enSound.current = enableSound;
-  }, [enableSound]);
+  const store = useStore<RootState>();
   // useEffect(() => {
   //   dispatch(getActiveconversations());
   // }, []);
@@ -109,25 +110,44 @@ const AuthProvider = ({ children }: Props) => {
             const messageObservable = chatContext.onVisitorMessage();
             const observable = chatContext.onNewVisitor();
             dispatch(handleChatContext(chatContext));
-            messageObservable.subscribe((data) => {
-              // add sound here
-              if (enSound.current) {
-                var snd = new Audio('/sound.mpeg');
-                snd.play();
-              }
+            // Sounds and notifications are decided ONLY by the alert client:
+            // handover sound on `inbox:handover-requested`, a soft notification
+            // for visitor messages in conversations this user owns. Ordinary bot
+            // and AI traffic is silent.
+            const alertClient = getAlertClient(dispatch, store.getState);
+            alertClient.openAlert = (id) => openHandoverAlert(id);
+            alertClient.start(chatContext, response.data);
 
-              pushNotification(
-                data?.message?.value,
-                'New Message',
-                data?.message?.type || 'text',
+            messageObservable.subscribe((data) => {
+              // `message` is emitted only to the agent assigned to this visitor
+              // (sendMessageToAgent), so receiving it means this user owns it.
+              void alertClient.onMessage(
+                {
+                  id: data?.message?.id,
+                  conversationId: data?.conversationId,
+                  time: data?.message?.time,
+                  senderRole: data?.message?.senderRole ?? 'visitor',
+                  preview: data?.message?.value,
+                  type: data?.message?.type,
+                },
+                true,
               );
               dispatch(updateConversationChats(data));
             });
 
-            observable?.subscribe((data) => {
+            observable?.subscribe(async (data: any) => {
               console.log('pushing new conversation', data);
 
-              dispatch(pushToActiveConversations(data));
+              await dispatch(pushToActiveConversations(data));
+              // R9.2: the payload's chats are not the history. Load the full
+              // history from the server right away, no "load old chats" click.
+              const id = data?.conversationId || data?._id;
+              if (id) dispatch(loadOldChats(id));
+            });
+            // The visitor told the bot their name: rename the active chat
+            // without a reload (crm-plugins-service-desk R4.5).
+            chatContext.onVisitorUpdated?.().subscribe((data: any) => {
+              if (data?.conversationId && data?.name) dispatch(renameVisitor(data));
             });
 
             // ** Omnichannel inbox (WhatsApp / Telegram / Instagram / …).
@@ -137,26 +157,43 @@ const AuthProvider = ({ children }: Props) => {
             // subscription point would mean a second connection.
             chatContext.onInboxMessage().subscribe((event: any) => {
               if (!event?.threadId) return;
-              // Only an inbound message from the customer is a notification;
-              // our own bot/agent reply echoes back on the same event and must
-              // not ping the agent who just sent it.
-              const isIncoming = event?.message?.direction !== 'outbound';
-              if (isIncoming) {
-                if (enSound.current) {
-                  const snd = new Audio('/sound.mpeg');
-                  snd.play();
-                }
-                pushNotification(
-                  event?.message?.message,
-                  `New ${event?.channel || 'channel'} message`,
-                  event?.message?.type || 'text',
-                );
-              }
+              // Notify only for a visitor-authored message on a thread this
+              // user owns right now (Sender_Role, not `direction`, which legacy
+              // widget rows lack — that gap made every bot/AI reply ping).
+              const myId = String(response.data?._id ?? '');
+              const thread = event?.thread;
+              const ownedByMe =
+                thread?.handledByAgent === true &&
+                !!myId &&
+                String(thread?.assignedAgent?.id ?? '') === myId;
+              void alertClient.onMessage(
+                {
+                  id: event?.message?.id,
+                  conversationId: event?.message?.conversationId,
+                  threadId: event.threadId,
+                  time: event?.message?.time,
+                  senderRole: event?.message?.senderRole,
+                  preview: event?.message?.message,
+                  visitorName: thread?.name,
+                  type: event?.message?.type,
+                },
+                ownedByMe,
+              );
               dispatch(inboxMessageReceived(event));
             });
 
             chatContext.onInboxThreadUpdated().subscribe((event: any) => {
               dispatch(inboxThreadUpdated(event));
+            });
+
+            // crm-incident-handover R8.6: "<name> is replying…" for other viewers.
+            chatContext.onInboxAgentTyping().subscribe((event: any) => {
+              dispatch(inboxAgentTyping(event));
+            });
+
+            // R7.3: an org admin took a chat this user was handling.
+            chatContext.onInboxOwnershipOverridden().subscribe((event: any) => {
+              toast(`${event?.actorName || 'An admin'} took over one of your chats.`, { icon: '🔁' });
             });
 
             chatContext.onInboxMessageStatus().subscribe((event: any) => {
@@ -178,6 +215,14 @@ const AuthProvider = ({ children }: Props) => {
             chatContext.onReconnect().subscribe(() => {
               dispatch(inboxSocketGap());
               dispatch(getInboxChannels());
+              // Board pushes missed while offline: open board/drawer refetch.
+              dispatch(srSocketGap());
+            });
+
+            // Live service desk board and drawer (crm-plugins-service-desk R18.2).
+            dispatch(setSrMe(response.data?._id ? String(response.data._id) : null));
+            chatContext.onServiceRequestChanged().subscribe((event: any) => {
+              if (event?.id) dispatch(srRealtime(event));
             });
 
             // Seed the channel tabs so a badge is correct on first paint
@@ -214,7 +259,8 @@ const AuthProvider = ({ children }: Props) => {
     params: LoginParams,
     errorCallback?: ErrCallbackType,
   ) => {
-    Axios.post(authConfig.loginEndpoint, { ...params, role: 'admin' })
+    // The backend resolves the role from the stored user; no role is sent.
+    Axios.post(authConfig.loginEndpoint, params)
       .then(async (res) => {
         window.localStorage.setItem(
           authConfig.storageTokenKeyName,
@@ -248,8 +294,18 @@ const AuthProvider = ({ children }: Props) => {
 
   const handleLogout = () => {
     setUser(null);
-    window.localStorage.removeItem('userData');
-    window.localStorage.removeItem(authConfig.storageTokenKeyName);
+    currentAlertClient()?.stop();
+    dispatch(clearAlerts());
+    // Clear every session artefact, including a stashed super-admin session
+    // from impersonation, so the next user on this browser starts clean.
+    [
+      'userData',
+      authConfig.storageTokenKeyName,
+      'refreshToken',
+      'impersonatingOrg',
+      'superAdminAccessToken',
+      'superAdminRefreshToken',
+    ].forEach((k) => window.localStorage.removeItem(k));
     router.push('/login');
   };
 

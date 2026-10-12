@@ -1,18 +1,8 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { Redis } from './redis.providers';
+import { redisProviders } from './redis.providers';
 
-describe('Redis', () => {
-  let provider: Redis;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [Redis],
-    }).compile();
-
-    provider = module.get<Redis>(Redis);
-  });
-
-  it('should be defined', () => {
-    expect(provider).toBeDefined();
+describe('redisProviders', () => {
+  it('declares the redis client providers', () => {
+    expect(Array.isArray(redisProviders)).toBe(true);
+    expect(redisProviders.length).toBeGreaterThan(0);
   });
 });

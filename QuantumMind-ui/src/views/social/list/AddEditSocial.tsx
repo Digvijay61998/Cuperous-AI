@@ -20,6 +20,7 @@ import Icon from 'src/@core/components/icon';
 
 // ** Store Imports
 import { useDispatch, useSelector } from 'react-redux';
+import { PLATFORM_FEATURE, useEntitlements } from 'src/hooks/useEntitlements';
 import { AppDispatch, RootState } from 'src/store';
 import toast from 'react-hot-toast';
 import { addNewSocial, fetchSocialList, updateSocial } from 'src/store/apps/social';
@@ -107,6 +108,10 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
   const dispatch = useDispatch<AppDispatch>();
   const botList = useSelector((state: RootState) => state.bots.list);
   const { socialListSearch } = useSelector((state: RootState) => state.social);
+  // Platforms outside the org's plan are shown but disabled (backend enforces).
+  const { isFeatureEnabled } = useEntitlements();
+  const platformAllowed = (p: string) =>
+    !!PLATFORM_FEATURE[p] && isFeatureEnabled(PLATFORM_FEATURE[p]);
   const [oldAccessToken, setOldAccessToken] = useState<string>('');
   const [commentToken, setCommentToken] = useState('')
   useEffect(() => {
@@ -288,8 +293,13 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
               inputProps={{ placeholder: 'Select Platform' }}
             >
               {socialListSearch?.platforms?.map((item: any, index: number) => (
-                <MenuItem key={index} value={item}>
+                <MenuItem
+                  key={index}
+                  value={item}
+                  disabled={!platformAllowed(item)}
+                >
                   {item}
+                  {!platformAllowed(item) ? ' — not in your plan' : ''}
                 </MenuItem>
               ))}
             </Select>

@@ -1,3 +1,5 @@
+import withCrmPlugin from 'src/views/crm/plugins/withCrmPlugin';
+
 // ** React Imports
 import { useEffect, useState } from 'react';
 
@@ -202,4 +204,4 @@ const DetailRow = ({
   );
 };
 
-export default CompanyDetail;
+export default withCrmPlugin(CompanyDetail, 'companies', 'Companies', 'bx:buildings');

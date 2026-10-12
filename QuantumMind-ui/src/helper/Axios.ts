@@ -39,6 +39,27 @@ if (typeof window !== 'undefined') {
     async (err) => {
       const originalConfig = err.config;
 
+      // Only a 401 means the session is gone. 403 (role/feature/suspended) and
+      // 404 must surface to the caller, not log the user out.
+      if (err.response?.status !== 401) {
+        return Promise.reject(err);
+      }
+
+      // An expired impersonation token has no refresh token by design: return
+      // the super admin to their own console session instead of logging out.
+      if (window.localStorage.getItem('impersonatingOrg')) {
+        const access = window.localStorage.getItem('superAdminAccessToken');
+        const refresh = window.localStorage.getItem('superAdminRefreshToken');
+        ['impersonatingOrg', 'superAdminAccessToken', 'superAdminRefreshToken', 'userData'].forEach(
+          (k) => window.localStorage.removeItem(k),
+        );
+        if (access) window.localStorage.setItem('accessToken', access);
+        if (refresh) window.localStorage.setItem('refreshToken', refresh);
+        toast.error('Impersonation session ended.');
+        window.location.replace(access ? '/super-admin' : '/login');
+        return Promise.reject(err);
+      }
+
       if (originalConfig.url !== '/auth/login' && err.response) {
         const refreshToken: any = window.localStorage.getItem('refreshToken');
         if (!refreshToken) {

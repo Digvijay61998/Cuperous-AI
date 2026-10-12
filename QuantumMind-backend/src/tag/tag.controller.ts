@@ -1,6 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { Public } from 'src/auth/Public/public.decorator';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { ORG_STAFF } from 'src/common/enums/role.enum';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { CurrentUser } from 'src/util';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { TagService } from './tag.service';
 
@@ -11,27 +14,29 @@ export class TagController {
   constructor(private readonly tagService: TagService) {}
 
   @Get()
-  async findAll() {
-    return await this.tagService.getTagList();
+  async findAll(@CurrentUser() user: any) {
+    return await this.tagService.getTagList(user as TenantContext);
   }
 
   @Get('count')
-  async findAlltagsWithCount() {
-    return await this.tagService.findAll();
+  async findAlltagsWithCount(@CurrentUser() user: any) {
+    return await this.tagService.findAll(user as TenantContext);
   }
 
   @Get('stats')
-  async getStats() {
-    return await this.tagService.stats();
+  async getStats(@CurrentUser() user: any) {
+    return await this.tagService.stats(undefined, user as TenantContext);
   }
 
   @Post()
-  async create(@Body() createTagDto: CreateTagDto) {
-    return await this.tagService.create(createTagDto);
+  @Roles(...ORG_STAFF)
+  async create(@Body() createTagDto: CreateTagDto, @CurrentUser() user: any) {
+    return await this.tagService.create(createTagDto, user as TenantContext);
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    return await this.tagService.deleteTag(id);
+  @Roles(...ORG_STAFF)
+  async remove(@Param('id') id: string, @CurrentUser() user: any) {
+    return await this.tagService.deleteTag(id, user as TenantContext);
   }
 }

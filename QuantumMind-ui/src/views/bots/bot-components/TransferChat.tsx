@@ -6,10 +6,12 @@ import { RootState, AppDispatch } from 'src/store';
 import { getNodeDetails, nodeUpdate } from 'src/store/apps/bot-flow';
 import {
   FormControl,
+  FormControlLabel,
+  FormHelperText,
   InputLabel,
   MenuItem,
   Select,
-  TextField,
+  Switch,
 } from '@mui/material';
 type Props = {
   nodeId: string;
@@ -23,6 +25,9 @@ const TransferChat = (props: Props) => {
     (state: RootState) => state.flow.nodeDetails,
   );
   const [groupType, setGroupType] = useState<string>('');
+  // Emergency transfers raise a high-priority (urgent sound, sticky) agent
+  // alert. Defaults to false for new nodes and for nodes saved before this.
+  const [emergency, setEmergency] = useState<boolean>(false);
   const embed: any = useSelector((state: RootState) => state.flow.embed);
   const dispatch = useDispatch<AppDispatch>();
   useEffect(() => {
@@ -32,7 +37,8 @@ const TransferChat = (props: Props) => {
   }, [dispatch, id]);
   useEffect(() => {
     if (nodeDetails?.id) {
-      setGroupType(nodeDetails?.payload?.group);
+      setGroupType(nodeDetails?.payload?.group ?? '');
+      setEmergency(nodeDetails?.payload?.emergency === true);
       setTitle('');
       if (nodeDetails?.title?.length > 0) {
         setTitle(nodeDetails?.title);
@@ -45,8 +51,11 @@ const TransferChat = (props: Props) => {
       nodeUpdate({
         id,
         title,
+        // The save replaces the whole payload, so every key must be sent.
         payload: {
+          ...(nodeDetails?.id === id ? nodeDetails?.payload : {}),
           group: groupType,
+          emergency,
         },
       }),
     );
@@ -84,6 +93,26 @@ const TransferChat = (props: Props) => {
             <MenuItem value="within">Within the group</MenuItem>
             <MenuItem value="another">to another group</MenuItem>
           </Select>
+        </FormControl>
+      </div>
+
+      <div className="setting-components" style={{ marginTop: '1rem' }}>
+        <FormControl>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={emergency}
+                color="error"
+                onChange={(e) => setEmergency(e.target.checked)}
+                inputProps={{ 'aria-describedby': 'transfer-emergency-help' }}
+              />
+            }
+            label="Emergency transfer"
+          />
+          <FormHelperText id="transfer-emergency-help" sx={{ mx: 0 }}>
+            Agents get a high-priority alert with an urgent sound that stays on
+            screen until someone picks up the chat.
+          </FormHelperText>
         </FormControl>
       </div>
     </div>

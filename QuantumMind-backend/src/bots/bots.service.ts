@@ -1,3 +1,4 @@
+import { sanitizeIncidentSettings } from "./incident-settings";
 import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
 import { Model } from "mongoose";
 import {
@@ -122,39 +123,87 @@ export class BotsService {
     return edges;
   }
 
-  async createNodes({ nodes, edges }: { nodes: any[]; edges: any[] }) {
-    const edgesList = edges.reduce((acc: any, edge: any) => {
+  /**
+   * Upserts flow nodes for ONE bot. Every node is stamped with `botId`, and
+   * lookups/orphan-cleanup are confined to that bot, so a flow payload can never
+   * rewrite or delete another tenant's nodes by reusing their node ids.
+   */
+  async createNodes(
+    { nodes, edges }: { nodes: any[]; edges: any[] },
+    botId?: any
+  ) {
+    const edgesList = (edges ?? []).reduce((acc: any, edge: any) => {
       acc[edge.source] = acc[edge.source] || [];
       acc[edge.source].push(edge.target);
       return acc;
     }, {});
+    const owner = botId ? { botId } : {};
 
     await Promise.all(
-      nodes.map(async (node: any) => {
-        const checkNode = await this.botNodeModel.findOne({ id: node.id });
-        if (!checkNode) {
+      (nodes ?? []).map(async (node: any) => {
+        const existing = await this.botNodeModel.findOne({ id: node.id });
+        if (
+          existing &&
+          botId &&
+          existing.botId &&
+          String(existing.botId) !== String(botId)
+        ) {
+          // Node id belongs to another bot: never touch it.
+          return;
+        }
+        if (!existing) {
           await this.botNodeModel.create({
             ...node,
+            ...owner,
             next: edgesList[node.id] || [],
           });
         } else {
-          const lastNodes = checkNode.next;
-          checkNode.next = edgesList[node.id] || [];
-          checkNode.title = node.data.title;
-          await checkNode.save();
+          const lastNodes = existing.next;
+          existing.next = edgesList[node.id] || [];
+          existing.title = node?.data?.title;
+          if (botId && !existing.botId) existing.botId = botId;
+          await existing.save();
           await Promise.all(
-            lastNodes.map(async (lastNode: any) => {
+            (lastNodes ?? []).map(async (lastNode: any) => {
               const checkLastNode = await this.botNodeModel.findOne({
+                ...owner,
                 next: { $in: [lastNode] },
               });
               if (!checkLastNode) {
-                await this.botNodeModel.deleteOne({ id: lastNode });
+                await this.botNodeModel.deleteOne({ ...owner, id: lastNode });
               }
             })
           );
         }
       })
     );
+  }
+
+  /**
+   * Asserts the caller's org owns the bot a flow node belongs to. Resolves the
+   * bot from the node's `botId`, falling back to the BotFlow that lists the node.
+   * Missing and foreign nodes both yield 404.
+   */
+  private async assertNodeOwnership(nodeId: string, user?: TenantContext) {
+    const node = await this.botNodeModel.findOne({ id: nodeId });
+    if (!node) throw new HttpException("No Node Found by this Id", 404);
+    let botRef: any = node.botId;
+    if (!botRef) {
+      const flow = await this.botFlowModel
+        .findOne({ "nodes.id": nodeId })
+        .select("botId")
+        .lean();
+      botRef = (flow as any)?.botId;
+    }
+    if (!botRef) throw new HttpException("No Node Found by this Id", 404);
+    const bot = await this.botModel.findById(botRef).select("organizationId");
+    if (!bot) throw new HttpException("No Node Found by this Id", 404);
+    try {
+      assertOwnership(user, bot as any);
+    } catch {
+      throw new HttpException("No Node Found by this Id", 404);
+    }
+    return { node, botId: bot._id };
   }
 
   async botlist(user?: TenantContext) {
@@ -183,6 +232,17 @@ export class BotsService {
   async create(createBotDto: CreateBotDto, actor?: TenantContext) {
     this.logger.log(`Creating bot ${createBotDto.name}`);
     const organizationId = (actor?.organizationId as any) ?? null;
+    // A tenant resource must have a tenant. (Only org roles reach this route.)
+    if (!organizationId) {
+      throw new HttpException("You are not associated with an organization", 403);
+    }
+    // Agents must belong to the same org before we spend a quota slot.
+    const agents = createBotDto.agents
+      ? await this.agentService.assertAgentsInOrg(
+          String(organizationId),
+          createBotDto.agents
+        )
+      : undefined;
 
     // Reserve quota atomically before creating; release if the bot document
     // itself fails to persist so the counter never drifts.
@@ -190,7 +250,9 @@ export class BotsService {
     let bot: BotDocument;
     try {
       bot = await this.botModel.create({
-        ...createBotDto,
+        name: createBotDto.name,
+        tags: createBotDto.tags,
+        agents,
         organizationId,
       });
     } catch (error) {
@@ -211,7 +273,7 @@ export class BotsService {
 
       const { nodes, edges } = this.generateNodeAndEdegs();
 
-      await this.createNodes({ nodes, edges });
+      await this.createNodes({ nodes, edges }, bot._id);
 
       const botFlow = await this.botFlowModel.create({
         botId: bot._id,
@@ -225,12 +287,21 @@ export class BotsService {
       bot.botFlow = botFlow._id;
       bot.botStyles = botStyle._id;
       bot.botSetting = botSetting._id;
-      if (createBotDto.agents) {
-        await this.agentService.addBotToAgent(bot._id, createBotDto.agents);
+      if (agents?.length) {
+        await this.agentService.addBotToAgent(bot._id, agents);
       }
       await bot.save();
       return bot;
     } catch (error) {
+      // Roll back the half-built bot so it neither lingers nor holds quota.
+      await Promise.all([
+        this.botStyleModel.deleteMany({ botId: bot._id }),
+        this.botSettingModel.deleteMany({ botId: bot._id }),
+        this.botFlowModel.deleteMany({ botId: bot._id }),
+        this.botNodeModel.deleteMany({ botId: bot._id }),
+        this.botModel.deleteOne({ _id: bot._id }),
+      ]).catch(() => undefined);
+      await this.entitlementService.releaseQuota(organizationId, "bot");
       this.logger.error(`Error in create bot: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
@@ -238,10 +309,10 @@ export class BotsService {
 
   async getBotById(id: string, user?: TenantContext) {
     try {
+      const or: Record<string, any>[] = [{ botId: String(id) }];
+      if (mongoose.isValidObjectId(id)) or.unshift({ _id: id });
       const bot = await this.botModel
-        .findOne({
-          $or: [{ _id: id }, { botId: id }],
-        })
+        .findOne({ $or: or })
         .populate("agents", "name")
         .populate("botStyles")
         .populate("botFlow")
@@ -308,9 +379,11 @@ export class BotsService {
    * before acting on a bot or any of its sub-resources (setting/style/flow).
    */
   private async assertBotOwnership(id: string, user?: TenantContext) {
+    const or: Record<string, any>[] = [{ botId: String(id) }];
+    if (mongoose.isValidObjectId(id)) or.unshift({ _id: id });
     const bot = await this.botModel
-      .findOne({ $or: [{ _id: id }, { botId: id }] })
-      .select("organizationId");
+      .findOne({ $or: or })
+      .select("_id organizationId");
     if (!bot) {
       throw new HttpException("No Bot Found by this Id", 404);
     }
@@ -320,19 +393,32 @@ export class BotsService {
 
   async update(id: string, updateBotDto: UpdateBotDto, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
+      const owned = await this.assertBotOwnership(id, user);
+      const orgId = owned.organizationId ? String(owned.organizationId) : null;
+      const changes: Record<string, any> = { ...updateBotDto };
+      // Tenant/ownership fields are never client-writable.
+      delete changes.organizationId;
+      delete changes._id;
+      delete changes.botId;
+      if (changes.status === BotStatusEnum.DELETED) delete changes.status;
+      if (changes.agents) {
+        changes.agents = await this.agentService.assertAgentsInOrg(
+          orgId,
+          changes.agents
+        );
+      }
+
       const bot = await this.botModel.findOneAndUpdate(
-        { _id: id },
-        updateBotDto,
+        { _id: owned._id },
+        changes,
         { new: true }
       );
 
-      if (updateBotDto.agents) {
-        await this.agentService.addBotToAgent(bot._id, updateBotDto.agents);
-      }
-
       if (!bot) {
         throw new HttpException("No Bot Found by this Id", 404);
+      }
+      if (changes.agents) {
+        await this.agentService.addBotToAgent(bot._id, changes.agents);
       }
       return bot;
     } catch (error) {
@@ -343,15 +429,27 @@ export class BotsService {
 
   async remove(id: string, user?: TenantContext) {
     try {
-      const bot = await this.botModel.findOne({
-        _id: id,
-      });
-      if (!bot) {
+      if (!mongoose.isValidObjectId(id)) {
         throw new HttpException("No Bot Found by this Id", 404);
       }
-      assertOwnership(user, bot as any);
-      bot.status = BotStatusEnum.DELETED;
-      await bot.save();
+      assertOwnership(
+        user,
+        (await this.botModel.findById(id).select("organizationId")) as any
+      );
+      // Atomic transition so a double-delete can never release quota twice.
+      const bot = await this.botModel.findOneAndUpdate(
+        { _id: id, status: { $ne: BotStatusEnum.DELETED } },
+        { status: BotStatusEnum.DELETED },
+        { new: true }
+      );
+      if (!bot) {
+        return await this.botModel.findById(id);
+      }
+      // Soft delete frees the quota slot: the bot no longer counts as usage.
+      await this.entitlementService.releaseQuota(
+        bot.organizationId ? String(bot.organizationId) : null,
+        "bot"
+      );
       return bot;
     } catch (error) {
       this.logger.error(`Error in delete bot: ${error.message}`);
@@ -359,10 +457,19 @@ export class BotsService {
     }
   }
 
+  /** Strips keys a client may never set on a bot sub-document. */
+  private sanitizeSubDoc(body: any) {
+    const clean: Record<string, any> = { ...(body ?? {}) };
+    delete clean._id;
+    delete clean.botId;
+    delete clean.organizationId;
+    return sanitizeIncidentSettings(clean);
+  }
+
   async getBotSettingById(id: string, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
-      const botSetting = await this.botSettingModel.findOne({ botId: id });
+      const bot = await this.assertBotOwnership(id, user);
+      const botSetting = await this.botSettingModel.findOne({ botId: bot._id });
       if (!botSetting) {
         throw new HttpException("No Bot setting Found by this Id", 404);
       }
@@ -375,8 +482,8 @@ export class BotsService {
 
   async getBotStylesById(id: string, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
-      const botStyles = await this.botStyleModel.findOne({ botId: id });
+      const bot = await this.assertBotOwnership(id, user);
+      const botStyles = await this.botStyleModel.findOne({ botId: bot._id });
       if (!botStyles) {
         throw new HttpException("No Bot Styles Found by this Id", 404);
       }
@@ -389,10 +496,10 @@ export class BotsService {
 
   async updateBotSetting(id: string, updateBotSettingDto: any, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
+      const bot = await this.assertBotOwnership(id, user);
       const botSetting = await this.botSettingModel.findOneAndUpdate(
-        { botId: id },
-        updateBotSettingDto,
+        { botId: bot._id },
+        this.sanitizeSubDoc(updateBotSettingDto),
         { new: true }
       );
       if (!botSetting) {
@@ -407,10 +514,10 @@ export class BotsService {
 
   async updateBotStyle(id: string, updateBotStyleDto: any, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
+      const bot = await this.assertBotOwnership(id, user);
       const botStyle = await this.botStyleModel.findOneAndUpdate(
-        { botId: id },
-        updateBotStyleDto,
+        { botId: bot._id },
+        this.sanitizeSubDoc(updateBotStyleDto),
         { new: true }
       );
       if (!botStyle) {
@@ -425,8 +532,8 @@ export class BotsService {
 
   async getBotFlow(id: string, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
-      const botFlow = await this.botFlowModel.findOne({ botId: id });
+      const bot = await this.assertBotOwnership(id, user);
+      const botFlow = await this.botFlowModel.findOne({ botId: bot._id });
       if (!botFlow) {
         throw new HttpException("No Bot Flow Found by this Id", 404);
       }
@@ -439,17 +546,17 @@ export class BotsService {
 
   async updateBotFlow(id: string, updateBotFlowDto: UpdateBotFlowDto, user?: TenantContext) {
     try {
-      await this.assertBotOwnership(id, user);
+      const bot = await this.assertBotOwnership(id, user);
       const botFlow = await this.botFlowModel.findOneAndUpdate(
-        { botId: id },
-        updateBotFlowDto,
+        { botId: bot._id },
+        this.sanitizeSubDoc(updateBotFlowDto),
         { new: true }
       );
       if (!botFlow) {
         throw new HttpException("No Bot Flow Found by this Id", 404);
       }
 
-      await this.createNodes(updateBotFlowDto);
+      await this.createNodes(updateBotFlowDto as any, bot._id);
       return botFlow;
     } catch (error) {
       this.logger.error(`Error in update bot flow: ${error.message}`);
@@ -457,13 +564,14 @@ export class BotsService {
     }
   }
 
-  async updateNode(id: string, updateNodeDto: any) {
+  async updateNode(id: string, updateNodeDto: any, user?: TenantContext) {
     try {
+      const { botId } = await this.assertNodeOwnership(id, user);
+      const changes = this.sanitizeSubDoc(updateNodeDto);
+      delete changes.id;
       const node = await this.botNodeModel.findOneAndUpdate(
-        {
-          id,
-        },
-        updateNodeDto,
+        { id },
+        { ...changes, botId },
         { new: true }
       );
       if (!node) {
@@ -477,19 +585,13 @@ export class BotsService {
     }
   }
 
-  async getBotNodeForApi(id: string) {
+  async getBotNodeForApi(id: string, user?: TenantContext) {
     try {
-      const node = await this.botNodeModel.findOne({ id });
-      if (!node) {
-        throw new HttpException("No Node Found by this Id", 404);
-      }
-      const tags = await this.tagsService.getTagList();
+      const { node, botId } = await this.assertNodeOwnership(id, user);
+      const tags = await this.tagsService.getTagList(user);
 
-      let customAttributes = [];
-      if (node.botId) {
-        const botFlow = await this.botFlowModel.findOne({ botId: node.botId });
-        customAttributes = botFlow.customAttributes;
-      }
+      const botFlow = await this.botFlowModel.findOne({ botId });
+      const customAttributes = botFlow?.customAttributes ?? [];
 
       const embed = {
         attributes: this.configService.get("attributesList"),
@@ -499,7 +601,7 @@ export class BotsService {
       };
 
       if (node.nodeType === NodeTypeEnum.WEBHOOK) {
-        const webhooks = await this.webhookService.getWebhooksListForNode();
+        const webhooks = await this.webhookService.getWebhooksListForNode(user);
         embed["webhooks"] = webhooks;
       }
       if (node.nodeType === NodeTypeEnum.TICKET) {
@@ -509,7 +611,7 @@ export class BotsService {
         node.nodeType === NodeTypeEnum.ADD_TO_SEGMENT ||
         node.nodeType === NodeTypeEnum.REMOVE_FROM_SEGMENT
       ) {
-        const segments = await this.segmentService.getSegmentsForNode();
+        const segments = await this.segmentService.getSegmentsForNode(user);
         embed["segments"] = segments;
       }
 
@@ -518,6 +620,207 @@ export class BotsService {
       this.logger.error(`Error in get node by id: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
+  }
+
+  /** Serialises bots (meta, flow, settings, style) into a re-importable file. */
+  async exportBots(botIds: string[], user?: TenantContext) {
+    if (!Array.isArray(botIds) || botIds.length === 0) {
+      throw new HttpException("botIds must be a non-empty array", 400);
+    }
+    const strip = (doc: any) => {
+      if (!doc) return {};
+      const { _id, __v, botId, organizationId, createdAt, updatedAt, ...rest } =
+        typeof doc.toObject === "function" ? doc.toObject() : doc;
+      return rest;
+    };
+    const bots = [];
+    for (const id of botIds) {
+      const bot = await this.assertBotOwnership(id, user);
+      const [full, flow, setting, style] = await Promise.all([
+        this.botModel.findById(bot._id).lean(),
+        this.botFlowModel.findOne({ botId: bot._id }).lean(),
+        this.botSettingModel.findOne({ botId: bot._id }).lean(),
+        this.botStyleModel.findOne({ botId: bot._id }).lean(),
+      ]);
+      // Export the runtime node documents (which carry payload/responses/
+      // keywords) rather than whatever the canvas last saved on the flow.
+      const flowNodes: any[] = (flow?.nodes as any[]) ?? [];
+      const runtime = await this.botNodeModel
+        .find({ id: { $in: flowNodes.map((n: any) => n?.id).filter(Boolean) } })
+        .lean();
+      const byId = new Map(runtime.map((n: any) => [n.id, n]));
+      const nodes = flowNodes.map((n: any) => {
+        const rt: any = byId.get(n.id) ?? {};
+        const { _id, __v, botId, next, ...rtRest } = rt;
+        return { ...n, ...rtRest, data: n.data ?? rtRest.data };
+      });
+      bots.push({
+        name: (full as any)?.name,
+        questionBank: (full as any)?.questionBank,
+        saveUnansweredQuestions: (full as any)?.saveUnansweredQuestions,
+        flow: {
+          nodes,
+          edges: flow?.edges ?? [],
+          customAttributes: flow?.customAttributes ?? [],
+        },
+        botSetting: strip(setting),
+        botStyles: strip(style),
+      });
+    }
+    return { version: 1, exportedAt: new Date().toISOString(), bots };
+  }
+
+  /**
+   * Imports one or more bots. Accepts:
+   *  - an export file `{ bots: [{ name, flow, botSetting, botStyles }] }`
+   *  - a single bot `{ name?, flow: { nodes, edges } }`
+   *  - a bare flow `{ nodes, edges, customAttributes }`
+   * Every bot is created fresh (quota-checked via create()). Node and edge ids
+   * are regenerated because BotFlowNode.id is unique across ALL bots.
+   */
+  async importBots(input: any, fallbackName: string, user?: TenantContext) {
+    const entries: any[] = Array.isArray(input?.bots)
+      ? input.bots
+      : Array.isArray(input)
+      ? input
+      : input?.flow
+      ? [input]
+      : Array.isArray(input?.nodes)
+      ? [{ name: input.name, flow: input }]
+      : [];
+    if (!entries.length) {
+      throw new HttpException(
+        "Unrecognised file: expected an exported bots file or a flow with nodes and edges",
+        400
+      );
+    }
+    const imported = [];
+    for (const [index, entry] of entries.entries()) {
+      const flow = this.remapFlowIds(entry?.flow, index);
+      const name =
+        (typeof entry?.name === "string" && entry.name.trim()) ||
+        (entries.length > 1 ? `${fallbackName} ${index + 1}` : fallbackName);
+
+      const bot = await this.create({ name } as CreateBotDto, user);
+      try {
+        // Drop the default flow nodes create() generated for this bot.
+        await this.botNodeModel.deleteMany({ botId: bot._id });
+        await this.createNodes(flow, bot._id);
+        await this.botFlowModel.findOneAndUpdate(
+          { botId: bot._id },
+          {
+            nodes: flow.nodes,
+            edges: flow.edges,
+            customAttributes: flow.customAttributes,
+            startNode: flow.startNode,
+          }
+        );
+        if (entry?.botSetting && typeof entry.botSetting === "object") {
+          await this.botSettingModel.findOneAndUpdate(
+            { botId: bot._id },
+            this.sanitizeSubDoc(entry.botSetting)
+          );
+        }
+        if (entry?.botStyles && typeof entry.botStyles === "object") {
+          await this.botStyleModel.findOneAndUpdate(
+            { botId: bot._id },
+            this.sanitizeSubDoc(entry.botStyles)
+          );
+        }
+        const flags: Record<string, boolean> = {};
+        if (typeof entry?.questionBank === "boolean") flags.questionBank = entry.questionBank;
+        if (typeof entry?.saveUnansweredQuestions === "boolean")
+          flags.saveUnansweredQuestions = entry.saveUnansweredQuestions;
+        if (Object.keys(flags).length) {
+          await this.botModel.updateOne({ _id: bot._id }, flags);
+        }
+      } catch (error) {
+        // Leave nothing half-imported: soft-delete releases the quota slot.
+        await this.botNodeModel.deleteMany({ botId: bot._id }).catch(() => undefined);
+        await this.remove(String(bot._id), user).catch(() => undefined);
+        this.logger.error(`Error importing bot "${name}": ${error.message}`);
+        throw new HttpException(
+          `Import of "${name}" failed: ${error.message}`,
+          error.status || 500
+        );
+      }
+      imported.push({ id: bot._id, name, nodes: flow.nodes.length });
+    }
+    return { imported };
+  }
+
+  /** Validates a flow and gives every node/edge a fresh, globally unique id. */
+  private remapFlowIds(flow: any, index: number) {
+    const nodes: any[] = Array.isArray(flow?.nodes) ? flow.nodes : [];
+    const edges: any[] = Array.isArray(flow?.edges) ? flow.edges : [];
+    const where = `bot #${index + 1}`;
+    if (!nodes.length) throw new HttpException(`${where}: flow has no nodes`, 400);
+
+    const validTypes = new Set<string>(Object.values(NodeTypeEnum));
+    const idMap = new Map<string, string>();
+    for (const node of nodes) {
+      if (!node?.id || typeof node.id !== "string") {
+        throw new HttpException(`${where}: every node needs a string id`, 400);
+      }
+      if (!validTypes.has(node.nodeType)) {
+        throw new HttpException(
+          `${where}: node ${node.id} has unknown nodeType "${node.nodeType}"`,
+          400
+        );
+      }
+      if (idMap.has(node.id)) {
+        throw new HttpException(`${where}: duplicate node id ${node.id}`, 400);
+      }
+      idMap.set(node.id, generateId("node", 15));
+    }
+    const starts = nodes.filter((n) => n.nodeType === NodeTypeEnum.START_NODE);
+    if (starts.length !== 1) {
+      throw new HttpException(`${where}: flow needs exactly one START_NODE`, 400);
+    }
+
+    const newNodes = nodes.map((node: any) => {
+      const { _id, __v, botId, next, ...rest } = node;
+      const payload = { ...(rest.payload ?? {}) };
+      if (payload.blockId) {
+        if (!idMap.has(payload.blockId)) {
+          throw new HttpException(
+            `${where}: GO_TO_STEP ${node.id} points to missing node ${payload.blockId}`,
+            400
+          );
+        }
+        payload.blockId = idMap.get(payload.blockId);
+      }
+      return {
+        ...rest,
+        id: idMap.get(node.id),
+        title: rest.title ?? rest.data?.title,
+        payload,
+        utterance: rest.utterance ?? [],
+        keywords: rest.keywords ?? [],
+        responses: rest.responses ?? [],
+      };
+    });
+    const newEdges = edges.map((edge: any) => {
+      if (!idMap.has(edge?.source) || !idMap.has(edge?.target)) {
+        throw new HttpException(
+          `${where}: edge ${edge?.id ?? "?"} references a missing node`,
+          400
+        );
+      }
+      const { _id, ...rest } = edge;
+      return {
+        ...rest,
+        id: generateId("edge", 15),
+        source: idMap.get(edge.source),
+        target: idMap.get(edge.target),
+      };
+    });
+    return {
+      nodes: newNodes,
+      edges: newEdges,
+      customAttributes: Array.isArray(flow?.customAttributes) ? flow.customAttributes : [],
+      startNode: idMap.get(starts[0].id),
+    };
   }
 
   async getBotNode(id: string) {
@@ -568,8 +871,9 @@ export class BotsService {
       throw new HttpException(error.message, error.status || 500);
     }
   }
-  async removeNode(id: string) {
+  async removeNode(id: string, user?: TenantContext) {
     try {
+      await this.assertNodeOwnership(id, user);
       const node = await this.botNodeModel.findOneAndDelete({ id });
       if (!node) {
         throw new HttpException("No Node Found by this Id", 404);
@@ -636,7 +940,8 @@ export class BotsService {
         undefined,
         botIds,
       ),
-      this.ticketService.getTotalCount(7, botIds),
+      // Service Requests are org-scoped in the CRM (crm-plugins-service-desk R19.1).
+      this.ticketService.getTotalCount(7, user ?? null),
     ]);
 
     return result;
@@ -739,12 +1044,20 @@ export class BotsService {
     }
   }
 
-  async dayWisePerformance(query: ReportParamsDto) {
-    return await this.conversationService.getDayWisePerformance(query);
+  async dayWisePerformance(query: ReportParamsDto, user?: TenantContext) {
+    return await this.conversationService.getDayWisePerformance(
+      query,
+      false,
+      await this.orgBotObjectIds(user)
+    );
   }
 
-  async dateWiseConversations(query: ReportParamsDto) {
-    return await this.conversationService.getDateWiseConversations(query);
+  async dateWiseConversations(query: ReportParamsDto, user?: TenantContext) {
+    return await this.conversationService.getDateWiseConversations(
+      query,
+      false,
+      await this.orgBotObjectIds(user)
+    );
   }
 
   async getLanguages() {

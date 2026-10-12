@@ -3,8 +3,9 @@ import { CreateAdvertisementDto } from './dto/create-advertisement.dto';
 import { SearchParamDto } from './dto/search-param.dto';
 import { UpdateAdvertisementDto } from './dto/update-advertisement.dto';
 import { ADVERTISEMENT_PROVIDER } from './constatnts';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import { BotsService } from 'src/bots/bots.service';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import {
   Advertisement,
   AdvertisementDocument,
@@ -17,6 +18,7 @@ import { ObjectId } from 'bson';
 import { ComparisonDto } from 'src/util/comparison.dto';
 import {
   assertOwnership,
+  isCrossOrg,
   scopedFilter,
   TenantContext,
 } from 'src/common/tenant/tenant-context';
@@ -30,13 +32,52 @@ export class AdvertisementService {
     private readonly advertisementModel: Model<AdvertisementDocument>,
 
     private readonly botsService: BotsService,
+    private readonly tenantScope: TenantScopeService,
   ) {}
+
+  /**
+   * `$match` fragment pinning an aggregation to the caller's organization.
+   * Aggregations do not auto-cast, so the org id is converted explicitly.
+   * Empty for SUPER_ADMIN; `{ organizationId: null }` when the caller has no org.
+   */
+  private orgMatch(user?: TenantContext): Record<string, any> {
+    if (isCrossOrg(user)) return {};
+    const orgId = user?.organizationId;
+    return {
+      organizationId:
+        orgId && mongoose.isValidObjectId(orgId)
+          ? new mongoose.Types.ObjectId(String(orgId))
+          : null,
+    };
+  }
+
+  /**
+   * False when the client supplied a bot id that is malformed or outside the
+   * caller's organization (callers then return an empty result).
+   */
+  private async botAllowed(user: TenantContext | undefined, bot?: string) {
+    if (!bot) return true;
+    if (!mongoose.isValidObjectId(bot)) return false;
+    return this.tenantScope.isBotInOrg(user, bot);
+  }
+
+  /** Rejects assigning an advertisement to bots outside the caller's org. */
+  private async assertBotsInOrg(user: TenantContext | undefined, bots?: any[]) {
+    if (!Array.isArray(bots)) return;
+    for (const bot of bots) {
+      if (!mongoose.isValidObjectId(bot?._id ?? bot)) {
+        throw new HttpException('Bot not found', 404);
+      }
+      await this.tenantScope.assertBotInOrg(user, bot);
+    }
+  }
 
   async create(
     createAdvertisementDto: CreateAdvertisementDto,
     actor?: TenantContext,
   ) {
     try {
+      await this.assertBotsInOrg(actor, createAdvertisementDto.assignedToBots);
       const createdAdvertisement = new this.advertisementModel({
         ...createAdvertisementDto,
         organizationId: (actor?.organizationId as any) ?? null,
@@ -128,9 +169,19 @@ export class AdvertisementService {
         throw new HttpException('Advertisement not found', 404);
       }
       assertOwnership(user, existing as any);
+      await this.assertBotsInOrg(
+        user,
+        (updateAdvertisementDto as any).assignedToBots,
+      );
+      const changes: Record<string, any> = {
+        ...(updateAdvertisementDto as any),
+      };
+      delete changes.organizationId;
+      delete changes._id;
       const advertisement = await this.advertisementModel.findOneAndUpdate(
         { _id: id },
-        updateAdvertisementDto,
+        changes,
+        { new: true },
       );
       if (!advertisement) {
         throw new HttpException('Advertisement not found', 404);
@@ -271,9 +322,10 @@ export class AdvertisementService {
     }
   }
 
-  async findAdvertisementsClickCount() {
+  async findAdvertisementsClickCount(user?: TenantContext) {
     try {
       const advertisement = this.advertisementModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $project: {
             clicksCount: { $size: '$clicks' },
@@ -291,18 +343,22 @@ export class AdvertisementService {
     }
   }
 
-  async findAdvertisementsVisitorsStats(query: AdvertisementQueryParams) {
+  async findAdvertisementsVisitorsStats(
+    query: AdvertisementQueryParams,
+    user?: TenantContext,
+  ) {
     try {
       const { startDate, endDate, advertisementId } = query;
 
-      const queryObject = {};
+      const queryObject: Record<string, any> = {};
       if (advertisementId) queryObject['id'] = advertisementId;
       if (startDate) queryObject['createdAt'] = { $gte: startDate };
       if (endDate) queryObject['createdAt'] = { $lte: endDate };
       if (startDate && endDate)
         queryObject['createdAt'] = { $gte: startDate, $lte: endDate };
-      console.log('query', queryObject);
-      const advertisement = this.advertisementModel.find(queryObject);
+      const advertisement = this.advertisementModel.find(
+        scopedFilter(user, queryObject),
+      );
       return advertisement;
     } catch (error) {
       this.logger.error(`Error while getting all visitors : ${error.message}`);
@@ -310,14 +366,21 @@ export class AdvertisementService {
     }
   }
 
-  async getDateWisePerformance(params: AdvertisementQueryParams) {
+  async getDateWisePerformance(
+    params: AdvertisementQueryParams,
+    user?: TenantContext,
+  ) {
     const { advertisementId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
+    if (advertisementId && !mongoose.isValidObjectId(advertisementId)) {
+      return [];
+    }
 
-    const match = {};
+    // Org scope: a cross-org advertisementId simply matches nothing.
+    const match: Record<string, any> = this.orgMatch(user);
 
     if (startDate) {
       match['createdAt'] = {
@@ -372,14 +435,21 @@ export class AdvertisementService {
       throw new HttpException(error.message, error.status || 500);
     }
   }
-  async getDayWisePerformance(params: AdvertisementQueryParams) {
+  async getDayWisePerformance(
+    params: AdvertisementQueryParams,
+    user?: TenantContext,
+  ) {
     const { advertisementId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
+    if (advertisementId && !mongoose.isValidObjectId(advertisementId)) {
+      return [];
+    }
 
-    const match = {};
+    // Org scope: a cross-org advertisementId simply matches nothing.
+    const match: Record<string, any> = this.orgMatch(user);
 
     if (startDate) {
       match['createdAt'] = {
@@ -444,14 +514,22 @@ export class AdvertisementService {
     }
   }
 
-  async findBotClicksCount(query?: SearchParamDto) {
+  async findBotClicksCount(query?: SearchParamDto, user?: TenantContext) {
     try {
+      if (!(await this.botAllowed(user, query?.bot))) return [];
+      // Only count clicks attributed to the caller's own bots so the joined
+      // bot names never expose another tenant's bots.
+      const botIds = await this.tenantScope.orgBotIds(user);
+      const clickBotMatch =
+        botIds === null ? {} : { 'clicks.botId': { $in: botIds } };
       const advertisement = this.advertisementModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: {
             path: '$clicks',
           },
         },
+        { $match: clickBotMatch },
         {
           $lookup: {
             from: 'bots',
@@ -493,9 +571,11 @@ export class AdvertisementService {
     }
   }
 
-  async findTagsClicksCount(query?: SearchParamDto) {
+  async findTagsClicksCount(query?: SearchParamDto, user?: TenantContext) {
     try {
+      if (!(await this.botAllowed(user, query?.bot))) return [];
       const advertisement = this.advertisementModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: {
             path: '$clicks',
@@ -529,15 +609,23 @@ export class AdvertisementService {
     }
   }
 
-  async dateWiseComparison(query: ComparisonDto) {
+  async dateWiseComparison(query: ComparisonDto, user?: TenantContext) {
     try {
       const { param1, param2, startDate } = query;
       let endDate = query.endDate;
       if (!endDate) {
         endDate = new Date().toISOString();
       }
+      // Unknown/malformed ids never match; cross-org ids are excluded by the
+      // org $match below, so their series come back as zeros.
+      const id1 = mongoose.isValidObjectId(param1)
+        ? new ObjectId(param1)
+        : null;
+      const id2 = mongoose.isValidObjectId(param2)
+        ? new ObjectId(param2)
+        : null;
 
-      const match = {};
+      const match: Record<string, any> = {};
 
       if (!startDate) {
         match['clicks.date'] = {
@@ -553,6 +641,7 @@ export class AdvertisementService {
       }
 
       const data = await this.advertisementModel.aggregate([
+        { $match: this.orgMatch(user) },
         {
           $unwind: '$clicks',
         },
@@ -571,7 +660,7 @@ export class AdvertisementService {
             ad1: {
               $sum: {
                 $cond: {
-                  if: { $eq: ['$_id', new ObjectId(param1)] },
+                  if: { $eq: ['$_id', id1] },
                   then: 1,
                   else: 0,
                 },
@@ -580,7 +669,7 @@ export class AdvertisementService {
             ad2: {
               $sum: {
                 $cond: {
-                  if: { $eq: ['$_id', new ObjectId(param2)] },
+                  if: { $eq: ['$_id', id2] },
                   then: 1,
                   else: 0,
                 },

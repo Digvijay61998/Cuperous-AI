@@ -20,6 +20,18 @@ export class Tag {
     default: TagTypesEnum.DEFAULT,
   })
   type: TagTypesEnum;
+
+  /**
+   * Owning tenant. `null` for platform-wide DEFAULT tags (seeded on boot),
+   * which are visible to every organization but owned by none.
+   */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
 }
 
 export const TagSchema = SchemaFactory.createForClass(Tag);

@@ -33,7 +33,13 @@ from app.services.answer_policy import (
     repair_text,
 )
 from app.services.conversation import classify_smalltalk, smalltalk_reply
+from app.services.handover import (
+    HANDOVER_TAG_INSTRUCTION,
+    detect_human_request,
+    extract_handover_tag,
+)
 from app.services.vector_store import VectorStoreService, get_vector_store
+from app.services.visitor_context import render_visitor_profile
 from app.tracing import current_trace, span
 
 logger = logging.getLogger("ai.query")
@@ -78,6 +84,7 @@ class QueryService:
         question: str,
         chat_history: list[ChatMessage] | None = None,
         company_name: str | None = None,
+        visitor_profile: dict | None = None,
     ) -> QueryResponse:
         chat_history = chat_history or []
         company = company_name or "our company"
@@ -119,6 +126,18 @@ class QueryService:
             )
             sp.set(kind=match.kind if match else None, matched=bool(match))
 
+        # Explicit "let me talk to a person" on the visitor's own question. Runs
+        # on every path below (smalltalk, no-context, generated) so the signal
+        # does not depend on retrieval. Never applied to the answer text.
+        handover_enabled = self.settings.handover_signal_enabled
+        explicit_reason = (
+            detect_human_request(question, company_name) if handover_enabled else None
+        )
+        if explicit_reason:
+            logger.info("[AI SERVICE] explicit human request detected -> handover=true")
+        if trace is not None:
+            trace.set(handover_explicit=bool(explicit_reason))
+
         if match is not None:
             reply = smalltalk_reply(match, company)
             logger.info(
@@ -133,6 +152,8 @@ class QueryService:
                 tokens_used=0,
                 provider=self.settings.llm_provider,
                 model=self.settings.llm_model,
+                handover=bool(explicit_reason),
+                handover_reason=explicit_reason,
             )
 
         # 1. Rewrite the question into a self-contained search query.
@@ -282,6 +303,8 @@ class QueryService:
                 # (no API key needed for the fallback path).
                 provider=self.settings.llm_provider,
                 model=self.settings.llm_model,
+                handover=bool(explicit_reason),
+                handover_reason=explicit_reason,
             )
 
         # 4. Build the prompt. The LLM sees the ORIGINAL question, never
@@ -296,6 +319,11 @@ class QueryService:
                 context=context_text,
                 allow_handoff_offer=self.settings.allow_human_handoff_offer,
             )
+            if handover_enabled:
+                system_prompt += HANDOVER_TAG_INSTRUCTION
+            # R18.8: who this visitor is, from the rolling profile.
+            profile_block = render_visitor_profile(visitor_profile)
+            system_prompt += profile_block
 
             messages: list[dict] = [{"role": "system", "content": system_prompt}]
             for turn in chat_history[-6:]:  # cap history to keep prompts small/cheap
@@ -304,6 +332,7 @@ class QueryService:
             sp.set(
                 context_chunks=len(relevant),
                 context_chars=len(context_text),
+                visitor_profile_chars=len(profile_block),
                 messages=len(messages),
             )
 
@@ -376,6 +405,21 @@ class QueryService:
 
         answer_text = repair_text(result.text)
 
+        # Strip the model's machine tag BEFORE anything else reads the answer
+        # (refusal check, the visitor). Its presence is the AI escalation signal.
+        tag_reason: str | None = None
+        if handover_enabled:
+            answer_text, tag_reason = extract_handover_tag(answer_text)
+            answer_text = answer_text or ""
+        else:
+            # Disabled: still never leak a tag the model emitted on its own.
+            answer_text = extract_handover_tag(answer_text)[0] or ""
+        handover_reason = explicit_reason or tag_reason
+        if tag_reason:
+            logger.info("[AI SERVICE] model requested handover: %s", tag_reason)
+        if trace is not None:
+            trace.set(handover=bool(handover_reason), handover_tag=bool(tag_reason))
+
         # 6. Refusal check: cosine similarity said the chunks looked related, the
         # model says they do not contain the answer. The model is the better
         # judge — it read them. Reporting `confident=false` is what lets the
@@ -421,4 +465,6 @@ class QueryService:
             tokens_used=result.tokens_used + rewrite_tokens,
             provider=result.provider,
             model=result.model,
+            handover=bool(handover_reason),
+            handover_reason=handover_reason,
         )

@@ -21,6 +21,9 @@ import { AppDispatch, RootState } from 'src/store';
 // import ServerSideHorizontalNavItems from './components/horizontal/ServerSideNavItems'
 
 import VerticalAppBarContent from './components/vertical/AppBarContent';
+import ImpersonationBanner from './components/ImpersonationBanner';
+import { useEntitlements } from 'src/hooks/useEntitlements';
+import { fetchCrmPlugins, loadCachedCrmPlugins } from 'src/store/apps/crm-plugins';
 import HorizontalAppBarContent from './components/horizontal/AppBarContent';
 import pushNotification from 'src/utils/notification';
 import {
@@ -50,6 +53,17 @@ const UserLayout = ({ children, contentHeightFixed }: Props) => {
   const role = useSelector(
     (state: RootState) => (state.user as any)?.userData?.role,
   );
+  // Plan features hide tabs the org has not purchased (backend still enforces).
+  const { entitlements } = useEntitlements();
+
+  // CRM plugins decide the CRM sub-menu (crm-plugins-service-desk R8.1).
+  const pluginDispatch = useDispatch<AppDispatch>();
+  const crmPlugins = useSelector((state: RootState) => (state as any).crmPlugins?.list ?? null);
+  useEffect(() => {
+    if (!role || role === 'super_admin') return;
+    pluginDispatch(loadCachedCrmPlugins());
+    pluginDispatch(fetchCrmPlugins());
+  }, [pluginDispatch, role]);
 
   // ** Vars for server side navigation
   // const { menuItems: verticalMenuItems } = ServerSideVerticalNavItems()
@@ -123,7 +137,7 @@ const UserLayout = ({ children, contentHeightFixed }: Props) => {
       contentHeightFixed={contentHeightFixed}
       verticalLayoutProps={{
         navMenu: {
-          navItems: VerticalNavItems(role),
+          navItems: VerticalNavItems(role, entitlements?.features, crmPlugins),
 
           // Uncomment the below line when using server-side menu in vertical layout and comment the above line
           // navItems: verticalMenuItems
@@ -159,6 +173,7 @@ const UserLayout = ({ children, contentHeightFixed }: Props) => {
         },
       })}
     >
+      <ImpersonationBanner />
       {children}
     </Layout>
   );

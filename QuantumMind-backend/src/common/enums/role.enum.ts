@@ -20,3 +20,21 @@ export const ROLE_LEVEL: Record<Role, number> = {
   [Role.ORG_MANAGER]: 1,
   [Role.AGENT]: 0,
 };
+
+/** Every platform (dashboard/console) role. */
+export const ALL_ROLES: Role[] = [
+  Role.SUPER_ADMIN,
+  Role.ORG_ADMIN,
+  Role.ORG_MANAGER,
+  Role.AGENT,
+];
+
+/** Every role that lives inside an organization (the tenant dashboard). */
+export const ORG_ROLES: Role[] = [Role.ORG_ADMIN, Role.ORG_MANAGER, Role.AGENT];
+
+/** Org roles that may manage/configure (everything except AGENT). */
+export const ORG_STAFF: Role[] = [Role.ORG_ADMIN, Role.ORG_MANAGER];
+
+/** True when `role` is one of the four platform roles (not a widget token). */
+export const isPlatformRole = (role: unknown): role is Role =>
+  typeof role === 'string' && (ALL_ROLES as string[]).includes(role);

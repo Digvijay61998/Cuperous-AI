@@ -1,3 +1,4 @@
+import { RequiresFeature } from 'src/common/decorators/requires-feature.decorator';
 import {
   Controller,
   Get,
@@ -24,6 +25,7 @@ import { Public } from 'src/auth/Public/public.decorator';
 import { UpdateQuestionStatusDto } from './dto/update-question-status.dto';
 
 @Controller('questions')
+@RequiresFeature('question-bank')
 @ApiTags('questions')
 @ApiSecurity('bearer')
 export class QuestionsController {
@@ -51,12 +53,12 @@ export class QuestionsController {
     );
   }
 
-  @Public()
   @Get('search')
   async searchQuestions(
     @Query() { question, language }: FindAnswerDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<QuestionDocument[]> {
-    return await this.questionsService.search(question, language);
+    return await this.questionsService.search(question, language, user as any);
   }
 
   @Get()
@@ -111,11 +113,15 @@ export class QuestionsController {
   }
 
   @Post('find-answer')
-  async findAnswer(@Body() findAnswerDto: FindAnswerDto) {
+  async findAnswer(
+    @Body() findAnswerDto: FindAnswerDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return await this.questionsService.findAnswer(
       findAnswerDto.question,
       findAnswerDto.language,
       findAnswerDto.tags,
+      user?.organizationId ? String(user.organizationId) : null,
     );
   }
 

@@ -139,7 +139,8 @@ export class FacebookService {
         bot: jarcubeBotId,
         platform: PlatformEnum.FACEBOOK,
       },
-      jarcubeBotId
+      jarcubeBotId,
+      messengerCapture(first_name, last_name, id || sender_psid)
     );
 
     const user: any = {
@@ -229,7 +230,8 @@ export class FacebookService {
         bot: jarcubeBotId,
         platform: PlatformEnum.FACEBOOK,
       },
-      jarcubeBotId
+      jarcubeBotId,
+      messengerCapture(first_name, last_name, id || sender_psid)
     );
 
     const user: any = {
@@ -331,4 +333,19 @@ export class FacebookService {
       this.logger.error(`Unable to send message. ${errorMessages}`);
     }
   }
+}
+
+/**
+ * A Messenger sender as a CRM lead: the page-scoped id (PSID) is the stable
+ * way to message this person from this page (crm-plugins-service-desk R22.2).
+ */
+function messengerCapture(firstName?: string, lastName?: string, psid?: string) {
+  const name = [firstName, lastName].filter(Boolean).join(" ");
+  return {
+    source: "facebook" as const,
+    details: {
+      name: name || undefined,
+      channel: psid ? { kind: "FACEBOOK", value: String(psid) } : undefined,
+    },
+  };
 }

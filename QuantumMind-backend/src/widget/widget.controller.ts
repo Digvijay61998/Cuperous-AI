@@ -7,6 +7,9 @@ import { ClickDto } from './dto/click.dto';
 import { CreateVisitor } from './dto/create-visitor.dto';
 import { WidgetVisitorDTO } from './dto/widget-visitor.dto';
 import { WidgetService } from './widget.service';
+import { AllowVisitor } from 'src/common/decorators/allow-visitor.decorator';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { Role } from 'src/common/enums/role.enum';
 
 @Controller('widget')
 @ApiTags('Widget')
@@ -23,7 +26,11 @@ export class WidgetController {
     return await this.widgetService.getWidget(req, botId, body);
   }
 
+  // Widget-token routes: callable ONLY with a widget/visitor token (no
+  // dashboard role is listed), identity/bot come from that token.
   @ApiSecurity('bearer')
+  @AllowVisitor()
+  @Roles(Role.SUPER_ADMIN)
   @Post('click')
   async handleOfferClick(
     @Body() body: ClickDto,
@@ -38,6 +45,8 @@ export class WidgetController {
   }
 
   @ApiSecurity('bearer')
+  @AllowVisitor()
+  @Roles(Role.SUPER_ADMIN)
   @Post('visitor')
   async createVisitor(
     @Body() body: CreateVisitor,

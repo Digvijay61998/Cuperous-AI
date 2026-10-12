@@ -44,6 +44,18 @@ export const DEFAULT_CAPABILITIES: ChannelCapabilities = {
 };
 
 export const CHANNEL_CAPABILITIES: Record<string, ChannelCapabilities> = {
+  widget: {
+    label: 'Web Chat',
+    // The website widget is realtime over a socket, not a receipt-based channel,
+    // so there is no delivery-tick ladder to show.
+    deliveryTicks: false,
+    media: true,
+    quotedReply: false,
+    botToggle: true,
+    // Full history already lives in our DB and loads via the normal message
+    // window; there is no external channel to pull older pages from.
+    history: false,
+  },
   whatsapp_web: {
     label: 'WhatsApp',
     deliveryTicks: true,

@@ -7,17 +7,27 @@ export interface OrgLimits {
   maxTemplates: number;
 }
 
+export const LIMIT_FIELDS: { key: keyof OrgLimits; label: string }[] = [
+  { key: 'maxBots', label: 'Max bots' },
+  { key: 'maxAgents', label: 'Max agents / managers' },
+  { key: 'maxPlatforms', label: 'Max platforms (channels)' },
+  { key: 'maxTemplates', label: 'Max templates' },
+];
+
 export interface OrgMeta {
   id: string;
   name: string;
   slug: string;
   status: 'active' | 'suspended';
   ownerId: string | null;
+  owner: { _id: string; name: string; email: string } | null;
+  planId: string | null;
   plan: string | null;
   subscriptionStatus: string | null;
   limits: OrgLimits | null;
   features: Record<string, boolean> | null;
-  usage: { bots: number; agents: number; templates: number };
+  overrides: { limits?: Partial<OrgLimits>; features?: Record<string, boolean> } | null;
+  usage: { bots: number; agents: number; templates: number; platforms: number };
   counts: { orgManagers: number; agents: number };
   createdAt?: string;
 }
@@ -28,6 +38,7 @@ export interface OverviewData {
   orgManagers: number;
   agents: number;
   bots: number;
+  platforms?: number;
   activeSubscriptions: number;
 }
 
@@ -38,6 +49,18 @@ export interface PlanData {
   features: Record<string, boolean>;
 }
 
+export interface AuditLogRow {
+  _id: string;
+  actorId: string | null;
+  actorRole: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  organizationId: string | null;
+  metadata: Record<string, any>;
+  createdAt: string;
+}
+
 export interface CreateOrgPayload {
   name: string;
   owner: { name: string; email: string; password: string };
@@ -46,33 +69,111 @@ export interface CreateOrgPayload {
   features?: Record<string, boolean>;
 }
 
+export interface UpdateOrgPayload {
+  name?: string;
+  status?: 'active' | 'suspended';
+  subscriptionStatus?: string;
+  planId?: string;
+  limits?: Partial<OrgLimits>;
+  features?: Record<string, boolean>;
+}
+
+/** Nest error messages may be a string or a string[] (validation errors). */
+export const apiError = (err: any, fallback: string) => {
+  const m = err?.response?.data?.message;
+  if (Array.isArray(m)) return m.join(', ');
+  return m || err?.message || fallback;
+};
+
 export const ConsoleService = {
   overview: () =>
     Axios.get<OverviewData>('/admin/overview').then((r) => r.data),
 
   plans: () => Axios.get<PlanData[]>('/admin/plans').then((r) => r.data),
 
+  features: () =>
+    Axios.get<{ features: string[] }>('/admin/features').then(
+      (r) => r.data.features,
+    ),
+
+  auditLogs: (params: { organizationId?: string; skip?: number; limit?: number }) =>
+    Axios.get<{ data: AuditLogRow[]; count: number }>('/admin/audit-logs', {
+      params,
+    }).then((r) => r.data),
+
   listOrganizations: () =>
     Axios.get<OrgMeta[]>('/organizations').then((r) => r.data),
+
+  getOrganization: (id: string) =>
+    Axios.get<OrgMeta>(`/organizations/${id}`).then((r) => r.data),
 
   createOrganization: (payload: CreateOrgPayload) =>
     Axios.post('/organizations', payload).then((r) => r.data),
 
-  updateOrganization: (
-    id: string,
-    changes: {
-      status?: 'active' | 'suspended';
-      planId?: string;
-      limits?: Partial<OrgLimits>;
-      features?: Record<string, boolean>;
-    },
-  ) => Axios.patch(`/organizations/${id}`, changes).then((r) => r.data),
+  updateOrganization: (id: string, changes: UpdateOrgPayload) =>
+    Axios.patch<OrgMeta>(`/organizations/${id}`, changes).then((r) => r.data),
+
+  reconcile: (id: string) =>
+    Axios.post<OrgMeta>(`/organizations/${id}/reconcile`, {}).then((r) => r.data),
 
   impersonate: (id: string) =>
-    Axios.post<{ accessToken: string; organizationId: string }>(
+    Axios.post<{ accessToken: string; organizationId: string; expiresIn: string }>(
       `/organizations/${id}/impersonate`,
       {},
     ).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------------------
+// Impersonation session handling
+//
+// The super admin's own tokens are stashed while acting as an org, so "Exit"
+// restores the console session without a re-login. The impersonation token has
+// no refresh token; when it expires the Axios interceptor falls back to the
+// stashed refresh token only after the session is explicitly ended.
+// ---------------------------------------------------------------------------
+const STASH_ACCESS = 'superAdminAccessToken';
+const STASH_REFRESH = 'superAdminRefreshToken';
+const IMPERSONATING = 'impersonatingOrg';
+
+export const startImpersonation = (
+  accessToken: string,
+  org: { id: string; name: string },
+) => {
+  const ls = window.localStorage;
+  // Never overwrite the stash if already impersonating (nested sessions).
+  if (!ls.getItem(STASH_ACCESS)) {
+    ls.setItem(STASH_ACCESS, ls.getItem('accessToken') || '');
+    ls.setItem(STASH_REFRESH, ls.getItem('refreshToken') || '');
+  }
+  ls.setItem('accessToken', accessToken);
+  // The impersonation session must NOT be refreshable as the org owner.
+  ls.removeItem('refreshToken');
+  ls.setItem(IMPERSONATING, JSON.stringify(org));
+  ls.removeItem('userData');
+  window.location.href = '/';
+};
+
+export const impersonatedOrg = (): { id: string; name: string } | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(IMPERSONATING) || 'null');
+  } catch {
+    return null;
+  }
+};
+
+export const endImpersonation = () => {
+  const ls = window.localStorage;
+  const access = ls.getItem(STASH_ACCESS);
+  const refresh = ls.getItem(STASH_REFRESH);
+  ls.removeItem(IMPERSONATING);
+  ls.removeItem(STASH_ACCESS);
+  ls.removeItem(STASH_REFRESH);
+  ls.removeItem('userData');
+  if (access) ls.setItem('accessToken', access);
+  else ls.removeItem('accessToken');
+  if (refresh) ls.setItem('refreshToken', refresh);
+  window.location.href = access ? '/super-admin' : '/login';
 };
 
 export default ConsoleService;

@@ -39,6 +39,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Postgres backing the CRM module. The backend defaults to
+  # postgresql://postgres:postgres@localhost:5432/crm when CRM_DATABASE_URL is
+  # unset, so the credentials and db name below match that default.
+  postgres:
+    image: postgres:16-alpine
+    container_name: jarcube-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: crm
+    ports:
+      - "5432:5432"
+    volumes:
+      - jarcube-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d crm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   jarcube-mongo-data:
   jarcube-redis-data:
+  jarcube-postgres-data:

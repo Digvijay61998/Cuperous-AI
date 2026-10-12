@@ -21,7 +21,7 @@ export default function ColorChips({
       const message = {
         value: item.value,
         type: 'text',
-        senderId: 'visitor_id_1010',
+        senderId: 'preview_visitor',
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -34,7 +34,7 @@ export default function ColorChips({
       const message = {
         value: item.title,
         type: 'text',
-        senderId: 'visitor_id_1010',
+        senderId: 'preview_visitor',
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };

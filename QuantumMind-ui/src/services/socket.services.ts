@@ -1,6 +1,12 @@
 import io, { Socket } from 'socket.io-client';
 import { fromEvent, Observable } from 'rxjs';
 import env from 'src/configs/environments';
+import type {
+  HandoverAcknowledgedEvent,
+  HandoverAlert,
+  HandoverPendingEvent,
+  SenderRole,
+} from 'src/services/alerts/types';
 
 export interface ChatMessage {
   conversationId: string;
@@ -14,6 +20,10 @@ export interface ChatMessage {
     switchToAgent?: boolean;
     agentId?: string;
     format?: string;
+    /** Author category; only `visitor` messages may notify. */
+    senderRole?: SenderRole;
+    sender?: string;
+    time?: string;
   };
 }
 
@@ -64,6 +74,8 @@ export interface InboxMessage {
   media?: InboxMedia;
   quotedMessageId?: string;
   historical: boolean;
+  /** Author category, derived server-side. Notifications key on this, never on `direction`. */
+  senderRole?: SenderRole;
   /**
    * The correlation id an outbound message was stored under.
    *
@@ -96,7 +108,7 @@ export interface InboxThread {
   unreadCount: number;
   botEnabled: boolean;
   handledByAgent: boolean;
-  assignedAgent?: { id: string; name?: string } | null;
+  assignedAgent?: { id: string; name?: string; email?: string } | null;
   lastMessage?: Record<string, any> | null;
   lastMessageAt?: string | null;
   bot?: { id: string; name?: string } | null;
@@ -133,6 +145,17 @@ export class SocketServices {
     return fromEvent(this.socket, 'chat-message-bot');
   }
 
+  /** A legacy live-chat reply was refused: another agent owns the chat (R7.2, R8.9). */
+  public onChatMessageRejected(): Observable<{
+    reason: string;
+    ownerName?: string;
+    message?: string;
+    visitorId?: string;
+    text?: string;
+  }> {
+    return fromEvent(this.socket, 'chat-message-rejected');
+  }
+
   public onVisitorMessage(): Observable<ChatMessage> {
     return fromEvent(this.socket, 'message');
   }
@@ -140,6 +163,10 @@ export class SocketServices {
   public onNewVisitor(): Observable<onNewVisitorAdded> {
     console.log('New Visitor Arrived');
     return fromEvent(this.socket, 'new-visitor');
+  }
+  /** The visitor of one of my active chats told the bot their name (R4.4). */
+  public onVisitorUpdated(): Observable<{ conversationId: string; visitorId?: string; name: string }> {
+    return fromEvent(this.socket, 'visitor-updated');
   }
 
   // ---------------------------------------------------------------------------
@@ -160,6 +187,27 @@ export class SocketServices {
     return fromEvent(this.socket, 'inbox:thread-updated');
   }
 
+  /** The chat owner is typing (R8.6). */
+  public onInboxAgentTyping(): Observable<{
+    threadId?: string;
+    conversationId?: string;
+    visitorId: string;
+    agentId: string;
+    name: string;
+  }> {
+    return fromEvent(this.socket, 'inbox:agent-typing');
+  }
+
+  /** An org admin took a chat this user owned (R7.3). */
+  public onInboxOwnershipOverridden(): Observable<{ threadId: string; actorId: string; actorName?: string; at: string }> {
+    return fromEvent(this.socket, 'inbox:ownership-overridden');
+  }
+
+  /** Tell the other viewers (and the visitor) the owner is typing (R8.6). */
+  public emitAgentTyping(visitorId: string, threadId?: string) {
+    this.socket?.emit('agent-typing', { data: { visitorId, threadId } });
+  }
+
   /** A delivery receipt advanced an outbound message's tick. */
   public onInboxMessageStatus(): Observable<InboxMessageStatusEvent> {
     return fromEvent(this.socket, 'inbox:message-status');
@@ -173,6 +221,38 @@ export class SocketServices {
    */
   public onInboxChannelsChanged(): Observable<{ channel: string }> {
     return fromEvent(this.socket, 'inbox:channels-changed');
+  }
+
+  /**
+   * A service request was created, moved, assigned, edited or commented on
+   * (crm-plugins-service-desk R18). `data` is the card, null when it is gone.
+   */
+  public onServiceRequestChanged(): Observable<{
+    kind: 'created' | 'updated' | 'moved' | 'assigned' | 'commented' | 'deleted';
+    id: string;
+    stageId: string | null;
+    data: any | null;
+  }> {
+    return fromEvent(this.socket, 'crm:service-request');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handover alerts — the only events that play the agent alert sound.
+  // ---------------------------------------------------------------------------
+
+  /** A visitor needs a human (flow transfer, intent, AI escalation, emergency). */
+  public onHandoverRequested(): Observable<HandoverAlert> {
+    return fromEvent(this.socket, 'inbox:handover-requested');
+  }
+
+  /** Someone opened/took over the thread, or the conversation ended. */
+  public onHandoverAcknowledged(): Observable<HandoverAcknowledgedEvent> {
+    return fromEvent(this.socket, 'inbox:handover-acknowledged');
+  }
+
+  /** This agent came online with pending alerts. */
+  public onHandoverPending(): Observable<HandoverPendingEvent> {
+    return fromEvent(this.socket, 'inbox:handover-pending');
   }
 
   public onConnect() {

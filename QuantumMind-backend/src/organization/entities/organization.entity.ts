@@ -51,6 +51,21 @@ export class Organization {
   @Prop({ default: 0 })
   templateCount: number;
 
+  /** Connected channel/platform accounts (Social rows) — `maxPlatforms`. */
+  @Prop({ default: 0 })
+  platformCount: number;
+
+  /** ISO 3166-1 alpha-2 country code; seeds the default time zone. */
+  @Prop({ type: String, trim: true, uppercase: true, default: null })
+  country: string | null;
+
+  /**
+   * IANA time zone for dates shown to visitors and in summaries/emails.
+   * Null -> derived from `country`, then UTC (see resolveOrgTimeZone).
+   */
+  @Prop({ type: String, trim: true, default: null })
+  timeZone: string | null;
+
   /** The SUPER_ADMIN who created this organization. */
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Agent', default: null })
   createdBy: mongoose.Schema.Types.ObjectId;

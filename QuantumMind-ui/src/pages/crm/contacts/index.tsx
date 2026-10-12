@@ -10,6 +10,10 @@ import Card from '@mui/material/Card';
 import Divider from '@mui/material/Divider';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
 import { DataGrid } from '@mui/x-data-grid';
 
 import IconButton from '@mui/material/IconButton';
@@ -33,6 +37,8 @@ import SavedViewsBar from 'src/views/crm/SavedViewsBar';
 
 // ** Utils
 import { formatDate, initials, statusColor } from 'src/views/crm/utils';
+import { CAPTURE_SOURCE_LABELS, captureSourceLabel } from 'src/views/crm/contactIdentifiers';
+import useCrmPlugins from 'src/views/crm/plugins/useCrmPlugins';
 
 const CrmContacts = () => {
   const dispatch = useDispatch<AppDispatch>();
@@ -47,6 +53,9 @@ const CrmContacts = () => {
   const [pageSize, setPageSize] = useState<number>(10);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [editing, setEditing] = useState<any>(null);
+  // Where the contact was captured (R5.2). '' = all.
+  const [channel, setChannel] = useState<string>('');
+  const { isOn } = useCrmPlugins();
 
   const handleFilter = useCallback((val: string) => {
     setValue(val);
@@ -67,8 +76,8 @@ const CrmContacts = () => {
   };
 
   useEffect(() => {
-    dispatch(fetchContacts({ page: page + 1, pageSize, q: value }));
-  }, [dispatch, page, pageSize, value]);
+    dispatch(fetchContacts({ page: page + 1, pageSize, q: value, channel: channel || undefined }));
+  }, [dispatch, page, pageSize, value, channel]);
 
   const columns = [
     {
@@ -104,6 +113,17 @@ const CrmContacts = () => {
               >
                 {name}
               </Typography>
+              {/* The list API does not currently return isAnonymous; shown when it does. */}
+              {row?.isAnonymous && (
+                <CustomChip
+                  rounded
+                  skin="light"
+                  size="small"
+                  color="secondary"
+                  label="Anonymous"
+                  sx={{ alignSelf: 'flex-start', mt: 0.5 }}
+                />
+              )}
               {row?.title && (
                 <Typography variant="caption" color="text.secondary">
                   {row.title}
@@ -121,6 +141,25 @@ const CrmContacts = () => {
       headerName: 'Email',
       renderCell: ({ row }: any) => (
         <Typography variant="body2">{row?.email || '—'}</Typography>
+      ),
+    },
+    {
+      flex: 0.18,
+      minWidth: 150,
+      field: 'phone',
+      headerName: 'Phone',
+      renderCell: ({ row }: any) => (
+        <Typography variant="body2">{row?.phone || '—'}</Typography>
+      ),
+    },
+    {
+      flex: 0.15,
+      minWidth: 140,
+      field: 'sourceChannel',
+      headerName: 'Source',
+      sortable: false,
+      renderCell: ({ row }: any) => (
+        <Typography variant="body2">{captureSourceLabel(row?.sourceChannel) || 'Added in CRM'}</Typography>
       ),
     },
     {
@@ -209,10 +248,12 @@ const CrmContacts = () => {
       return <Typography variant="body2">{shown}</Typography>;
     },
   }));
+  // Company column only while the Companies plugin is on (R8.4).
+  const shown = columns.filter((c) => c.field !== 'company' || isOn('companies'));
   const allColumns = [
-    ...columns.slice(0, -1),
+    ...shown.slice(0, -1),
     ...dynamicColumns,
-    columns[columns.length - 1],
+    shown[shown.length - 1],
   ];
 
   const hasData = (data?.length || 0) > 0;
@@ -237,12 +278,39 @@ const CrmContacts = () => {
           <Divider sx={{ m: '0 !important' }} />
           <SavedViewsBar
             entity="CONTACT"
-            currentFilters={{ q: value }}
+            currentFilters={{ q: value, channel }}
             onApply={(f) => {
               setValue(f?.q || '');
+              setChannel(f?.channel || '');
               setPage(0);
             }}
           />
+          <Divider sx={{ m: '0 !important' }} />
+          <Box sx={{ px: 5, py: 3 }}>
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel id="contacts-source-filter">Source</InputLabel>
+              <Select
+                labelId="contacts-source-filter"
+                label="Source"
+                value={channel}
+                onChange={(e) => {
+                  setChannel(String(e.target.value));
+                  setPage(0);
+                }}
+              >
+                <MenuItem value="">All sources</MenuItem>
+                {Object.entries(CAPTURE_SOURCE_LABELS)
+                  // whatsapp and whatsapp_web share a label; list each channel once.
+                  .filter(([key]) => key !== 'whatsapp_web')
+                  .map(([key, label]) => (
+                    <MenuItem key={key} value={key === 'whatsapp' ? 'whatsapp,whatsapp_web' : key}>
+                      {label}
+                    </MenuItem>
+                  ))}
+                <MenuItem value="unassigned">Added in CRM</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
           <Divider sx={{ m: '0 !important' }} />
 
           {!loading && !hasData ? (

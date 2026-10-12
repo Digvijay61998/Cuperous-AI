@@ -1,7 +1,7 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import { Response } from 'express';
 import { Parser } from 'json2csv';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import {
   UNANSWERED_PROVIDER_MODEL,
   UNANSWERED_QUESTION_MODEL,
@@ -84,22 +84,38 @@ export class UnansweredService {
     return questions;
   }
 
-  async removeQuestion(questionId: string) {
+  async removeQuestion(questionId: string, user?: TenantContext) {
     try {
+      const q: any = mongoose.isValidObjectId(questionId)
+        ? await this.unansweredQuestionModel
+            .findById(questionId)
+            .select('botid')
+            .lean()
+        : null;
+      if (!q) throw new HttpException('Question not found', 404);
+      if (user) {
+        try {
+          await this.assertBotInOrg(String(q.botid), user);
+        } catch {
+          throw new HttpException('Question not found', 404);
+        }
+      }
       const question = await this.unansweredQuestionModel.deleteOne({
         _id: questionId,
       });
-      if (!question) {
-        throw new HttpException('Question not found', 404);
-      }
+      await this.unansweredModel.updateMany(
+        { questions: questionId },
+        { $pull: { questions: questionId } },
+      );
       return question;
     } catch (error) {
-      throw new HttpException(error.message, 500);
+      throw new HttpException(error.message, error.status || 500);
     }
   }
 
   async getAllQuestionsInCSV(res: Response, botId?: string, user?: TenantContext) {
     try {
+      if (!botId) throw new HttpException('botId is required', 400);
       await this.assertBotInOrg(botId, user);
       const questions = await this.unansweredQuestionModel
         .find({
@@ -135,10 +151,14 @@ export class UnansweredService {
     }
   }
 
-  async homeQuestionCount(filter: any) {
-    if (!filter) filter = 'day';
+  async homeQuestionCount(filter: any, user?: TenantContext) {
+    if (!['day', 'week', 'month', 'year'].includes(filter)) filter = 'day';
+    const scope = user
+      ? await this.tenantScope.orgBotMatch(user, 'botId', true)
+      : {};
     try {
       const total = await this.unansweredModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(moment().startOf(filter).toISOString()),
         },
@@ -146,6 +166,7 @@ export class UnansweredService {
 
       let percentageChange = 0;
       const previousTotal = await this.unansweredModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(
             moment().subtract(1, filter).startOf(filter).toISOString(),

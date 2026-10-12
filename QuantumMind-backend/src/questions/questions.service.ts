@@ -1,5 +1,6 @@
-import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
-import { Model } from "mongoose";
+import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { isValidObjectId, Model } from "mongoose";
 import { Role } from "src/common/enums/role.enum";
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 import { getDaySubtitle } from "src/util/get-subtitle";
@@ -11,7 +12,12 @@ import {
 import { SearchParamDto } from "./dto/search-param.dto";
 import { UpdateQuestionStatusDto } from "./dto/update-question-status.dto";
 import { UpdateQuestionDto } from "./dto/update-question.dto";
-import { Question, QuestionDocument } from "./entities/question.entity";
+import { LearnedSource, Question, QuestionDocument } from "./entities/question.entity";
+
+/** A learned entry was edited or its status changed: `{ questionId }`. */
+export const QUESTION_CHANGED = "question.learned.changed";
+/** A learned entry was deleted: `{ questionId, source }`. */
+export const QUESTION_DELETED = "question.learned.deleted";
 import { QuestionStatusEnum } from "./enums/question-status.enum";
 import { HttpService } from "@nestjs/axios";
 import { firstValueFrom } from "rxjs";
@@ -29,8 +35,89 @@ export class QuestionsService {
     @Inject(QUESTION_PROVIDER)
     private readonly questionModel: Model<QuestionDocument>,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    // Optional so older harnesses still construct the service.
+    @Optional() private readonly eventEmitter?: EventEmitter2
   ) {}
+
+  /** A learned entry changed: its knowledge-base copy must follow (R21.4). */
+  private emitChanged(q: QuestionDocument) {
+    if ((q as any)?.source?.kind !== "incident") return;
+    this.eventEmitter?.emit(QUESTION_CHANGED, { questionId: String(q._id) });
+  }
+
+  // ------------------------------------------------ learned entries (R21)
+
+  /**
+   * The system-generated path (R21.1): stored `approved` straight away. This
+   * is the only write that skips the human approval step; there is no
+   * self-approval because no person approves it.
+   */
+  async createLearned(data: {
+    organizationId: string;
+    question: string;
+    answer: string;
+    addedBy?: string;
+    source: LearnedSource;
+  }): Promise<QuestionDocument> {
+    const q = new this.questionModel({
+      organizationId: data.organizationId,
+      question: data.question,
+      answers: [data.answer],
+      keywords: [],
+      tags: [],
+      status: QuestionStatusEnum.APPROVED,
+      addedBy: isValidObjectId(data.addedBy) ? data.addedBy : undefined,
+      source: { ...data.source, systemApproved: true },
+    });
+    return q.save();
+  }
+
+  /** Same question text in the org (the schema stores it lower-cased). */
+  async findSameQuestion(organizationId: string, question: string) {
+    return this.questionModel.findOne({ organizationId, question: String(question).toLowerCase() });
+  }
+
+  async findByKnowledgeSource(organizationId: string, knowledgeSource: string) {
+    return this.questionModel.findOne({ organizationId, "source.knowledgeSource": knowledgeSource });
+  }
+
+  async findLearnedById(id: string) {
+    return isValidObjectId(id) ? this.questionModel.findById(id) : null;
+  }
+
+  /**
+   * R21.3: a near-duplicate keeps one entry with every incident as a source.
+   * The new answer is added when it says something new (at most 5 answers).
+   */
+  async addIncidentToLearned(
+    id: string,
+    incident: { id: string; ticketId?: string; ticketRef?: string },
+    answer: string
+  ): Promise<QuestionDocument | null> {
+    const q: any = await this.questionModel.findById(id);
+    if (!q) return null;
+    const src = { ...(q.source || {}) };
+    src.incidentIds = [...new Set([...(src.incidentIds || []), incident.id])];
+    const known = (src.incidents || []).some((i: any) => i.id === incident.id);
+    src.incidents = known ? src.incidents : [...(src.incidents || []), incident];
+    q.source = src;
+    q.markModified("source");
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!q.answers.some((a: string) => norm(a) === norm(answer)) && q.answers.length < 5) {
+      q.answers = [...q.answers, answer];
+    }
+    return q.save();
+  }
+
+  /** Knowledge-base sync state for the Question Bank list (R12.8). */
+  async setIngestState(id: string, state: { status: string; error?: string }) {
+    if (!isValidObjectId(id)) return;
+    await this.questionModel.updateOne(
+      { _id: id, "source.kind": "incident" },
+      { $set: { "source.ingest": { status: state.status, at: new Date(), ...(state.error ? { error: state.error.slice(0, 300) } : {}) } } }
+    );
+  }
 
   async createSingleQuestion(
     createQuestionDto: CreateSingleQuestionDto,
@@ -166,29 +253,40 @@ export class QuestionsService {
       assertOwnership(user, question as any);
 
       if (status === QuestionStatusEnum.APPROVED) {
-        question.status = status;
-        question.approvedBy = approvedBy;
-        if (question.addedBy === approvedBy) {
+        // Compared as strings: `addedBy` is an ObjectId, so the old `===`
+        // against the caller's id string never matched and anyone could
+        // approve their own entry. Learned entries never pass through here;
+        // they are approved by the system (R21.1).
+        if (question.addedBy && String(question.addedBy) === String(approvedBy)) {
           throw new HttpException("You cannot approve your own question", 400);
         }
+        question.status = status;
+        question.approvedBy = approvedBy;
       } else {
         question.status = status;
         question.approvedBy = null;
       }
 
-      return await question.save();
+      const saved = await question.save();
+      this.emitChanged(saved);
+      return saved;
     } catch (error) {
       this.logger.error(`Error approving question: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async search(question: string, language = "en"): Promise<QuestionDocument[]> {
+  async search(
+    question: string,
+    language = "en",
+    user?: TenantContext
+  ): Promise<QuestionDocument[]> {
     try {
-      question = question.toLowerCase().trim();
-      const query = {
+      question = String(question ?? "").toLowerCase().trim();
+      if (!question) return [];
+      const query = scopedFilter(user, {
         $text: { $search: question, $language: language },
-      };
+      } as Record<string, any>);
       const questions = await this.questionModel
         .find(query)
         .sort({ score: { $meta: "textScore" } })
@@ -252,7 +350,9 @@ export class QuestionsService {
 
       question.search_keywords = [...new Set(keywords)];
 
-      return await question.save();
+      const saved = await question.save();
+      this.emitChanged(saved);
+      return saved;
     } catch (error) {
       this.logger.error(`Error updating question: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
@@ -266,19 +366,36 @@ export class QuestionsService {
         throw new HttpException("Question not found", 404);
       }
       assertOwnership(user, question as any);
-      return await question.remove();
+      const source = question.source ? { ...(question as any).toObject?.().source ?? question.source } : undefined;
+      const removed = await question.remove();
+      if (source?.kind === "incident") {
+        this.eventEmitter?.emit(QUESTION_DELETED, { questionId: String(question._id), source });
+      }
+      return removed;
     } catch (error) {
       this.logger.error(`Error deleting question: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async findAnswer(question: string, language = "english", tags?: string[]) {
+  /**
+   * @param organizationId the tenant whose question bank to search. REQUIRED
+   * for a result: without an org nothing is returned (fail closed).
+   */
+  async findAnswer(
+    question: string,
+    language = "english",
+    tags?: string[],
+    organizationId?: string | null
+  ) {
     try {
-      question = question.toLowerCase().trim();
-      const query = {
+      if (!organizationId) return null;
+      question = String(question ?? "").toLowerCase().trim();
+      if (!question) return null;
+      const query: Record<string, any> = {
         $text: { $search: question, $language: language },
         status: QuestionStatusEnum.APPROVED,
+        organizationId,
       };
 
       if (tags) {

@@ -221,3 +221,30 @@ def test_mojibake_never_reaches_the_model_or_the_customer():
     context = provider.last_messages[0]["content"]
     assert "₹5,000" in context
     assert "\u25a0" not in context
+
+
+# ---------------------------------------------------------------------------
+# Visitor_Profile context (crm-incident-handover R18.8)
+# ---------------------------------------------------------------------------
+def test_visitor_profile_is_added_to_the_system_prompt():
+    store = FakeStore([{"text": "Doors are covered for 2 years.", "source_url": "", "score": 0.9}])
+    provider = FakeProvider()
+    svc = QueryService(store=store, provider=provider)
+    svc.answer_question(
+        client_id="acme",
+        question="What is the warranty on doors?",
+        visitor_profile={
+            "facts": {"products": ["Lift 2, Building A"]},
+            "entries": [{"at": "2026-10-01T10:00:00+05:30", "summary": "Reported a door fault", "ticketRef": "SR_1"}],
+        },
+    )
+    system = provider.last_messages[0]["content"]
+    assert "What we know about this visitor" in system
+    assert "Lift 2, Building A" in system and "Reported a door fault" in system
+
+
+def test_no_visitor_profile_leaves_the_prompt_unchanged():
+    store = FakeStore([{"text": "Doors are covered for 2 years.", "source_url": "", "score": 0.9}])
+    provider = FakeProvider()
+    QueryService(store=store, provider=provider).answer_question(client_id="acme", question="Warranty on doors?")
+    assert "What we know about this visitor" not in provider.last_messages[0]["content"]

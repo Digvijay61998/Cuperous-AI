@@ -1,5 +1,6 @@
 // ** React Imports
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import Axios from 'src/helper/Axios';
 import { useDispatch, useSelector } from 'react-redux';
 
 // ** MUI Imports
@@ -49,12 +50,31 @@ const MessagingProviders = () => {
     (state: RootState) => state.messaging,
   );
 
+  // Providers are switched per bot: an org admin can only change the provider
+  // for bots of their own organization (the global default is platform-owned).
+  const [bots, setBots] = useState<{ id: string; name: string }[]>([]);
+  const [botId, setBotId] = useState<string>('');
+
   useEffect(() => {
-    dispatch(fetchMessagingProviders());
-  }, [dispatch]);
+    Axios.get('bots/list')
+      .then((res) => {
+        const list = (res.data || []).map((b: any) => ({
+          id: String(b.id),
+          name: b.name,
+        }));
+        setBots(list);
+        if (list.length) setBotId((prev) => prev || list[0].id);
+      })
+      .catch(() => setBots([]));
+  }, []);
+
+  useEffect(() => {
+    if (botId) dispatch(fetchMessagingProviders(botId));
+  }, [dispatch, botId]);
 
   const handleChange = (channel: string, e: SelectChangeEvent) => {
-    dispatch(setActiveProvider({ channel, providerId: e.target.value }));
+    if (!botId) return;
+    dispatch(setActiveProvider({ channel, providerId: e.target.value, botId }));
   };
 
   const activeProvider = (ch: ChannelProviders): ProviderOption | undefined =>
@@ -69,6 +89,26 @@ const MessagingProviders = () => {
             subheader="Choose which provider powers each messaging channel. Changes apply instantly — no redeploy."
           />
           <CardContent>
+            <FormControl size="small" sx={{ minWidth: 260, mb: 5 }}>
+              <InputLabel id="prov-bot">Bot</InputLabel>
+              <Select
+                labelId="prov-bot"
+                label="Bot"
+                value={botId}
+                onChange={(e) => setBotId(String(e.target.value))}
+              >
+                {bots.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {!bots.length && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+                Create a bot first to choose its channel providers.
+              </Typography>
+            )}
             {loading && (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
                 <CircularProgress />

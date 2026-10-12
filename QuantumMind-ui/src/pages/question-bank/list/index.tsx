@@ -61,6 +61,7 @@ import { getQuestionCardStates } from 'src/store/apps/states';
 import AddBulkQA from 'src/views/question-bank/list/AddBulkQ&A';
 import AddEditQA from 'src/views/question-bank/list/AddEditQ&A';
 import QADeleteDialog from 'src/views/question-bank/list/QADeleteDialog';
+import LearnedBadge from 'src/views/question-bank/LearnedBadge';
 import TableHeader from 'src/views/question-bank/list/TableHeader';
 
 const ITEM_HEIGHT = 48;
@@ -469,6 +470,7 @@ const QAList = () => {
                               >
                                 {item.question}
                               </Typography>
+                              <LearnedBadge item={item} />
                               <Tooltip
                                 title={
                                   item.status === 'under_review'
@@ -528,6 +530,12 @@ const QAList = () => {
                               </Stack>
                             </Grid>
 
+                            {item?.source?.kind === 'incident' && (
+                              <Grid item xs={12}>
+                                {/* R21.4: where it was learned from; edit and delete below keep the knowledge base in sync. */}
+                                <LearnedBadge item={item} detailed />
+                              </Grid>
+                            )}
                             <Grid item xs={12}>
                               <div
                                 style={{ display: 'flex', flexWrap: 'wrap' }}

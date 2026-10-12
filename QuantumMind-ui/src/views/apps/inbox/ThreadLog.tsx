@@ -1,5 +1,6 @@
 // ** React Imports
 import { useEffect, useRef } from 'react';
+import { reportScroll } from 'src/services/alerts/chatViewport';
 
 // ** MUI Imports
 import Box from '@mui/material/Box';
@@ -11,6 +12,7 @@ import Typography from '@mui/material/Typography';
 // ** Utils
 import Icon from 'src/@core/components/icon';
 import { InboxMessage } from 'src/services/socket.services';
+import { isOrgMessage } from './messageSide';
 import Audio from 'src/views/apps/components/Audio';
 import Image from 'src/views/apps/components/Images';
 import Message from 'src/views/apps/components/Message';
@@ -148,7 +150,13 @@ const ThreadLog = ({
   }, [messages]);
 
   return (
-    <Box ref={scrollRef} sx={{ flex: 1, overflowY: 'auto', p: 5 }}>
+    <Box
+      ref={scrollRef}
+      sx={{ flex: 1, overflowY: 'auto', p: 5 }}
+      // Lets the alert client skip a notification only when the agent is
+      // actually looking at the latest message.
+      onScroll={(e) => reportScroll(e.currentTarget)}
+    >
       <Box sx={{ textAlign: 'center', mb: 3 }}>
         {loading ? <CircularProgress size={20} /> : null}
 
@@ -173,10 +181,9 @@ const ThreadLog = ({
       </Box>
 
       {messages.map((msg) => {
-        // `direction` is the authority, not the sender id: on a channel, a
-        // message the operator typed on their own phone is outbound even though
-        // its sender is neither our bot nor an agent.
-        const isSender = msg.direction === 'outbound';
+        // WhatsApp-style: the visitor on the left, everything the org sends
+        // (bot, AI, flow, agent) on the right.
+        const isSender = isOrgMessage(msg);
         const time = msg.time ? new Date(msg.time) : null;
         const hasOmittedMedia = !!msg.media && msg.media.omitted;
         const mediaUrl = msg.media?.url;

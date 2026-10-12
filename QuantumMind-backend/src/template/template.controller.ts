@@ -21,6 +21,17 @@ import { UpdateConfigDto } from './dto/update-config.dto';
 import { UpdateInstanceConfigDto } from './dto/update-instance-config.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { TemplateService } from './template.service';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { ORG_STAFF, Role } from 'src/common/enums/role.enum';
+
+/**
+ * The template CATALOG is shared by every tenant, so every catalog write
+ * (create/update/config defaults/publish/unpublish/archive/duplicate/version/
+ * rollback/delete) is SUPER_ADMIN-only. Organizations read the catalog and
+ * manage only their own per-bot overrides via `instance-config`.
+ */
+const CATALOG_ADMIN = Roles(Role.SUPER_ADMIN);
+const CATALOG_READ = Roles(Role.SUPER_ADMIN, ...ORG_STAFF);
 
 type MulterFiles = {
   template?: Express.Multer.File[];
@@ -33,6 +44,7 @@ type MulterFiles = {
 export class TemplateController {
   constructor(private readonly templateService: TemplateService) {}
 
+  @CATALOG_ADMIN
   @Post()
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(
@@ -56,16 +68,19 @@ export class TemplateController {
     );
   }
 
+  @CATALOG_READ
   @Get()
   async findAll(@Query() query: SearchTemplateDto) {
     return await this.templateService.findAll(query);
   }
 
+  @CATALOG_READ
   @Get('params')
   getParams() {
     return this.templateService.getParams();
   }
 
+  @CATALOG_READ
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return await this.templateService.findOne(id);
@@ -92,6 +107,7 @@ export class TemplateController {
   }
 
   // Catalog-wide defaults (admin only).
+  @CATALOG_ADMIN
   @Patch(':id/config')
   async updateConfig(
     @Param('id') id: string,
@@ -102,6 +118,7 @@ export class TemplateController {
   }
 
   // One customer's overrides for this template.
+  @Roles(...ORG_STAFF)
   @Patch(':id/instance-config')
   async updateInstanceConfig(
     @Param('id') id: string,
@@ -117,6 +134,7 @@ export class TemplateController {
     );
   }
 
+  @CATALOG_ADMIN
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -126,26 +144,31 @@ export class TemplateController {
     return await this.templateService.update(id, updateTemplateDto, user);
   }
 
+  @CATALOG_ADMIN
   @Post(':id/publish')
   async publish(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return await this.templateService.publish(id, user);
   }
 
+  @CATALOG_ADMIN
   @Post(':id/unpublish')
   async unpublish(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return await this.templateService.unpublish(id, user);
   }
 
+  @CATALOG_ADMIN
   @Post(':id/archive')
   async archive(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return await this.templateService.archive(id, user);
   }
 
+  @CATALOG_ADMIN
   @Post(':id/duplicate')
   async duplicate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return await this.templateService.duplicate(id, user);
   }
 
+  @CATALOG_ADMIN
   @Post(':id/version')
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(
@@ -165,6 +188,7 @@ export class TemplateController {
     );
   }
 
+  @CATALOG_ADMIN
   @Post(':id/rollback/:version')
   async rollback(
     @Param('id') id: string,
@@ -174,6 +198,7 @@ export class TemplateController {
     return await this.templateService.rollback(id, version, user);
   }
 
+  @CATALOG_ADMIN
   @Delete(':id')
   async remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return await this.templateService.softDelete(id, user);

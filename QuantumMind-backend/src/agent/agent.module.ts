@@ -7,6 +7,8 @@ import { AgentProviders } from './agent.provider';
 @Module({
   controllers: [AgentController],
   providers: [AgentService, ...AgentProviders],
-  exports: [AgentService],
+  // AgentProviders exported so TokenService can reload the Agent on refresh
+  // without depending on AgentService (avoids a provider cycle).
+  exports: [AgentService, ...AgentProviders],
 })
 export class AgentModule {}

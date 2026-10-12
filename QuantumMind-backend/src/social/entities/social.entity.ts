@@ -17,6 +17,18 @@ export type SocialDocument = Social & mongoose.Document;
   },
 })
 export class Social {
+  /**
+   * Owning tenant, derived server-side from the linked JarCube bot. One Social
+   * row = one connected platform account, counted against `maxPlatforms`.
+   */
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: any;
+
   @Prop()
   name: string;
 

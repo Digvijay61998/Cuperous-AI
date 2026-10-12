@@ -53,6 +53,7 @@ enum RecordSource {
   EMAIL
   CALENDAR
   TRACKING
+  CHAT
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +133,36 @@ model Contact {
 
   source RecordSource @default(MANUAL)
 
+  // --- chat capture (crm-incident-handover) --------------------------------
+  // Placeholder contact for an anonymous visitor who raised an incident; upgraded
+  // in place or merged once identified (R20).
+  isAnonymous     Boolean  @default(false)
+  // Digits + leading "+", 7-15 digits. Matching key for phone (R2.2).
+  phoneNormalized String?
+  // Mongo Visitor ids linked to this person (no FK; R3.1, R3.5).
+  visitorIds      String[] @default([])
+  // Extra emails/phones the visitor chose to keep ("Keep both", R17.3).
+  altIdentifiers  Json?
+  // Which writer last set each field ({ email: "human" | "chat" ... }) so chat
+  // never overwrites a human edit (R17.6).
+  fieldSources    Json?
+  // One rolling AI-maintained Visitor_Profile (D9, R18). Replaces transcripts.
+  profile         Json?
+  profileVersion  Int      @default(0)
+  // NOTE: a partial unique index on ("organizationId", lower(email)) WHERE
+  // "archivedAt" IS NULL AND email IS NOT NULL is created by raw SQL in
+  // migration 20261008120000_crm_incident_profile (not expressible here).
+
+  // --- capture everywhere (crm-plugins-service-desk) -----------------------
+  // Where the contact was first captured: widget_form, widget_chat, template,
+  // whatsapp, whatsapp_web, telegram, facebook, agent. Set on create only (R5).
+  sourceChannel String?
+  // Every email / phone / platform id this person has given (R21, R22). The
+  // Current email/phone are the `email` / `phone` columns above.
+  identifiers   ContactIdentifier[]
+  // Customer requests raised by or for this person (R9).
+  serviceRequests ServiceRequest[]
+
   enrichmentStatus EnrichmentStatus @default(PENDING)
   enrichedAt       DateTime?
   enrichmentError  String?
@@ -150,11 +181,227 @@ model Contact {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, email])
+  @@index([organizationId, phoneNormalized])
   @@index([organizationId, companyId])
   @@index([organizationId, ownerId])
   @@index([organizationId, lastActivityAt])
   @@index([organizationId, archivedAt])
+  @@index([organizationId, sourceChannel])
   @@map("contact")
+}
+
+// ---------------------------------------------------------------------------
+// Service desk (crm-plugins-service-desk R9–R16)
+//
+// Service Requests live here (not in Mongo) from this release on (D1). Bot,
+// conversation, visitor, incident and user ids are Mongo ids as plain strings
+// (no FK); the contact is a real FK.
+// ---------------------------------------------------------------------------
+
+enum StageCategory {
+  OPEN
+  IN_PROGRESS
+  ON_HOLD
+  DONE
+}
+
+enum ServiceRequestPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ServiceRequestEventType {
+  CREATED
+  STAGE_CHANGED
+  ASSIGNED
+  PRIORITY_CHANGED
+  EDITED
+  COMMENTED
+  REOPENED
+  SUMMARY_GENERATED
+  CONTACT_LINKED
+}
+
+// A board column, configurable per org (R10).
+model ServiceRequestStage {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  color          String?
+  category       StageCategory
+  position       Int
+  isDefault      Boolean       @default(false)
+  archivedAt     DateTime?
+
+  requests ServiceRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, position])
+  @@map("serviceRequestStage")
+}
+
+model ServiceRequest {
+  id             String @id @default(cuid())
+  organizationId String
+  // Human reference shown to visitors: SR_ + 6 characters (R9.4).
+  ref            String
+
+  subject     String
+  description String?
+
+  stageId       String
+  stage         ServiceRequestStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  // Order inside the column; fractional so a move writes one row (R11.4).
+  boardPosition Float
+  priority      ServiceRequestPriority @default(MEDIUM)
+  emergency     Boolean                @default(false)
+  tags          String[]               @default([])
+
+  contactId    String?
+  contact      Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // Mongo user id (no FK); name denormalised for the board cards.
+  assigneeId   String?
+  assigneeName String?
+  // Mongo user id of the creator; null = created by chat.
+  createdById  String?
+
+  source         String // chat | dashboard | api
+  channel        String?
+  // Null for a request the team logs by hand without a bot (phone call, email).
+  botId          String?
+  botName        String?
+  conversationId String?
+  visitorId      String?
+  // At most one request per incident (R9.5).
+  incidentId     String? @unique
+
+  // { overview, customerAsk, actionsTaken, nextStep, generatedAt, ai } (R15).
+  summary      Json?
+  summaryError String?
+  // Copy of the chat so it survives chat deletion (R16).
+  transcript   Json?
+  transcriptAt DateTime?
+
+  stageChangedAt  DateTime  @default(now())
+  firstResponseAt DateTime?
+  closedAt        DateTime?
+
+  events   ServiceRequestEvent[]
+  comments ServiceRequestComment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, ref])
+  @@index([organizationId, stageId, boardPosition])
+  @@index([organizationId, assigneeId])
+  @@index([organizationId, contactId])
+  @@index([organizationId, conversationId])
+  @@index([organizationId, visitorId])
+  @@index([organizationId, botId, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, updatedAt])
+  @@map("serviceRequest")
+}
+
+// History of a request (R14.4).
+model ServiceRequestEvent {
+  id               String                  @id @default(cuid())
+  organizationId   String
+  serviceRequestId String
+  serviceRequest   ServiceRequest          @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  type             ServiceRequestEventType
+  // Mongo user id; null = system / chat.
+  actorId          String?
+  actorName        String?
+  from             Json?
+  to               Json?
+  createdAt        DateTime                @default(now())
+
+  @@index([serviceRequestId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("serviceRequestEvent")
+}
+
+// Internal notes, never shown to the visitor (R14.3).
+model ServiceRequestComment {
+  id               String         @id @default(cuid())
+  organizationId   String
+  serviceRequestId String
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  authorId         String
+  authorName       String?
+  body             String
+  editedAt         DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime       @default(now())
+
+  @@index([serviceRequestId, createdAt])
+  @@map("serviceRequestComment")
+}
+
+// ---------------------------------------------------------------------------
+// CRM plugins (crm-plugins-service-desk R6, R7)
+//
+// Per-org state of a CRM module. The catalogue itself (key, label, icon,
+// dependencies, defaults) lives in code (src/crm/plugins/plugin-registry.ts);
+// a missing row means "the registry default". Unknown keys are ignored.
+// ---------------------------------------------------------------------------
+
+model CrmPluginSetting {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  enabled        Boolean
+  position       Int      @default(0)
+  config         Json?
+  // Mongo user id of who last changed it (no FK).
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@map("crmPluginSetting")
+}
+
+// ---------------------------------------------------------------------------
+// Contact identifiers (crm-plugins-service-desk R21, R22)
+//
+// One row per email / phone / platform account id a contact has given, so a
+// person who changes their email stays one contact and the old value still
+// matches. `value` is the match key (lower-case email, phone digits, platform
+// id); one active owner per identifier per org is enforced by the unique key
+// and by the resolver (a row of an archived contact is taken over).
+// ---------------------------------------------------------------------------
+
+enum IdentifierKind {
+  EMAIL
+  PHONE
+  TELEGRAM
+  FACEBOOK
+  WHATSAPP_LID
+}
+
+model ContactIdentifier {
+  id             String         @id @default(cuid())
+  organizationId String
+  contactId      String
+  contact        Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind           IdentifierKind
+  value          String
+  display        String
+  // Capture source of the last time it was given.
+  source         String?
+  firstSeenAt    DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+
+  @@unique([organizationId, kind, value])
+  @@index([contactId])
+  @@map("contactIdentifier")
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +513,8 @@ enum FieldEntity {
   COMPANY
   CONTACT
   DEAL
+  // Saved views of the service desk board only (no custom fields yet).
+  SERVICE_REQUEST
 }
 
 enum FieldType {

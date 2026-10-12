@@ -1,8 +1,13 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import mongoose, { Model } from "mongoose";
 import { BOTS_PROVIDER } from "src/bots/constant";
 import { BotDocument } from "src/bots/entities";
-import { isCrossOrg, scopedFilter, TenantContext } from "./tenant-context";
+import {
+  isCrossOrg,
+  ownsResource,
+  scopedFilter,
+  TenantContext,
+} from "./tenant-context";
 
 /**
  * Resolves the set of bots owned by the caller's organization.
@@ -38,18 +43,76 @@ export class TenantScopeService {
     return bots.map((b: any) => b._id as mongoose.Types.ObjectId);
   }
 
+  /** Same as {@link orgBotIds} but as hex strings (for string-typed botId fields). */
+  async orgBotIdStrings(user?: TenantContext): Promise<string[] | null> {
+    const ids = await this.orgBotIds(user);
+    return ids === null ? null : ids.map((id) => id.toString());
+  }
+
   /**
    * A Mongo match fragment that pins a `bot`-referencing collection to the
    * caller's organization. Empty (`{}`) for SUPER_ADMIN.
    *
    * @param field the field on the target collection that references the bot.
+   * @param asString match against string ids (for `botId: string` fields).
    */
   async orgBotMatch(
     user?: TenantContext,
     field = "bot",
+    asString = false,
   ): Promise<Record<string, any>> {
     const ids = await this.orgBotIds(user);
     if (ids === null) return {};
-    return { [field]: { $in: ids } };
+    return {
+      [field]: { $in: asString ? ids.map((i) => i.toString()) : ids },
+    };
+  }
+
+  /**
+   * Resolves a bot by `_id` (or custom `botId`) and asserts the caller's org
+   * owns it. Throws 404 for missing AND cross-org bots so existence cannot be
+   * probed. Returns the bot's `_id` and `organizationId`.
+   */
+  async assertBotInOrg(
+    user: TenantContext | undefined,
+    botRef: any,
+  ): Promise<{ _id: mongoose.Types.ObjectId; organizationId: any }> {
+    const ref = botRef?._id ?? botRef;
+    if (!ref) throw new NotFoundException("Bot not found");
+    const or: Record<string, any>[] = [{ botId: String(ref) }];
+    if (mongoose.isValidObjectId(ref)) or.unshift({ _id: ref });
+    const bot = await this.botModel
+      .findOne({ $or: or })
+      .select("_id organizationId")
+      .lean();
+    if (!bot || !ownsResource(user, (bot as any).organizationId?.toString())) {
+      throw new NotFoundException("Bot not found");
+    }
+    return bot as any;
+  }
+
+  /** True when the bot exists and belongs to the caller's org (no throw). */
+  async isBotInOrg(user: TenantContext | undefined, botRef: any) {
+    try {
+      await this.assertBotInOrg(user, botRef);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The organizationId owning a bot, or null when unknown. */
+  async orgIdForBot(botRef: any): Promise<string | null> {
+    const ref = botRef?._id ?? botRef;
+    if (!ref) return null;
+    const or: Record<string, any>[] = [{ botId: String(ref) }];
+    if (mongoose.isValidObjectId(ref)) or.unshift({ _id: ref });
+    const bot = await this.botModel
+      .findOne({ $or: or })
+      .select("organizationId")
+      .lean();
+    return (bot as any)?.organizationId
+      ? String((bot as any).organizationId)
+      : null;
   }
 }

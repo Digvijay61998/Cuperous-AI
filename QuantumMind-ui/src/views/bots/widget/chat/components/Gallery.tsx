@@ -68,7 +68,7 @@ const Gallery = ({
     const message = {
       value: value,
       type: "text",
-      senderId: "visitor_id_1010",
+      senderId: "preview_visitor",
       time: new Date().toISOString(),
       id: new Date().getTime(),
     };

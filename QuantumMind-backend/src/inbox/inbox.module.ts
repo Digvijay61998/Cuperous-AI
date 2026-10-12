@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { InboxEventsService } from './inbox-events.service';
 import { InboxController } from './inbox.controller';
 import { InboxService } from './inbox.service';
+import { WidgetInboxBridgeService } from './widget-inbox-bridge.service';
 
 /**
  * Omnichannel inbox: read API (InboxService) + realtime fan-out
@@ -20,7 +21,7 @@ import { InboxService } from './inbox.service';
 @Global()
 @Module({
   controllers: [InboxController],
-  providers: [InboxService, InboxEventsService],
+  providers: [InboxService, InboxEventsService, WidgetInboxBridgeService],
   exports: [InboxService, InboxEventsService],
 })
 export class InboxModule {}

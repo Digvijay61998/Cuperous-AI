@@ -20,7 +20,9 @@ import { useDispatch, useSelector } from 'react-redux';
 import { getInitials } from 'src/@core/utils/get-initials';
 import { AppDispatch, RootState } from 'src/store';
 // ** Types Imports
-import { Button, CircularProgress } from '@mui/material';
+import { Alert, Button, CircularProgress } from '@mui/material';
+import EarlierIncidents from './EarlierIncidents';
+import VisitorProfilePanel from 'src/views/crm/VisitorProfilePanel';
 import {
   FormattedChatsType,
   MessageGroupType,
@@ -32,6 +34,7 @@ import Icon from 'src/@core/components/icon'
 
 import Message from '../components/Message';
 import Video from '../components/Video';
+import { reportScroll } from 'src/services/alerts/chatViewport';
 const PerfectScrollbar = styled(PerfectScrollbarComponent)<
   ScrollBarProps & { ref: Ref<unknown> }
 >(({ theme }) => ({
@@ -40,8 +43,10 @@ const PerfectScrollbar = styled(PerfectScrollbarComponent)<
 
 const ChatLog = (props: any) => {
   // ** Props
-  const {isLoadingOldChat} = useSelector((state: RootState) => state.conversations);
+  const { isLoadingOldChat, historyErrorById } = useSelector((state: RootState) => state.conversations);
   const { data, hidden, store, handleLoadOldChats } = props;
+  // R9.10: a failed load shows an error + Retry, never an empty chat.
+  const historyFailed = !!(data?._id && historyErrorById?.[String(data._id)]);
   const dispatch = useDispatch<AppDispatch>();
  
    // ** Ref
@@ -124,6 +129,9 @@ const ChatLog = (props: any) => {
           <Box
             key={index}
             sx={{
+              // Without display:flex, flexDirection is ignored and every group
+              // stacks on the left, so agent replies looked like visitor messages.
+              display: 'flex',
               flexDirection: !isSender ? 'row' : 'row-reverse',
               mb: index !== formattedChatData().length - 1 ? 4 : undefined,
             }}
@@ -226,13 +234,18 @@ const ChatLog = (props: any) => {
         <Box
           ref={chatArea}
           sx={{ p: 5, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}
+          onScroll={(e) => reportScroll(e.currentTarget)}
         >
           {children}
         </Box>
       );
     } else {
       return (
-        <PerfectScrollbar ref={chatArea} options={{ wheelPropagation: false }}>
+        <PerfectScrollbar
+          ref={chatArea}
+          options={{ wheelPropagation: false }}
+          onScrollY={(el: HTMLElement) => reportScroll(el)}
+        >
           {children}
         </PerfectScrollbar>
       );
@@ -242,6 +255,27 @@ const ChatLog = (props: any) => {
   return (
     <Box sx={{ height: 'calc(100% - 8.4375rem)' }}>
       <ScrollWrapper>
+        {historyFailed && !isLoadingOldChat && (
+          <Alert
+            severity="error"
+            sx={{ mb: 3 }}
+            action={
+              <Button color="inherit" size="small" onClick={handleLoadOldChats}>
+                Retry
+              </Button>
+            }
+          >
+            The conversation history could not be loaded.
+          </Alert>
+        )}
+        {data?.historyLoaded && <VisitorProfilePanel profile={data.profile ?? null} />}
+        {data?.historyLoaded && (
+          <EarlierIncidents
+            earlier={data.earlier}
+            hasMore={data.earlierHasMore}
+            hasContact={!!data.incident?.crmContactId}
+          />
+        )}
         {/* load old chat button */}
          {isLoadingOldChat ? 
          (

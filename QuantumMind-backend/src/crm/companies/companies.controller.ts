@@ -10,8 +10,11 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
+import { UseGuards } from "@nestjs/common";
 import { CurrentUser } from "src/util/current-user.decorator";
 import { OrgId } from "../common/org-id.decorator";
+import { CrmPluginGuard } from "../plugins/crm-plugin.guard";
+import { RequiresCrmPlugin } from "../plugins/requires-crm-plugin.decorator";
 import { CompaniesService } from "./companies.service";
 import {
   BulkAssignCompanyOwnerDto,
@@ -22,6 +25,8 @@ import { ListCompaniesDto } from "./dto/list-companies.dto";
 import { UpdateCompanyDto } from "./dto/update-company.dto";
 
 @Controller("crm/companies")
+@UseGuards(CrmPluginGuard)
+@RequiresCrmPlugin("companies")
 @ApiTags("CRM Companies")
 @ApiSecurity("bearer")
 export class CompaniesController {

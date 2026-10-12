@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
+import mongoose from 'mongoose';
 import { AgentService } from 'src/agent/agent.service';
 import { RedisPropagatorService } from 'src/redis-propagate/redis-propagate.service';
 import { InboxMessageView, InboxThreadView } from './inbox.mapper';
@@ -8,6 +10,7 @@ export const INBOX_SOCKET_MESSAGE = 'inbox:message';
 export const INBOX_SOCKET_THREAD_UPDATED = 'inbox:thread-updated';
 export const INBOX_SOCKET_MESSAGE_STATUS = 'inbox:message-status';
 export const INBOX_SOCKET_CHANNELS_CHANGED = 'inbox:channels-changed';
+export const INBOX_SOCKET_AGENT_TYPING = 'inbox:agent-typing';
 
 /**
  * Realtime fan-out for the omnichannel inbox.
@@ -82,6 +85,26 @@ export class InboxEventsService {
   }
 
   /**
+   * Emit to an explicit set of dashboard users (e.g. a Handover_Alert's stored
+   * recipients). Same transport and failure semantics as `broadcast`.
+   */
+  emitToUsers(
+    userIds: string[],
+    event: string,
+    data: Record<string, any>,
+  ): void {
+    for (const userId of new Set(userIds.filter(Boolean))) {
+      try {
+        this.redisPropagatorService.propagateEvent({ userId, event, data });
+      } catch (error) {
+        this.logger.error(
+          `Inbox emit ${event} to ${userId} failed: ${error?.message}`,
+        );
+      }
+    }
+  }
+
+  /**
    * A message landed on a channel thread (either direction).
    *
    * `thread` travels with the message so the client can create a sidebar row for
@@ -118,6 +141,46 @@ export class InboxEventsService {
       threadId: params.thread.id,
       thread: params.thread,
     });
+  }
+
+  /**
+   * The owner of a widget conversation is typing (R8.6). Sent to the bot's
+   * inbox recipients except the typist; clients show "<name> is replying…"
+   * and clear it after 5 s without a new signal.
+   */
+  @OnEvent('inbox.agent.typing', { async: true })
+  async onAgentTyping(p: {
+    visitorId: string;
+    conversationId?: string;
+    threadId?: string;
+    agentId: string;
+    name: string;
+  }): Promise<void> {
+    try {
+      const botId = p.conversationId
+        ? await this.botIdForConversation(p.conversationId)
+        : undefined;
+      if (!botId) return;
+      const ids = (await this.agentService.findInboxRecipientIds(botId)).filter(
+        (id) => String(id) !== String(p.agentId),
+      );
+      this.emitToUsers(ids, INBOX_SOCKET_AGENT_TYPING, {
+        threadId: p.threadId,
+        conversationId: p.conversationId,
+        visitorId: p.visitorId,
+        agentId: p.agentId,
+        name: p.name,
+      });
+    } catch (error) {
+      this.logger.warn(`Typing fan-out failed: ${error?.message}`);
+    }
+  }
+
+  private async botIdForConversation(conversationId: string): Promise<string | undefined> {
+    const Conversation: any = mongoose.models['Conversation'];
+    if (!Conversation || !mongoose.isValidObjectId(conversationId)) return undefined;
+    const c: any = await Conversation.findById(conversationId).select('bot').lean();
+    return c?.bot ? String(c.bot) : undefined;
   }
 
   /**

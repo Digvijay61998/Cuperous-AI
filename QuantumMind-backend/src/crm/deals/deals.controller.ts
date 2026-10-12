@@ -10,8 +10,11 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
+import { UseGuards } from "@nestjs/common";
 import { CurrentUser } from "src/util/current-user.decorator";
 import { OrgId } from "../common/org-id.decorator";
+import { CrmPluginGuard } from "../plugins/crm-plugin.guard";
+import { RequiresCrmPlugin } from "../plugins/requires-crm-plugin.decorator";
 import { DealsService } from "./deals.service";
 import { CreateDealDto } from "./dto/create-deal.dto";
 import {
@@ -24,6 +27,8 @@ import { ListDealsDto } from "./dto/list-deals.dto";
 import { UpdateDealDto } from "./dto/update-deal.dto";
 
 @Controller("crm/deals")
+@UseGuards(CrmPluginGuard)
+@RequiresCrmPlugin("deals")
 @ApiTags("CRM Deals")
 @ApiSecurity("bearer")
 export class DealsController {

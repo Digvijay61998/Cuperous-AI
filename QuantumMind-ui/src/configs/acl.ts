@@ -23,7 +23,7 @@ const defineRulesFor = (role: string, subject: string) => {
   // API); it only unblocks page rendering. Fine-grained tab/route access is
   // handled by helper/Access.ts. All platform roles may render pages.
   if (
-    ['super_admin', 'org_admin', 'org_manager', 'agent', 'admin'].includes(role)
+    ['super_admin', 'org_admin', 'org_manager', 'agent'].includes(role)
   ) {
     can('manage', 'all')
   } else if (role === 'client') {

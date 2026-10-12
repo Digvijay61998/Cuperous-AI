@@ -1,5 +1,6 @@
 // ** React Imports
-import { SyntheticEvent, useState } from 'react';
+import { SyntheticEvent, useEffect, useState } from 'react';
+import { ownershipErrorText } from 'src/views/apps/inbox/ownership';
 
 // ** MUI Imports
 import Box, { BoxProps } from '@mui/material/Box';
@@ -41,6 +42,29 @@ const SendMsgForm = (props: any) => {
   const { store, dispatch, sendMsg, socket, visitorId, activeChatId } = props;
   // ** State
   const [msg, setMsg] = useState<string>('');
+  /**
+   * Set when the server refused a reply because another agent owns this chat
+   * (crm-incident-handover R7.2, R8.1, R8.9). Disables the composer and names
+   * the owner; reset when the agent opens a different chat.
+   */
+  const [blockedBy, setBlockedBy] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBlockedBy(null);
+  }, [visitorId]);
+
+  useEffect(() => {
+    if (!socket?.onChatMessageRejected) return;
+    const sub = socket.onChatMessageRejected().subscribe((e: any) => {
+      if (e?.reason !== 'not_thread_owner' || String(e?.visitorId) !== String(visitorId)) return;
+      const text = ownershipErrorText(e) || 'Another agent is handling this chat';
+      setBlockedBy(text);
+      toast.error(text);
+      // Nothing was delivered: put the text back (R8.9).
+      if (typeof e?.text === 'string') setMsg((current) => current || e.text);
+    });
+    return () => sub.unsubscribe();
+  }, [socket, visitorId]);
 
   // const handleSendMsg = (e: SyntheticEvent) => {
   //   e.preventDefault()
@@ -52,6 +76,7 @@ const SendMsgForm = (props: any) => {
 
   const handleSendMsg = (e: SyntheticEvent) => {
     e.preventDefault();
+    if (blockedBy || !msg.trim()) return;
     const message = {
       message: msg,
       type: 'text',
@@ -290,7 +315,9 @@ const ActionComponent = () => {
             fullWidth
             value={msg}
             size="small"
-            placeholder="Type your message here…"
+            disabled={!!blockedBy}
+            placeholder={blockedBy || 'Type your message here…'}
+            inputProps={{ 'aria-label': blockedBy || 'Message' }}
             onChange={(e) => setMsg(e.target.value)}
             sx={{
               '& .Mui-focused': { boxShadow: 0 },

@@ -17,15 +17,29 @@ export const TelegramUserMiddleware =
           description: 'Bad Request: chat not found',
         });
       const user = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+      const name = [user.user.first_name, user.user.last_name]
+        .filter(Boolean)
+        .join(' ');
+      // Keyed by the numeric user id: permanent per account, unlike the
+      // optional, changeable @username. With `username` undefined every
+      // handle-less user matched the same visitor (crm-plugins-service-desk R22).
+      const telegramId = String(ctx.from.id);
 
       const visitor = await chatInitializerService.initializeChat(
         {
-          name: `${user.user.first_name} ${user.user.last_name}`,
-          username: user.user.username,
+          name: name || user.user.username || 'Telegram user',
+          username: telegramId,
           platform: PlatformEnum.TELEGRAM,
           bot: jarcubeBotId,
         },
         jarcubeBotId,
+        {
+          source: 'telegram',
+          details: {
+            name: name || user.user.username,
+            channel: { kind: 'TELEGRAM', value: telegramId },
+          },
+        },
       );
 
       ctx.visitorId = visitor.visitorId;

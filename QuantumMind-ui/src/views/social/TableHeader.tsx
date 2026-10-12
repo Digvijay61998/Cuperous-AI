@@ -12,11 +12,14 @@ interface TableHeaderProps {
   buttonName: string;
   toggle: () => void;
   handleFilter: (val: string) => void;
+  /** Disable the add button (e.g. platform quota reached). */
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 const TableHeader = (props: TableHeaderProps) => {
   // ** Props
-  const { title, buttonName, handleFilter, toggle, value } = props;
+  const { title, buttonName, handleFilter, toggle, value, disabled, disabledReason } = props;
 
   return (
     <Box
@@ -44,7 +47,10 @@ const TableHeader = (props: TableHeaderProps) => {
       <Box
         sx={{ gap: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}
       >
-        <Button onClick={toggle} variant="contained">
+        {disabled && disabledReason && (
+          <span style={{ fontSize: '0.85rem', opacity: 0.8 }}>{disabledReason}</span>
+        )}
+        <Button onClick={toggle} variant="contained" disabled={disabled}>
           {buttonName}
         </Button>
       </Box>

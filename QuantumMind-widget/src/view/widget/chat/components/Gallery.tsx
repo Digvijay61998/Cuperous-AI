@@ -69,6 +69,7 @@ const Gallery = ({
         value: item.value,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -82,6 +83,7 @@ const Gallery = ({
         value: item.title,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };

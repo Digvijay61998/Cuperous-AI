@@ -118,7 +118,8 @@ export class WhatsappService {
             bot: jarcubeBotId,
             platform: PlatformEnum.WHATSAPP,
           },
-          jarcubeBotId
+          jarcubeBotId,
+          { source: "whatsapp", details: { name: from.name, phone: from.phone } }
         );
 
         this.socketStateService.updateUserData(visitor.visitorId, {

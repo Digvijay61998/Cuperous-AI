@@ -9,7 +9,16 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import SummarizeRequest, SummarizeResponse
+from app.schemas import (
+    ServiceRequestSummaryRequest,
+    ServiceRequestSummaryResponse,
+    SummarizeRequest,
+    SummarizeResponse,
+)
+from app.services.service_request_summary import (
+    ServiceRequestSummaryError,
+    ServiceRequestSummaryService,
+)
 from app.services.summarize import SummarizeService
 
 logger = logging.getLogger(__name__)
@@ -30,3 +39,16 @@ def summary(request: SummarizeRequest):
     except Exception as e:  # noqa: BLE001
         logger.exception("Summarize failed")
         raise HTTPException(status_code=500, detail=f"Summarize failed: {e}")
+
+
+@router.post("/service-request-summary", response_model=ServiceRequestSummaryResponse)
+def service_request_summary(request: ServiceRequestSummaryRequest):
+    """Summary of one service request (crm-plugins-service-desk R15). 502 = keep the old one."""
+    try:
+        return ServiceRequestSummaryService().summarize(request)
+    except ServiceRequestSummaryError as exc:
+        logger.warning("Service request summary rejected: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Summary rejected: {exc}")
+    except Exception as exc:  # noqa: BLE001 - provider down, timeout, etc.
+        logger.exception("Service request summary failed")
+        raise HTTPException(status_code=502, detail=f"Summary failed: {exc}")

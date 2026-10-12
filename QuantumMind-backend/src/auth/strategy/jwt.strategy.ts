@@ -11,6 +11,8 @@ export interface JwtPayload {
   _id: string;
   /** Tenant the user belongs to. `null` for SUPER_ADMIN (org-independent). */
   organizationId: string | null;
+  /** Set only on impersonation tokens: the SUPER_ADMIN acting as this user. */
+  impersonatedBy?: string;
 }
 
 @Injectable()
@@ -29,6 +31,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       role: payload.role,
       organizationId: payload.organizationId ?? null,
+      ...(payload.impersonatedBy
+        ? { impersonatedBy: payload.impersonatedBy }
+        : {}),
     };
   }
 }

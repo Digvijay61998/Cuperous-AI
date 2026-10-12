@@ -1,3 +1,5 @@
+import withCrmPlugin from 'src/views/crm/plugins/withCrmPlugin';
+
 // ** React Imports
 import { useCallback, useEffect, useState } from 'react';
 
@@ -264,4 +266,4 @@ const CrmCompanies = () => {
   );
 };
 
-export default CrmCompanies;
+export default withCrmPlugin(CrmCompanies, 'companies', 'Companies', 'bx:buildings');

@@ -19,6 +19,12 @@ import { FeedbackForEnum } from "src/feedback/enums/feedback-for.enum";
 import { FeedbackService } from "src/feedback/feedback.service";
 import { JarCubeService } from "./jarcube.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
+import { ORG_ROLES } from "src/common/enums/role.enum";
+import { AgentService } from "src/agent/agent.service";
+import { CONVERSATION_ENDED_EVENT, ENDED_NOTICE } from "src/message-handler/closure";
+
+/** At most one typing signal per agent and visitor per this window (R8.6). */
+export const AGENT_TYPING_THROTTLE_MS = 3000;
 
 @UseInterceptors(RedisPropagatorInterceptor)
 @WebSocketGateway({
@@ -35,7 +41,8 @@ export class JarCubeGateway implements OnGatewayConnection {
     private readonly conversationService: ConversationService,
     private readonly feedbackService: FeedbackService,
     private readonly jarcubeService: JarCubeService,
-    private readonly eventEmmitter: EventEmitter2
+    private readonly eventEmmitter: EventEmitter2,
+    private readonly agentService: AgentService
   ) {}
 
   @WebSocketServer() server: Server;
@@ -61,6 +68,15 @@ export class JarCubeGateway implements OnGatewayConnection {
 
     const { handledByAgent, assignedAgentId, platform } = userData;
 
+    // crm-incident-handover R14.6: the conversation is closed. Nothing more is
+    // processed or stored; the widget is (re)told it is in the Ended_State.
+    if (role === "visitor" && userData.conversationEnded) {
+      return of({
+        event: CONVERSATION_ENDED_EVENT,
+        data: { conversationId: userData.conversationId, notice: ENDED_NOTICE },
+      });
+    }
+
     if (data.event === "chat-message-bot") {
       if (handledByAgent && assignedAgentId && role === "visitor") {
         this.messageHandlerService.sendMessageToAgent(
@@ -81,6 +97,36 @@ export class JarCubeGateway implements OnGatewayConnection {
         );
       }
     } else if (data.event === "chat-message-from-agent") {
+      // Only org users may speak "as the agent", and only to a visitor whose
+      // live conversation belongs to their organization.
+      if (!(await this.canControlVisitor(client, data?.data?.to))) {
+        return of({ event: "error", data: { message: "Not allowed" } });
+      }
+      // Owner-only replies (crm-incident-handover R7.2): a visitor handled by
+      // another agent gets nothing from this one.
+      const target = this.socketStateService.getUserData(data.data.to);
+      if (
+        target?.handledByAgent &&
+        target.assignedAgentId &&
+        String(target.assignedAgentId) !== String(userId)
+      ) {
+        // Named rejection the legacy agent view can show (R8.9). The owner
+        // name is a display name only; ids never leave the org (checked above).
+        const owner: any = await this.agentService
+          .findOne(String(target.assignedAgentId))
+          .catch(() => null);
+        const ownerName = (owner?.name || "").trim() || owner?.email || "Another agent";
+        return of({
+          event: "chat-message-rejected",
+          data: {
+            message: `${ownerName} is handling this chat`,
+            reason: "not_thread_owner",
+            ownerName,
+            visitorId: data.data.to,
+            text: data.data.message,
+          },
+        });
+      }
       this.messageHandlerService.emitEventToUser(
         data.data.to,
         "chat-message-bot",
@@ -89,6 +135,7 @@ export class JarCubeGateway implements OnGatewayConnection {
             type: data.data?.type || "text",
             value: data.data.message,
             senderId: userId,
+            senderRole: "agent",
             time: new Date().toISOString(),
             id: generateId("message", 10),
           },
@@ -153,27 +200,103 @@ export class JarCubeGateway implements OnGatewayConnection {
     await this.feedbackService.create(dataForFeedback);
   }
 
+  /**
+   * Agent-side control events must come from an org user, and the target
+   * conversation must belong to one of that user's org bots. Visitors and
+   * cross-tenant ids are ignored silently (no existence oracle).
+   */
+  private async canControlConversation(
+    client: AuthenticatedSocket,
+    conversationId?: string
+  ): Promise<boolean> {
+    const auth: any = client?.auth;
+    if (!auth || !(ORG_ROLES as string[]).includes(auth.role)) return false;
+    if (!conversationId) return false;
+    try {
+      await this.conversationService.getConversationById(conversationId, {
+        _id: auth._id ?? auth.userId,
+        role: auth.role,
+        organizationId: auth.organizationId ?? null,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Same check, resolving the conversation from the visitor's live state. */
+  private async canControlVisitor(
+    client: AuthenticatedSocket,
+    visitorId?: string
+  ): Promise<boolean> {
+    if (!visitorId) return false;
+    const state = this.socketStateService.getUserData(visitorId);
+    return this.canControlConversation(client, state?.conversationId);
+  }
+
+  /** Last typing signal per agent+visitor, for the 3 s throttle (R8.6). */
+  private readonly typingAt = new Map<string, number>();
+
+  /**
+   * The owner is typing (crm-incident-handover R8.6–R8.8). Throttled to one
+   * signal per 3 s per agent and visitor; only the owner's signal counts.
+   * Fans out to the other dashboard viewers and, when the bot's
+   * `typingIndicator` is on, to the visitor's widget. Clients clear the
+   * indicator 5 s after the last signal or on the next message.
+   */
+  @SubscribeMessage("agent-typing")
+  async handleAgentTyping(client: AuthenticatedSocket, data: any) {
+    const auth: any = client?.auth;
+    const agentId = String(auth?._id ?? auth?.userId ?? "");
+    const visitorId = data?.data?.visitorId ? String(data.data.visitorId) : "";
+    if (!agentId || !visitorId) return;
+    if (!(await this.canControlVisitor(client, visitorId))) return;
+    const s = this.socketStateService.getUserData(visitorId);
+    if (!s?.handledByAgent || String(s.assignedAgentId) !== agentId) return;
+
+    const key = `${agentId}:${visitorId}`;
+    const now = Date.now();
+    if (now - (this.typingAt.get(key) ?? 0) < AGENT_TYPING_THROTTLE_MS) return;
+    this.typingAt.set(key, now);
+    if (this.typingAt.size > 5000) {
+      for (const [k, t] of this.typingAt) if (now - t > 60_000) this.typingAt.delete(k);
+    }
+
+    this.eventEmmitter.emit("inbox.agent.typing", {
+      visitorId,
+      conversationId: s.conversationId ? String(s.conversationId) : undefined,
+      threadId: data?.data?.threadId ? String(data.data.threadId) : undefined,
+      agentId,
+      name: auth?.name || auth?.email || "Agent",
+    });
+    if ((s.botSettings as any)?.typingIndicator) {
+      this.messageHandlerService.emitEventToUser(visitorId, "typing", { typing: true, agentId });
+    }
+  }
+
   @SubscribeMessage("end-conversation")
   async handleEndConversation(client: AuthenticatedSocket, data: any) {
-    if (data.data.conversationId)
-      return await this.jarcubeService.handleEndConversationByAgent(
-        data.data.conversationId,
-        data.data.visitorId
-      );
+    const conversationId = data?.data?.conversationId;
+    if (!(await this.canControlConversation(client, conversationId))) return;
+    return await this.jarcubeService.handleEndConversationByAgent(
+      conversationId,
+      data.data.visitorId
+    );
   }
 
   @SubscribeMessage("report-conversation")
   async handleReportConversation(client: AuthenticatedSocket, data: any) {
-    if (data.data.conversationId) {
-      return await this.jarcubeService.ReportConversation(
-        data.data.conversationId,
-        data.data.visitorId
-      );
-    }
+    const conversationId = data?.data?.conversationId;
+    if (!(await this.canControlConversation(client, conversationId))) return;
+    return await this.jarcubeService.ReportConversation(
+      conversationId,
+      data.data.visitorId
+    );
   }
 
   @SubscribeMessage("publish")
   async handlePublish(client: AuthenticatedSocket, data: any) {
+    if (!(await this.canControlVisitor(client, data?.data?.visitorId))) return;
     return await this.jarcubeService.PublishOfferOrAdvertisement(
       data.data.visitorId,
       data.data
@@ -182,18 +305,36 @@ export class JarCubeGateway implements OnGatewayConnection {
 
   @SubscribeMessage("send-transcript")
   async handleSendTranscript(client: AuthenticatedSocket, data: any) {
+    if (!(await this.canControlVisitor(client, data?.data?.visitorId))) return;
     return await this.jarcubeService.sendTranscriptToVisitor(data.data);
   }
 
   async handleConnection(client: AuthenticatedSocket, ...args: any[]) {
-    const { role } = client.auth;
-    if (role === "visitor") {
-      return await this.messageHandlerService.handleMessage(
-        "start",
-        client,
-        "text",
-        "en"
-      );
+    const { role, userId } = client.auth as any;
+    if (role !== "visitor") return;
+    // crm-incident-handover R9.3, R14.7: a resumed conversation, or one that
+    // already has messages, carries on where it was. No automatic "start"
+    // (no second welcome, no flow restart). The flag is consumed so a later
+    // fresh connection for a new conversation starts normally.
+    const s = this.socketStateService.getUserData(userId);
+    // R14.7: reconnecting to a closed conversation shows the Ended_State
+    // again and never sends "start".
+    if (s?.conversationEnded) {
+      client.emit(CONVERSATION_ENDED_EVENT, { conversationId: s.conversationId, notice: ENDED_NOTICE });
+      return;
     }
+    // A plain reconnect (network blip, second tab) of a conversation that is
+    // already past its start node also must not restart it.
+    const midFlow = !!s?.currentNode && !!s?.startNode && s.currentNode.id !== s.startNode.id;
+    if (s?.resumed || s?.hasHistory || midFlow || s?.handledByAgent) {
+      this.socketStateService.updateUserData(userId, { resumed: false, hasHistory: false });
+      return;
+    }
+    return await this.messageHandlerService.handleMessage(
+      "start",
+      client,
+      "text",
+      "en"
+    );
   }
 }

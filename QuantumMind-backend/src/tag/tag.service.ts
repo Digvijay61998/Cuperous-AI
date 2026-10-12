@@ -3,16 +3,25 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import mongoose, { Model } from 'mongoose';
 import { AdvertisementDocument } from 'src/advertisement/entities/advertisement.entity';
 import { AgentDocument } from 'src/agent/entities/agent.entity';
 import { BotDocument } from 'src/bots/entities';
+import {
+  assertOwnership,
+  isCrossOrg,
+  scopedFilter,
+  TenantContext,
+} from 'src/common/tenant/tenant-context';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import { OfferDocument } from 'src/offer/entities/offer.entity';
 import { QuestionDocument } from 'src/questions/entities/question.entity';
-import { TicketDocument } from 'src/tickets/entities/ticket.entity';
+import { CrmPrismaService } from 'src/crm/database/crm-prisma.service';
 import { getDaySubtitle } from 'src/util/get-subtitle';
 
 import { TAG_PROVIDER } from './constant';
@@ -28,7 +37,41 @@ export class TagService implements OnModuleInit {
     @Inject(TAG_PROVIDER)
     private readonly tagModel: Model<TagDocument>,
     private readonly configService: ConfigService,
+    private readonly tenantScope: TenantScopeService,
+    // Service Request counts per tag come from the CRM (crm-plugins-service-desk R19.1).
+    @Optional() private readonly crm?: CrmPrismaService,
   ) {}
+
+  /** Service Requests carrying `tag`, in the caller's org (all orgs for internal / SUPER_ADMIN). */
+  private serviceRequestCount(tag: string, user?: TenantContext): Promise<number> {
+    if (!this.crm) return Promise.resolve(0);
+    const orgId = user?.organizationId ? String(user.organizationId) : null;
+    if (user && !orgId && !isCrossOrg(user)) return Promise.resolve(0);
+    const db = orgId ? this.crm.forOrg(orgId) : this.crm.client;
+    return db.serviceRequest
+      .count({ where: { ...(orgId ? { organizationId: orgId } : {}), tags: { has: tag } } })
+      .catch(() => 0);
+  }
+
+  /**
+   * Visibility filter for tags. DEFAULT tags are platform-wide (seeded with
+   * `organizationId: null`) and visible to every org; CUSTOM tags are visible
+   * only to their owning org. SUPER_ADMIN and internal (no-user) callers are
+   * unscoped.
+   */
+  private visibleTagFilter(
+    user: TenantContext | undefined,
+    filter: Record<string, any> = {},
+  ): Record<string, any> {
+    if (!user || isCrossOrg(user)) return filter;
+    return {
+      ...filter,
+      $or: [
+        { organizationId: user.organizationId ?? null },
+        { type: TagTypesEnum.DEFAULT, organizationId: null },
+      ],
+    };
+  }
 
   async onModuleInit() {
     const tagList = this.configService.get('tags.defaultTags');
@@ -39,11 +82,17 @@ export class TagService implements OnModuleInit {
     } else Tags = tagList;
 
     Tags.forEach(async (tag: string) => {
-      const tagExist = await this.tagModel.findOne({ name: tag });
+      // Default tags are platform-wide: only look for an unowned one so an
+      // org's custom tag with the same name doesn't suppress the default.
+      const tagExist = await this.tagModel.findOne({
+        name: tag,
+        organizationId: null,
+      });
       if (!tagExist) {
         await this.tagModel.create({
           name: tag,
           type: TagTypesEnum.DEFAULT,
+          organizationId: null,
         });
       }
     });
@@ -51,12 +100,13 @@ export class TagService implements OnModuleInit {
     this.logger.debug(`Default tags created successfully: ${Tags.join(',')}`);
   }
 
-  async create(createTagDto: CreateTagDto) {
+  async create(createTagDto: CreateTagDto, user?: TenantContext) {
     try {
       const tag = await this.tagModel.create({
         ...createTagDto,
-
         type: TagTypesEnum.CUSTOM,
+        // Always stamped from the caller, never from the client payload.
+        organizationId: user?.organizationId ?? null,
       });
       return tag;
     } catch (error) {
@@ -65,10 +115,10 @@ export class TagService implements OnModuleInit {
     }
   }
 
-  async getTagList() {
+  async getTagList(user?: TenantContext) {
     try {
       const tags = await this.tagModel
-        .find()
+        .find(this.visibleTagFilter(user))
         .select('name type')
         .sort({ name: 1 });
       const defaultTags = tags.filter(
@@ -82,9 +132,8 @@ export class TagService implements OnModuleInit {
     }
   }
 
-  async findAll() {
+  async findAll(user?: TenantContext) {
     try {
-      const tickets = mongoose.model<TicketDocument>('Ticket');
       const bots = mongoose.model<BotDocument>('Bot');
       const agents = mongoose.model<AgentDocument>('Agent');
       const offers = mongoose.model<OfferDocument>('Offer');
@@ -92,31 +141,35 @@ export class TagService implements OnModuleInit {
       const advertisements =
         mongoose.model<AdvertisementDocument>('Advertisement');
       const tags = await this.tagModel
-        .find()
+        .find(this.visibleTagFilter(user))
         .select('name type')
         .sort({ name: 1 });
 
+      // Usage counts are scoped to the caller's org (unscoped for internal
+      // callers / SUPER_ADMIN). Tickets carry no organizationId, so they are
+      // scoped through the org's bots.
+      const scope = (filter: Record<string, any>) =>
+        user ? scopedFilter(user, filter) : filter;
+
       const data = await Promise.all(
         tags.map(async (tag) => {
-          const botCount = await bots.countDocuments({
-            tags: { $in: [tag._id] },
-          });
-          const agentCount = await agents.countDocuments({
-            tags: { $in: [tag._id] },
-          });
+          const botCount = await bots.countDocuments(
+            scope({ tags: { $in: [tag._id] } }),
+          );
+          const agentCount = await agents.countDocuments(
+            scope({ tags: { $in: [tag._id] } }),
+          );
 
-          const offerCount = await offers.countDocuments({
-            'cards.tag': { $in: [tag.name] },
-          });
-          const advertisementCount = await advertisements.countDocuments({
-            'posters.tag': { $in: [tag.name] },
-          });
-          const questionCount = await questions.countDocuments({
-            tags: { $in: [tag.name] },
-          });
-          const ticketCount = await tickets.countDocuments({
-            tags: { $in: [tag.name] },
-          });
+          const offerCount = await offers.countDocuments(
+            scope({ 'cards.tag': { $in: [tag.name] } }),
+          );
+          const advertisementCount = await advertisements.countDocuments(
+            scope({ 'posters.tag': { $in: [tag.name] } }),
+          );
+          const questionCount = await questions.countDocuments(
+            scope({ tags: { $in: [tag.name] } }),
+          );
+          const ticketCount = await this.serviceRequestCount(tag.name, user);
           return {
             ...tag.toObject(),
             botCount,
@@ -145,14 +198,20 @@ export class TagService implements OnModuleInit {
     }
   }
 
-  async deleteTag(tagId: string) {
+  async deleteTag(tagId: string, user?: TenantContext) {
     try {
+      if (!mongoose.isValidObjectId(tagId)) {
+        throw new NotFoundException('Tag not found');
+      }
       const tag = await this.tagModel.findOne({
         _id: tagId,
       });
       if (!tag) {
         throw new HttpException('Tag not found', 404);
       }
+      // Org users may only delete their own org's tags; platform DEFAULT tags
+      // (organizationId null) are therefore only deletable by SUPER_ADMIN.
+      if (user) assertOwnership(user, tag);
       await tag.remove();
       return tag;
     } catch (error) {
@@ -161,15 +220,19 @@ export class TagService implements OnModuleInit {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.tagModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const total = await this.tagModel.countDocuments(
+      this.visibleTagFilter(user),
+    );
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.tagModel.countDocuments({
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.tagModel.countDocuments(
+        this.visibleTagFilter(user, {
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        }),
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
 
@@ -183,18 +246,20 @@ export class TagService implements OnModuleInit {
     };
   }
 
-  async getDefaultCount(days = 30) {
-    const total = await this.tagModel.countDocuments({
-      type: TagTypesEnum.DEFAULT,
-    });
+  async getDefaultCount(days = 30, user?: TenantContext) {
+    const total = await this.tagModel.countDocuments(
+      this.visibleTagFilter(user, { type: TagTypesEnum.DEFAULT }),
+    );
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.tagModel.countDocuments({
-        type: TagTypesEnum.DEFAULT,
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.tagModel.countDocuments(
+        this.visibleTagFilter(user, {
+          type: TagTypesEnum.DEFAULT,
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        }),
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
 
@@ -208,18 +273,20 @@ export class TagService implements OnModuleInit {
     };
   }
 
-  async getCustomCount(days = 30) {
-    const total = await this.tagModel.countDocuments({
-      type: TagTypesEnum.CUSTOM,
-    });
+  async getCustomCount(days = 30, user?: TenantContext) {
+    const total = await this.tagModel.countDocuments(
+      this.visibleTagFilter(user, { type: TagTypesEnum.CUSTOM }),
+    );
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.tagModel.countDocuments({
-        type: TagTypesEnum.CUSTOM,
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.tagModel.countDocuments(
+        this.visibleTagFilter(user, {
+          type: TagTypesEnum.CUSTOM,
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        }),
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
 
@@ -233,12 +300,12 @@ export class TagService implements OnModuleInit {
     };
   }
 
-  async stats(days = 30) {
+  async stats(days = 30, user?: TenantContext) {
     try {
       const result = await Promise.all([
-        this.getTotalCount(days),
-        this.getDefaultCount(days),
-        this.getCustomCount(days),
+        this.getTotalCount(days, user),
+        this.getDefaultCount(days, user),
+        this.getCustomCount(days, user),
       ]);
       return result;
     } catch (error) {

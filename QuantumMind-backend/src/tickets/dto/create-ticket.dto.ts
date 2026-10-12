@@ -1,5 +1,5 @@
 import { TicketPriorityEnum } from '../enums/ticket-priority';
-import { IsArray, IsString } from 'class-validator';
+import { IsArray, IsIn, IsMongoId, IsOptional, IsString } from 'class-validator';
 
 export class CreateTicketDto {
   @IsString()
@@ -21,4 +21,20 @@ export class CreateTicketDto {
 
   @IsArray()
   tags?: string[];
+
+  // --- crm-incident-handover (optional, additive; R1.2, R15.4) -------------
+
+  /** The Incident this Service Request tracks. */
+  @IsOptional()
+  @IsMongoId()
+  incident?: string;
+
+  /** CRM (Postgres) contact cuid. */
+  @IsOptional()
+  @IsString()
+  crmContactId?: string;
+
+  @IsOptional()
+  @IsIn(['chat', 'dashboard', 'api'])
+  source?: 'chat' | 'dashboard' | 'api';
 }

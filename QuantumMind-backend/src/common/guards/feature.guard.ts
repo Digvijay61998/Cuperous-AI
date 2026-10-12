@@ -40,8 +40,13 @@ export class FeatureGuard implements CanActivate {
     if (!feature) return true;
 
     const user = context.switchToHttp().getRequest().user;
-    if (!user || user.role === Role.SUPER_ADMIN || !user.organizationId) {
-      return true;
+    // SUPER_ADMIN is org-independent. Everyone else must have an org whose
+    // plan enables the feature (fail closed on a missing org).
+    if (user?.role === Role.SUPER_ADMIN) return true;
+    if (!user?.organizationId) {
+      throw new ForbiddenException(
+        `The '${feature}' feature is not enabled for your organization`,
+      );
     }
 
     const enabled = await this.entitlementService.isFeatureEnabled(

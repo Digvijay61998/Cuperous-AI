@@ -67,6 +67,14 @@ export class Webhook {
     default: [],
   })
   activities: WebHookActivities[];
+
+  @Prop({
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+    index: true,
+  })
+  organizationId: mongoose.Schema.Types.ObjectId | null;
 }
 
 export const WebhookSchema = SchemaFactory.createForClass(Webhook);

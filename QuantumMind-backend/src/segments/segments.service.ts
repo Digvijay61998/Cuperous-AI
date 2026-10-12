@@ -1,4 +1,10 @@
-import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
+import {
+  HttpException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import mongoose, { Model } from "mongoose";
 import { getDaySubtitle } from "src/util/get-subtitle";
 import { SEGMENT_PROVIDER } from "./constant";
@@ -9,6 +15,12 @@ import { ConversationStatusEnum } from "src/conversation/enums/conversation-stat
 import { JwtPayload } from "src/auth/strategy/jwt.strategy";
 import { SegmentQueryParams } from "./dto/get-segment.params.dto";
 import { ComparisonDto } from "src/util/comparison.dto";
+import {
+  isCrossOrg,
+  scopedFilter,
+  TenantContext,
+} from "src/common/tenant/tenant-context";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
 
 @Injectable()
 export class SegmentsService {
@@ -16,13 +28,69 @@ export class SegmentsService {
 
   constructor(
     @Inject(SEGMENT_PROVIDER)
-    private segmentModel: Model<SegmentDocument>
+    private segmentModel: Model<SegmentDocument>,
+    private readonly tenantScope: TenantScopeService
   ) {}
 
-  async create(createSegmentDto: CreateSegmentDto) {
+  /** find/count filter: org-pinned when a user is given, unscoped otherwise. */
+  private scope(
+    user: TenantContext | undefined,
+    filter: Record<string, any> = {}
+  ): Record<string, any> {
+    return user ? scopedFilter(user, filter) : filter;
+  }
+
+  /**
+   * Aggregation `$match` fragment (no auto-cast in aggregate). Empty for
+   * internal callers and SUPER_ADMIN; `{ organizationId: null }` for an
+   * org-scoped caller without an organization (fail-closed).
+   */
+  private orgMatch(user: TenantContext | undefined): Record<string, any> {
+    if (!user || isCrossOrg(user)) return {};
+    const orgId = user.organizationId;
+    return {
+      organizationId:
+        orgId && mongoose.isValidObjectId(orgId)
+          ? new mongoose.Types.ObjectId(String(orgId))
+          : null,
+    };
+  }
+
+  /** Loads a segment by id within the caller's scope, 404 otherwise. */
+  private async findScopedSegment(segmentId: string, user?: TenantContext) {
+    if (!mongoose.isValidObjectId(segmentId)) {
+      throw new NotFoundException("Segment not found");
+    }
+    const segment = await this.segmentModel.findOne(
+      this.scope(user, { _id: segmentId })
+    );
+    if (!segment) {
+      throw new NotFoundException("Segment not found");
+    }
+    return segment;
+  }
+
+  /** 404 unless the visitor belongs to one of the caller's org's bots. */
+  private async assertVisitorInOrg(visitorId: string, user?: TenantContext) {
+    if (!user || isCrossOrg(user)) return;
+    if (!mongoose.isValidObjectId(visitorId)) {
+      throw new NotFoundException("Visitor not found");
+    }
+    const botMatch = await this.tenantScope.orgBotMatch(user, "bot");
+    const exists = await mongoose
+      .model("Visitor")
+      .exists({ _id: visitorId, ...botMatch });
+    if (!exists) {
+      throw new NotFoundException("Visitor not found");
+    }
+  }
+
+  async create(createSegmentDto: CreateSegmentDto, user?: TenantContext) {
     try {
       const segment = new this.segmentModel({
         ...createSegmentDto,
+        // Always stamped from the caller, never from the client payload.
+        organizationId: user?.organizationId ?? null,
       });
       return segment.save();
     } catch (error) {
@@ -31,19 +99,24 @@ export class SegmentsService {
     }
   }
 
-  async findAll() {
+  async findAll(user?: TenantContext) {
     try {
-      return this.segmentModel.find().populate("visitors", "name email");
+      return this.segmentModel
+        .find(this.scope(user))
+        .populate("visitors", "name email");
     } catch (error) {
       this.logger.error(`Error while fetching segments: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async getVisitors(segmentId: string) {
+  async getVisitors(segmentId: string, user?: TenantContext) {
     try {
+      if (!mongoose.isValidObjectId(segmentId)) {
+        throw new NotFoundException("Segment not found");
+      }
       const segment = await this.segmentModel
-        .findOne({ _id: segmentId })
+        .findOne(this.scope(user, { _id: segmentId }))
         .populate({
           path: "visitors.visitorId",
           populate: {
@@ -54,6 +127,9 @@ export class SegmentsService {
             limit: 1,
           },
         });
+      if (!segment) {
+        throw new NotFoundException("Segment not found");
+      }
 
       return segment.visitors;
     } catch (error) {
@@ -62,16 +138,21 @@ export class SegmentsService {
     }
   }
 
-  async addVisitor(segmentId: string, visitorId: string) {
+  async addVisitor(segmentId: string, visitorId: string, user?: TenantContext) {
     try {
-      const segment = await this.segmentModel.findOne({
-        _id: segmentId,
-      });
+      let segment: SegmentDocument | null;
+      if (user) {
+        segment = await this.findScopedSegment(segmentId, user);
+        await this.assertVisitorInOrg(visitorId, user);
+      } else {
+        segment = await this.segmentModel.findOne({
+          _id: segmentId,
+        });
+      }
       if (segment) {
         const existingVisitors = segment.visitors.map((visitor) =>
           visitor.visitorId.toString()
         );
-        console.log({ existingVisitors: existingVisitors.includes(visitorId) });
         if (!existingVisitors.includes(visitorId)) {
           segment.visitors.push({
             visitorId: new ObjectId(visitorId),
@@ -87,11 +168,17 @@ export class SegmentsService {
     }
   }
 
-  async removeVisitor(segmentId: string, visitorId: string) {
+  async removeVisitor(
+    segmentId: string,
+    visitorId: string,
+    user?: TenantContext
+  ) {
     try {
-      const segment = await this.segmentModel.findOne({
-        _id: segmentId,
-      });
+      const segment = user
+        ? await this.findScopedSegment(segmentId, user)
+        : await this.segmentModel.findOne({
+            _id: segmentId,
+          });
       if (!segment) {
         throw new Error("Segment not found");
       }
@@ -113,17 +200,23 @@ export class SegmentsService {
     }
   }
 
-  async removeSegment(segmentId: string) {
+  async removeSegment(segmentId: string, user?: TenantContext) {
     try {
-      return this.segmentModel.deleteOne({ _id: segmentId });
+      if (user) {
+        // 404 on missing / cross-org rather than a silent no-op.
+        await this.findScopedSegment(segmentId, user);
+      }
+      return this.segmentModel.deleteOne(
+        this.scope(user, { _id: segmentId })
+      );
     } catch (error) {
       this.logger.error(`Error while removing segment: ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async getSegmentsForNode() {
-    const segments = await this.segmentModel.find();
+  async getSegmentsForNode(user?: TenantContext) {
+    const segments = await this.segmentModel.find(this.scope(user));
 
     return segments.map((segment) => ({
       id: segment._id,
@@ -131,15 +224,17 @@ export class SegmentsService {
     }));
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.segmentModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const total = await this.segmentModel.countDocuments(this.scope(user));
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.segmentModel.countDocuments({
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.segmentModel.countDocuments(
+        this.scope(user, {
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        })
+      );
 
       percentageChange = Math.round((agoCount / total) * 100);
     }
@@ -154,8 +249,9 @@ export class SegmentsService {
     };
   }
 
-  async VisitorCount(days = 30) {
+  async VisitorCount(days = 30, user?: TenantContext) {
     const response = await this.segmentModel.aggregate([
+      { $match: this.orgMatch(user) },
       { $unwind: "$visitors" },
       {
         $group: {
@@ -206,8 +302,9 @@ export class SegmentsService {
     };
   }
 
-  async newVisitorCount(days = 7) {
+  async newVisitorCount(days = 7, user?: TenantContext) {
     const response = await this.segmentModel.aggregate([
+      { $match: this.orgMatch(user) },
       { $unwind: "$visitors" },
       {
         $group: {
@@ -258,21 +355,26 @@ export class SegmentsService {
     };
   }
 
-  async getSegmentStats(days = 2) {
+  async getSegmentStats(days = 2, user?: TenantContext) {
     const result = await Promise.all([
-      this.getTotalCount(days),
-      this.VisitorCount(days),
-      this.newVisitorCount(days),
+      this.getTotalCount(days, user),
+      this.VisitorCount(days, user),
+      this.newVisitorCount(days, user),
     ]);
 
     return result;
   }
 
-  async getAllSegmentsOfVisitor(visitorId: string) {
+  async getAllSegmentsOfVisitor(visitorId: string, user?: TenantContext) {
+    if (!mongoose.isValidObjectId(visitorId)) {
+      return [];
+    }
     const segments = await this.segmentModel
-      .find({
-        "visitors.visitorId": visitorId,
-      })
+      .find(
+        this.scope(user, {
+          "visitors.visitorId": visitorId,
+        })
+      )
       .select("name");
     return segments;
   }
@@ -292,8 +394,9 @@ export class SegmentsService {
     });
   }
 
-  async findSegmentsVisitorsCount() {
+  async findSegmentsVisitorsCount(user?: TenantContext) {
     const segments = await this.segmentModel.aggregate([
+      { $match: this.orgMatch(user) },
       {
         $project: {
           name: 1,
@@ -309,7 +412,11 @@ export class SegmentsService {
     ]);
     return segments;
   }
-  async findSegmentsVisitorsStats(query: SegmentQueryParams) {
+
+  async findSegmentsVisitorsStats(
+    query: SegmentQueryParams,
+    user?: TenantContext
+  ) {
     try {
       const { startDate, endDate, segmentId } = query;
 
@@ -319,7 +426,7 @@ export class SegmentsService {
       if (endDate) queryObject["createdAt"] = { $lte: endDate };
       if (startDate && endDate)
         queryObject["createdAt"] = { $gte: startDate, $lte: endDate };
-      const segments = this.segmentModel.find(queryObject);
+      const segments = this.segmentModel.find(this.scope(user, queryObject));
       return segments;
     } catch (error) {
       this.logger.error(`Error while getting all visitors : ${error.message}`);
@@ -327,14 +434,17 @@ export class SegmentsService {
     }
   }
 
-  async getDayWisePerformance(params: SegmentQueryParams) {
+  async getDayWisePerformance(
+    params: SegmentQueryParams,
+    user?: TenantContext
+  ) {
     const { segmentId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
 
-    const match = {};
+    const match: Record<string, any> = { ...this.orgMatch(user) };
 
     if (startDate) {
       match["createdAt"] = {
@@ -344,6 +454,7 @@ export class SegmentsService {
     }
 
     if (segmentId) {
+      if (!mongoose.isValidObjectId(segmentId)) return [];
       match["_id"] = new ObjectId(segmentId);
     }
 
@@ -399,14 +510,17 @@ export class SegmentsService {
     }
   }
 
-  async getDateWiseSegmentVisitors(params: SegmentQueryParams) {
+  async getDateWiseSegmentVisitors(
+    params: SegmentQueryParams,
+    user?: TenantContext
+  ) {
     const { segmentId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
 
-    const match = {};
+    const match: Record<string, any> = { ...this.orgMatch(user) };
 
     if (startDate) {
       match["createdAt"] = {
@@ -416,6 +530,7 @@ export class SegmentsService {
     }
 
     if (segmentId) {
+      if (!mongoose.isValidObjectId(segmentId)) return [];
       match["_id"] = new ObjectId(segmentId);
     }
 
@@ -460,13 +575,18 @@ export class SegmentsService {
     }
   }
 
-  async getDateWiseSegmentCompare(query: ComparisonDto) {
+  async getDateWiseSegmentCompare(query: ComparisonDto, user?: TenantContext) {
     try {
       const { param1, param2, startDate } = query;
       let endDate = query.endDate;
       if (!endDate) {
         endDate = new Date().toISOString();
       }
+
+      // Segments outside the caller's org are excluded by the org match
+      // below, so a foreign param1/param2 simply contributes zero counts.
+      const toOid = (id: string) =>
+        id && mongoose.isValidObjectId(id) ? new ObjectId(id) : null;
 
       const match = {};
 
@@ -485,6 +605,9 @@ export class SegmentsService {
 
       const result = await this.segmentModel.aggregate([
         {
+          $match: this.orgMatch(user),
+        },
+        {
           $unwind: "$visitors",
         },
         {
@@ -501,7 +624,7 @@ export class SegmentsService {
             segment1: {
               $sum: {
                 $cond: {
-                  if: { $eq: ["$_id", new ObjectId(param1)] },
+                  if: { $eq: ["$_id", toOid(param1)] },
                   then: 1,
                   else: 0,
                 },
@@ -510,7 +633,7 @@ export class SegmentsService {
             segment2: {
               $sum: {
                 $cond: {
-                  if: { $eq: ["$_id", new ObjectId(param2)] },
+                  if: { $eq: ["$_id", toOid(param2)] },
                   then: 1,
                   else: 0,
                 },

@@ -98,6 +98,29 @@ export class Question extends mongoose.Document {
     type: mongoose.Schema.Types.Mixed,
   })
   questionLanguage: QuestionLanguage;
+
+  /**
+   * Provenance for system-learned entries (R21): `kind: "incident"` with the
+   * incident ids the Q&A was generalised from. Absent for human-written entries.
+   */
+  @Prop({ type: Object, _id: false })
+  source?: LearnedSource;
+}
+
+/** Where a learned entry came from and how it is mirrored in the AI knowledge base. */
+export interface LearnedSource {
+  kind: "incident";
+  incidentIds: string[];
+  /** For the "Learned from incident" link (R21.4). */
+  incidents?: { id: string; ticketId?: string; ticketRef?: string }[];
+  /** AI tenant the entry is ingested under (the bot id). */
+  clientId?: string;
+  /** AI source name, `incident:<first incident id>` (R21.2). */
+  knowledgeSource?: string;
+  /** Approved by the system, not a person (R21.1); never a self-approval. */
+  systemApproved?: boolean;
+  /** Knowledge-base sync state (R12.8): shown in the Question Bank. */
+  ingest?: { status: "pending" | "ok" | "removed" | "failed"; at: Date; error?: string };
 }
 
 export const QuestionSchema = SchemaFactory.createForClass(Question);

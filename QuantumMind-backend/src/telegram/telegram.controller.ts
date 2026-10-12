@@ -1,3 +1,6 @@
+import { CurrentUser } from 'src/util/current-user.decorator';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import { Public } from 'src/auth/Public/public.decorator';
@@ -16,18 +19,18 @@ export class TelegramController {
   constructor(
     private readonly telegramService: TelegramService,
     private readonly telegramMessageService: TelegramMessageService,
+    private readonly tenantScope: TenantScopeService,
   ) {}
-
-  @Public()
-  @Get('test')
-  async test() {
-    return 'telegram webhook';
-  }
 
   @Roles(Role.ORG_ADMIN, Role.ORG_MANAGER)
   @RequiresFeature('channel.telegram')
   @Post()
-  async create(@Body() createTelegramBotDto: CreateTelegramBotDto) {
+  async create(
+    @Body() createTelegramBotDto: CreateTelegramBotDto,
+    @CurrentUser() user: TenantContext,
+  ) {
+    // The linked JarCube bot must belong to the caller's org.
+    await this.tenantScope.assertBotInOrg(user, createTelegramBotDto.jarcubeBot);
     return await this.telegramService.create(createTelegramBotDto);
   }
 

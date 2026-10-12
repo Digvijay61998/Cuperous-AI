@@ -88,6 +88,20 @@ export class Ticket {
     default: [],
   })
   tags: string[];
+
+  // --- crm-incident-handover (optional, additive) --------------------------
+
+  /** The Incident this Service Request tracks (R1.2). */
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: "Incident" })
+  incident?: string;
+
+  /** CRM (Postgres) contact cuid (R1.2, R1.10). No FK. */
+  @Prop({ type: String, index: true })
+  crmContactId?: string;
+
+  /** Where the ticket came from; "chat" for flow/incident tickets. */
+  @Prop({ type: String, enum: ["chat", "dashboard", "api"] })
+  source?: string;
 }
 
 export const TicketSchema = SchemaFactory.createForClass(Ticket);

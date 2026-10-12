@@ -3,9 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma, RecordSource } from "@prisma/client";
 import { CrmPrismaService } from "../database/crm-prisma.service";
+import { ServiceRequestsService } from "../service-requests/service-requests.service";
+import { isUniqueViolation } from "../common/prisma-errors";
 import {
   archivedFilter,
   countsByKey,
@@ -33,6 +36,7 @@ const COMPANY_SELECT = {
 
 const ROW_SELECT = {
   id: true,
+  isAnonymous: true,
   firstName: true,
   lastName: true,
   email: true,
@@ -40,6 +44,7 @@ const ROW_SELECT = {
   title: true,
   imageUrl: true,
   source: true,
+  sourceChannel: true,
   ownerId: true,
   lastActivityAt: true,
   createdAt: true,
@@ -70,6 +75,8 @@ export class ContactsService {
     private readonly crm: CrmPrismaService,
     private readonly fields: FieldsService,
     private readonly agentTasks: AgentTaskService,
+    // Global service desk module; optional so specs and scripts need no stub.
+    @Optional() private readonly serviceRequests?: ServiceRequestsService,
   ) {}
 
   /**
@@ -148,7 +155,14 @@ export class ContactsService {
         githubUrl: true,
         imageUrl: true,
         source: true,
+        sourceChannel: true,
         ownerId: true,
+        isAnonymous: true,
+        // Every email / phone / platform id, newest first (R21.6).
+        identifiers: {
+          orderBy: { lastSeenAt: "desc" },
+          select: { id: true, kind: true, display: true, source: true, firstSeenAt: true, lastSeenAt: true },
+        },
         enrichmentStatus: true,
         enrichedAt: true,
         enrichmentError: true,
@@ -221,19 +235,28 @@ export class ContactsService {
 
     if (dto.companyId) await this.assertCompany(orgId, dto.companyId);
 
-    const contact = await db.contact.create({
-      data: {
-        organizationId: orgId,
-        firstName: dto.firstName.trim(),
-        lastName: blankToNull(dto.lastName),
-        email,
-        phone: blankToNull(dto.phone),
-        title: blankToNull(dto.title),
-        companyId: dto.companyId ?? null,
-        ownerId: dto.ownerId ?? userId ?? null,
-      },
-      select: { id: true, firstName: true, lastName: true },
-    });
+    // The pre-check above gives a friendly message; the unique index is what
+    // actually closes the race between two concurrent creates.
+    const contact = await db.contact
+      .create({
+        data: {
+          organizationId: orgId,
+          firstName: dto.firstName.trim(),
+          lastName: blankToNull(dto.lastName),
+          email,
+          phone: blankToNull(dto.phone),
+          title: blankToNull(dto.title),
+          companyId: dto.companyId ?? null,
+          ownerId: dto.ownerId ?? userId ?? null,
+        },
+        select: { id: true, firstName: true, lastName: true },
+      })
+      .catch((error) => {
+        if (isUniqueViolation(error)) {
+          throw new ConflictException(`Another contact already uses ${email}.`);
+        }
+        throw error;
+      });
 
     this.logger.log({ message: "Contact created", contactId: contact.id, orgId });
     return contact;
@@ -288,11 +311,24 @@ export class ContactsService {
 
     if (dto.ownerId !== undefined) data.ownerId = dto.ownerId ?? null;
 
-    const updated = await db.contact.update({
-      where: { id },
-      data,
-      select: { id: true, firstName: true, lastName: true },
-    });
+    const updated = await db.contact
+      .update({
+        where: { id },
+        data,
+        select: { id: true, firstName: true, lastName: true },
+      })
+      .catch((error) => {
+        if (isUniqueViolation(error)) {
+          throw new ConflictException(
+            "Another contact already uses that email address.",
+          );
+        }
+        throw error;
+      });
+    // Cards on the service desk show this contact's name, email and phone.
+    if (data.firstName !== undefined || data.lastName !== undefined || data.email !== undefined || data.phone !== undefined) {
+      void this.serviceRequests?.touchContact(orgId, id).catch(() => undefined);
+    }
     return updated;
   }
 
@@ -359,11 +395,21 @@ export class ContactsService {
   private async setArchived(orgId: string, id: string, at: Date | null) {
     const db = this.crm.forOrg(orgId);
     await this.assertExists(orgId, id);
-    const contact = await db.contact.update({
-      where: { id },
-      data: { archivedAt: at },
-      select: { id: true, firstName: true, lastName: true },
-    });
+    const contact = await db.contact
+      .update({
+        where: { id },
+        data: { archivedAt: at },
+        select: { id: true, firstName: true, lastName: true },
+      })
+      .catch((error) => {
+        // Restoring a contact whose email an active contact now uses.
+        if (isUniqueViolation(error)) {
+          throw new ConflictException(
+            "An active contact already uses this contact's email. Change one of the emails, then restore.",
+          );
+        }
+        throw error;
+      });
     return { id: contact.id, name: nameOf(contact) };
   }
 
@@ -374,15 +420,30 @@ export class ContactsService {
   ): Promise<BulkResult> {
     const db = this.crm.forOrg(orgId);
     const unique = [...new Set(ids)];
-    const { count } = await db.contact.updateMany({
-      where: { id: { in: unique }, organizationId: orgId },
-      data: { archivedAt: at },
-    });
-    return {
-      requested: unique.length,
-      succeeded: count,
-      failed: unique.length - count,
-    };
+
+    if (at !== null) {
+      const { count } = await db.contact.updateMany({
+        where: { id: { in: unique }, organizationId: orgId },
+        data: { archivedAt: at },
+      });
+      return { requested: unique.length, succeeded: count, failed: unique.length - count };
+    }
+
+    // Restore one by one: a single email clash with an active contact must
+    // fail only that row, not roll back the whole batch.
+    let succeeded = 0;
+    for (const id of unique) {
+      try {
+        const { count } = await db.contact.updateMany({
+          where: { id, organizationId: orgId },
+          data: { archivedAt: null },
+        });
+        succeeded += count;
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+      }
+    }
+    return { requested: unique.length, succeeded, failed: unique.length - succeeded };
   }
 
   private async assertExists(orgId: string, id: string): Promise<void> {
@@ -406,12 +467,20 @@ export class ContactsService {
   private searchFilter(q?: string): Prisma.ContactWhereInput {
     const term = q?.trim();
     if (!term) return {};
+    // Phones are matched on digits so "+91 98765" finds "919876543210".
+    const digits = term.replace(/\D/g, "");
     return {
       OR: [
         { firstName: { contains: term, mode: "insensitive" } },
         { lastName: { contains: term, mode: "insensitive" } },
         { email: { contains: term, mode: "insensitive" } },
+        { phone: { contains: term, mode: "insensitive" } },
         { company: { name: { contains: term, mode: "insensitive" } } },
+        // Earlier emails/phones and platform ids (R21.7).
+        { identifiers: { some: { display: { contains: term, mode: "insensitive" } } } },
+        ...(digits.length >= 4
+          ? [{ identifiers: { some: { kind: "PHONE" as const, value: { contains: digits } } } }]
+          : []),
       ],
     };
   }
@@ -444,6 +513,15 @@ export class ContactsService {
       and.push({ source: { in: source as RecordSource[] } });
     }
 
+    // Capture channel (R5.2). FACET_UNASSIGNED = "not captured from chat".
+    const channel = dto.channel ?? [];
+    if (channel.length) {
+      const { ids, includesSentinel } = splitSentinel(channel, FACET_UNASSIGNED);
+      if (includesSentinel && ids.length === 0) and.push({ sourceChannel: null });
+      else if (!includesSentinel) and.push({ sourceChannel: { in: ids } });
+      else and.push({ OR: [{ sourceChannel: { in: ids } }, { sourceChannel: null }] });
+    }
+
     return { AND: and };
   }
 
@@ -459,16 +537,18 @@ export class ContactsService {
       ],
     };
 
-    const [owners, companies, sources] = await Promise.all([
+    const [owners, companies, sources, channels] = await Promise.all([
       db.contact.groupBy({ by: ["ownerId"], where, _count: { _all: true } }),
       db.contact.groupBy({ by: ["companyId"], where, _count: { _all: true } }),
       db.contact.groupBy({ by: ["source"], where, _count: { _all: true } }),
+      db.contact.groupBy({ by: ["sourceChannel"], where, _count: { _all: true } }),
     ]);
 
     return {
       owner: countsByKey(owners, "ownerId", FACET_UNASSIGNED),
       company: countsByKey(companies, "companyId", NO_COMPANY),
       source: countsByKey(sources, "source"),
+      channel: countsByKey(channels, "sourceChannel", FACET_UNASSIGNED),
     };
   }
 }

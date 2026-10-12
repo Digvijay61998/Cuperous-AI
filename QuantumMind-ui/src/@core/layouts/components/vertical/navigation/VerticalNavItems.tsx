@@ -53,7 +53,10 @@ const [role, setRole] = useState<string>("")
   const RenderMenuItems = verticalNavItems?.map(
     (item: any, index: number) => {
       const TagName: any = resolveNavItemComponent(item);
-      return  access(role, AccessTypesEnum.READ, item?.path) && <TagName {...props} key={index} item={item} />;
+      // Groups (empty path) are already filtered by role in navigation/vertical;
+      // leaf links are additionally checked against the route matrix.
+      const visible = !item?.path || access(role, AccessTypesEnum.READ, item.path);
+      return visible && <TagName {...props} key={index} item={item} />;
     },
   );
 

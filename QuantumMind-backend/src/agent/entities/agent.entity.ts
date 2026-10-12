@@ -139,6 +139,17 @@ export class Agent {
   })
   rating: number;
 
+  /**
+   * Dashboard sound preferences (Sound_Preference). Stored on the user so they
+   * survive reloads, sign-out and other browsers. Both default to on.
+   */
+  @Prop({
+    type: { handoverSound: Boolean, messageSound: Boolean },
+    default: () => ({ handoverSound: true, messageSound: true }),
+    _id: false,
+  })
+  notificationPrefs: { handoverSound: boolean; messageSound: boolean };
+
   createdAt: Date;
 }
 

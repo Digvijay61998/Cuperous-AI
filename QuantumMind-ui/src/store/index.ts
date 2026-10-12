@@ -9,6 +9,8 @@ import bots from 'src/store/apps/bots';
 import chat from 'src/store/apps/chat';
 import conversations from 'src/store/apps/conversation';
 import crm from 'src/store/apps/crm';
+import crmPlugins from 'src/store/apps/crm-plugins';
+import crmServiceRequests from 'src/store/apps/crm-service-requests';
 import dashboard from 'src/store/apps/dashboard';
 import inbox from 'src/store/apps/inbox';
 import offer from 'src/store/apps/offer';
@@ -36,6 +38,7 @@ import visitors from 'src/store/apps/visitor';
 import webhook from 'src/store/apps/webhook';
 import widgetPreview from 'src/store/apps/widget-preview/widget';
 import scraper from './apps/scraper';
+import alerts from 'src/store/apps/alerts';
 export const store = configureStore({
   reducer: {
     agent,
@@ -72,6 +75,9 @@ export const store = configureStore({
     messaging,
     inbox,
     crm,
+    crmPlugins,
+    crmServiceRequests,
+    alerts,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

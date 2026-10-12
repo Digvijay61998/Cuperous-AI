@@ -142,7 +142,12 @@ export const CreateTicketData = createAsyncThunk(
     try {
       const response = await Axios.post('tickets', { ...data });
 
-      toast.success('Ticket added successfully');
+      // Lands on the CRM board (crm-plugins-service-desk R19.5).
+      toast.success(
+        response.data?.ticketId
+          ? `Service request ${response.data.ticketId} created. Find it under CRM → Service Requests.`
+          : 'Service request created',
+      );
       dispatch(fetchAllTicketsData());
       //dispatch(fetchBotData(getState().user.params))
 

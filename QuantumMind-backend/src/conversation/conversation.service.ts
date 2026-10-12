@@ -38,6 +38,7 @@ import {
 import { ChatDirectionEnum } from "./enums/chat-direction.enum";
 import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
 import { TenantContext } from "src/common/tenant/tenant-context";
+import { ENDED_STATE_CAUSES } from "./ended-state";
 
 @Injectable()
 export class ConversationService {
@@ -105,6 +106,18 @@ export class ConversationService {
         time: createChatDto.time || new Date(),
       });
       await this.pushChatToConversation(createChatDto.conversationId, chat._id);
+
+      // Let the omnichannel inbox mirror this into a ChannelThread + realtime
+      // fan-out. Fire-and-forget and handled by WidgetInboxBridgeService, which
+      // filters to the widget platform — the social channels build their own
+      // threads in their inbound pipelines, so this must not double-handle them.
+      // Announcing here (rather than from every create.new.chat emit site) keeps
+      // the one persistence path as the single source of truth for the inbox.
+      this.eventEmitter.emit("chat.persisted", {
+        chatId: (chat._id as any).toString(),
+        conversationId: createChatDto.conversationId,
+      });
+
       return chat;
     } catch (error) {
       // A duplicate key here is the dedup index doing its job: the engine
@@ -279,10 +292,22 @@ export class ConversationService {
    */
   async getThreadMessages(
     threadId: string,
-    options: { limit?: number; before?: Date } = {}
+    options: { limit?: number; before?: Date; conversationId?: string } = {}
   ) {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const filter: Record<string, any> = { channelThread: threadId };
+    // A widget thread is exactly one conversation. Reading by conversation
+    // includes every row, even one whose thread stamp was lost (the bridge
+    // stamps rows one by one as they are mirrored), so the agent sees the
+    // full history from before the handover (crm-incident-handover R9.1, R9.8).
+    const filter: Record<string, any> =
+      options.conversationId && Types.ObjectId.isValid(options.conversationId)
+        ? {
+            $or: [
+              { channelThread: threadId },
+              { conversationId: new Types.ObjectId(options.conversationId) },
+            ],
+          }
+        : { channelThread: threadId };
     if (options.before) {
       filter.time = { $lt: options.before };
     }
@@ -302,11 +327,171 @@ export class ConversationService {
    * activities — an expensive multi-join to answer a one-field question, paid on
    * every single incoming message.
    */
+  /**
+   * Facts the widget resume decision needs (crm-incident-handover R9.3).
+   * Ended_State is read from `endedAt` / an `awaitingClosure`-closed marker.
+   */
+  async resumeFacts(id: string): Promise<{
+    id: string;
+    botId: string;
+    visitorId: string;
+    status: string;
+    ended: boolean;
+    flowNodeId?: string;
+    hasChats: boolean;
+    attributes?: Record<string, unknown>;
+    awaitingClosure?: { sentAt: Date; idleMinutes?: number };
+  } | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    const c: any = await this.conversationModel
+      .findById(id)
+      .select("bot visitor status endedAt endCause flowPosition chats activities awaitingClosure")
+      .lean();
+    if (!c) return null;
+    return {
+      id: String(c._id),
+      botId: String(c.bot),
+      visitorId: String(c.visitor),
+      status: c.status,
+      // Closed by the visitor / the closure flow (R14.7). An expiry or a
+      // disconnect is not an Ended_State: those start fresh (R9.11).
+      ended: !!c.endedAt && ENDED_STATE_CAUSES.has(String(c.endCause)),
+      flowNodeId: c.flowPosition?.nodeId,
+      hasChats: Array.isArray(c.chats) && c.chats.length > 0,
+      awaitingClosure: c.awaitingClosure?.sentAt ? c.awaitingClosure : undefined,
+    };
+  }
+
+  /**
+   * Persist (or clear, with `null`) a pending Closure_Prompt so the idle
+   * close survives a restart or a closed tab (R14.5). Never throws.
+   */
+  async setAwaitingClosure(
+    id: string,
+    state: { sentAt: Date; idleMinutes: number; closingMessage?: string } | null
+  ): Promise<void> {
+    try {
+      if (!Types.ObjectId.isValid(id)) return;
+      await this.conversationModel.updateOne(
+        state ? { _id: id, endedAt: { $exists: false } } : { _id: id },
+        state ? { $set: { awaitingClosure: state } } : { $unset: { awaitingClosure: "" } }
+      );
+    } catch (error) {
+      this.logger.warn(`awaitingClosure update failed: ${error?.message}`);
+    }
+  }
+
+  /**
+   * Open conversations whose Closure_Prompt is at least 1 minute old (the
+   * smallest idle setting). The caller applies each one's own idle minutes.
+   */
+  async findClosureCandidates(now: Date, limit = 200): Promise<
+    { id: string; visitorId: string; sentAt: Date; idleMinutes?: number; closingMessage?: string }[]
+  > {
+    const rows: any[] = await this.conversationModel
+      .find({
+        "awaitingClosure.sentAt": { $lte: new Date(now.getTime() - 60_000) },
+        status: ConversationStatusEnum.IN_PROGRESS,
+        endedAt: { $exists: false },
+      })
+      .select("visitor awaitingClosure")
+      .sort({ "awaitingClosure.sentAt": 1 })
+      .limit(limit)
+      .lean();
+    return rows.map((r) => ({
+      id: String(r._id),
+      visitorId: String(r.visitor),
+      sentAt: r.awaitingClosure.sentAt,
+      idleMinutes: r.awaitingClosure.idleMinutes,
+      closingMessage: r.awaitingClosure.closingMessage,
+    }));
+  }
+
+  /**
+   * Claim one idle close: clears the prompt only if it is still the same
+   * one. Exactly one claimer wins across instances and against a visitor
+   * answer that cleared it first (R14.1 "first response", R14.5 "once").
+   */
+  async claimClosure(id: string, sentAt: Date): Promise<boolean> {
+    if (!Types.ObjectId.isValid(id)) return false;
+    const res = await this.conversationModel.updateOne(
+      { _id: id, "awaitingClosure.sentAt": sentAt, endedAt: { $exists: false } },
+      { $unset: { awaitingClosure: "" } }
+    );
+    return ((res as any)?.modifiedCount ?? 0) === 1;
+  }
+
+  /** Debounced by the caller: persist where the flow is (design §7). */
+  async setFlowPosition(id: string, nodeId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(id) || !nodeId) return;
+    await this.conversationModel
+      .updateOne(
+        { _id: id, status: ConversationStatusEnum.IN_PROGRESS },
+        { $set: { flowPosition: { nodeId: String(nodeId), updatedAt: new Date() } } }
+      )
+      .catch((error) => this.logger.warn(`flowPosition update failed: ${error?.message}`));
+  }
+
   async getConversationStatus(id: string): Promise<string | null> {
     const conversation = await this.conversationModel.findById(id, {
       status: 1,
     });
     return conversation?.status ?? null;
+  }
+
+  /**
+   * Lean routing fields for one conversation — bot, platform, visitor — without
+   * the expensive populate `getConversationById` does. Used by the widget inbox
+   * bridge to decide whether a persisted chat belongs on a channel thread.
+   */
+  async getConversationRouting(id: string): Promise<{
+    _id: string;
+    bot?: string;
+    visitor?: string;
+    platform?: string;
+    channelThread?: string;
+  } | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    const conv = await this.conversationModel.findById(id, {
+      bot: 1,
+      visitor: 1,
+      platform: 1,
+      channelThread: 1,
+    });
+    if (!conv) return null;
+    return {
+      _id: String(conv._id),
+      bot: conv.bot ? String(conv.bot) : undefined,
+      visitor: (conv as any).visitor ? String((conv as any).visitor) : undefined,
+      platform: (conv as any).platform,
+      channelThread: (conv as any).channelThread
+        ? String((conv as any).channelThread)
+        : undefined,
+    };
+  }
+
+  /** One chat row by id (no populate). For the inbox bridge's announce step. */
+  async getChatById(id: string): Promise<ChatDocument | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.chatModel.findById(id);
+  }
+
+  /** Stamp the resolved ChannelThread onto a conversation + its chat row. */
+  async bindChatToThread(
+    conversationId: string,
+    chatId: string,
+    threadId: string
+  ): Promise<void> {
+    await Promise.all([
+      this.conversationModel.updateOne(
+        { _id: conversationId },
+        { $set: { channelThread: threadId } }
+      ),
+      this.chatModel.updateOne(
+        { _id: chatId },
+        { $set: { channelThread: threadId } }
+      ),
+    ]);
   }
 
   /** Oldest stored message on a thread — the cursor for on-demand history. */
@@ -448,7 +633,13 @@ export class ConversationService {
     }
   }
 
-  async createConversation(createConversationDto: CreateConversationDto) {
+  /**
+   * Find the visitor's open conversation of this type, or create one.
+   * `forceNew` (widget "Start new chat", or an ended/expired resume) always
+   * creates: an earlier conversation and its chats are never reused or
+   * touched (crm-incident-handover R9.11, R14).
+   */
+  async createConversation(createConversationDto: CreateConversationDto, opts: { forceNew?: boolean } = {}) {
     try {
       const query = {
         visitor: createConversationDto.visitor,
@@ -458,12 +649,14 @@ export class ConversationService {
       if (createConversationDto.type === ConversationTypeEnum.REALTIME) {
         query["agent"] = createConversationDto.agent;
       }
-      let conversation = await this.conversationModel.findOne(query);
+      // Newest open one only; an ended conversation is never reused.
+      let conversation = opts.forceNew
+        ? null
+        : await this.conversationModel
+            .findOne({ ...query, status: ConversationStatusEnum.IN_PROGRESS, endedAt: { $exists: false } })
+            .sort({ createdAt: -1 });
 
-      if (
-        !conversation ||
-        conversation.status !== ConversationStatusEnum.IN_PROGRESS
-      ) {
+      if (!conversation) {
         conversation = await this.conversationModel.create(
           createConversationDto
         );
@@ -496,27 +689,75 @@ export class ConversationService {
 
   @OnEvent("end.conversation", { async: true })
   async closeConversation({ conversationId }: { conversationId: string }) {
-    await this.endConversation(conversationId);
+    // Emitted by the CLOSE_CHAT node.
+    await this.endConversation(conversationId, undefined, "close_chat");
   }
 
-  async endConversation(id: string, status?: ConversationStatusEnum) {
+  /**
+   * `cause` rides on `conversation.ended` so listeners can tell a CLOSE_CHAT
+   * from an expiry or a disconnect (crm-incident-handover R10.4).
+   */
+  async endConversation(
+    id: string,
+    status?: ConversationStatusEnum,
+    cause: string = status === ConversationStatusEnum.EXPIRED ? "expired" : "ended"
+  ) {
     try {
       const conversation = await this.conversationModel.findById(id);
       if (!conversation) {
         throw new Error("Conversation not found");
       }
+      // Ends once (R14.2, R14.5: "exactly once"). A later disconnect or
+      // expiry of an already-closed conversation changes nothing.
+      if ((conversation as any).endedAt) return;
       const activity = await this.conversationActivitiesModel.findOne({
         _id: conversation.activities[conversation.activities.length - 1],
       });
-      activity.endedAt = new Date();
-      activity.timeSpent =
-        new Date(activity.endedAt).getTime() -
-        new Date(activity.startedAt).getTime();
-      await activity.save();
-      conversation.status = status || ConversationStatusEnum.COMPLETED;
-      await conversation.save();
+      const endedAt = new Date();
+      if (activity) {
+        activity.endedAt = endedAt;
+        activity.timeSpent =
+          new Date(activity.endedAt).getTime() -
+          new Date(activity.startedAt).getTime();
+        await activity.save();
+      }
+      // Conditional, so two concurrent enders (idle cron + visitor reply on
+      // another instance) emit `conversation.ended` once.
+      const res = await this.conversationModel.updateOne(
+        { _id: conversation._id, endedAt: { $exists: false } },
+        {
+          $set: {
+            status: status || ConversationStatusEnum.COMPLETED,
+            endedAt,
+            endCause: cause,
+          },
+          $unset: { awaitingClosure: "" },
+        }
+      );
+      if ((res as any)?.modifiedCount === 0) return;
+      this.eventEmitter.emit("conversation.ended", { conversationId: id, cause });
     } catch (error) {
       this.logger.error(error);
+    }
+  }
+
+  /**
+   * Persist (or clear, with `null`) the problem-question state so it survives
+   * a reload (crm-incident-handover R4). Best effort: never throws into the
+   * visitor flow.
+   */
+  async setAwaitingProblem(
+    id: string,
+    state: { attempt: number; askedAt: Date } | null
+  ): Promise<void> {
+    try {
+      if (!Types.ObjectId.isValid(id)) return;
+      await this.conversationModel.updateOne(
+        { _id: id },
+        state ? { $set: { awaitingProblem: state } } : { $unset: { awaitingProblem: "" } }
+      );
+    } catch (error) {
+      this.logger.warn(`awaitingProblem update failed: ${error?.message}`);
     }
   }
 
@@ -571,8 +812,56 @@ export class ConversationService {
     }
   }
 
-  async getConversationById(id: string) {
+  /**
+   * Narrows a report `$match` to the caller's bots. `null` scope (SUPER_ADMIN
+   * or internal callers) leaves it unchanged. A requested bot outside the scope
+   * collapses the match to nothing rather than leaking another tenant's data.
+   */
+  private applyBotScope(
+    match: Record<string, any>,
+    botIds: Types.ObjectId[] | null | undefined
+  ) {
+    if (botIds === undefined || botIds === null) return match;
+    if (match["bot"]) {
+      const requested = String(match["bot"]);
+      match["bot"] = botIds.some((b) => String(b) === requested)
+        ? match["bot"]
+        : { $in: [] };
+    } else {
+      match["bot"] = { $in: botIds };
+    }
+    return match;
+  }
+
+  /** Resolves the caller's bot scope for report endpoints. */
+  async reportScope(user?: TenantContext) {
+    return this.tenantScope.orgBotIds(user);
+  }
+
+  /**
+   * Full transcript for one conversation. With a `user`, the conversation's bot
+   * must belong to the caller's organization (404 otherwise, so ids from another
+   * tenant cannot be probed). Without a `user` it is an internal lookup.
+   */
+  async getConversationById(id: string, user?: TenantContext) {
     try {
+      if (!Types.ObjectId.isValid(id)) {
+        throw new HttpException("No conversation found by this Id", 404);
+      }
+      if (user) {
+        const botIds = await this.tenantScope.orgBotIds(user);
+        const row = await this.conversationModel
+          .findById(id)
+          .select("bot agent")
+          .lean();
+        const botId = row?.bot ? String((row as any).bot) : null;
+        if (
+          !row ||
+          (botIds !== null && !botIds.some((b) => String(b) === botId))
+        ) {
+          throw new HttpException("No conversation found by this Id", 404);
+        }
+      }
       const conversation = await this.conversationModel
         .findOne({ _id: id })
         .populate("chats", {
@@ -894,17 +1183,27 @@ export class ConversationService {
 
   @Cron(CronExpression.EVERY_2_HOURS)
   async markConversationExpiredAfter2Hours() {
-    await this.conversationModel.updateMany(
-      {
-        status: ConversationStatusEnum.IN_PROGRESS,
-        createdAt: {
-          $lte: new Date(new Date().setHours(new Date().getHours() - 2)),
-        },
+    const filter = {
+      status: ConversationStatusEnum.IN_PROGRESS,
+      createdAt: {
+        $lte: new Date(new Date().setHours(new Date().getHours() - 2)),
       },
-      {
-        status: ConversationStatusEnum.EXPIRED,
-      }
-    );
+    };
+    // Collect the ids first: updateMany returns none, and an expired
+    // conversation must clear its open agent alert (resolution `ended`).
+    const expiring = await this.conversationModel
+      .find(filter)
+      .select("_id")
+      .lean();
+    await this.conversationModel.updateMany(filter, {
+      status: ConversationStatusEnum.EXPIRED,
+    });
+    for (const c of expiring) {
+      this.eventEmitter.emit("conversation.ended", {
+        conversationId: String((c as any)._id),
+        cause: "expired",
+      });
+    }
   }
 
   async getTotalCount(
@@ -959,7 +1258,11 @@ export class ConversationService {
     };
   }
 
-  async getDayWisePerformance(params: ReportParamsDto, agent = false) {
+  async getDayWisePerformance(
+    params: ReportParamsDto,
+    agent = false,
+    botScope?: Types.ObjectId[] | null
+  ) {
     const { id: botId, startDate, agentId } = params;
     let endDate = params.endDate;
     if (!endDate) {
@@ -976,11 +1279,15 @@ export class ConversationService {
     }
 
     if (botId) {
-      match["bot"] = new ObjectId(botId);
+      match["bot"] = Types.ObjectId.isValid(botId)
+        ? new ObjectId(botId)
+        : { $in: [] };
     }
 
     if (agentId) {
-      match["agent"] = new ObjectId(agentId);
+      match["agent"] = Types.ObjectId.isValid(agentId)
+        ? new ObjectId(agentId)
+        : { $in: [] };
     }
 
     if (agent) {
@@ -990,7 +1297,7 @@ export class ConversationService {
     try {
       const data = await this.conversationModel.aggregate([
         {
-          $match: match,
+          $match: this.applyBotScope(match, botScope),
         },
         {
           $group: {
@@ -1054,7 +1361,11 @@ export class ConversationService {
     }
   }
 
-  async getDateWiseConversations(params: ReportParamsDto, agent = false) {
+  async getDateWiseConversations(
+    params: ReportParamsDto,
+    agent = false,
+    botScope?: Types.ObjectId[] | null
+  ) {
     const { id: botId, startDate, agentId } = params;
     let endDate = params.endDate;
     if (!endDate) {
@@ -1071,11 +1382,15 @@ export class ConversationService {
     }
 
     if (botId) {
-      match["bot"] = new ObjectId(botId);
+      match["bot"] = Types.ObjectId.isValid(botId)
+        ? new ObjectId(botId)
+        : { $in: [] };
     }
 
     if (agentId) {
-      match["agent"] = new ObjectId(agentId);
+      match["agent"] = Types.ObjectId.isValid(agentId)
+        ? new ObjectId(agentId)
+        : { $in: [] };
     }
 
     if (agent) {
@@ -1085,7 +1400,7 @@ export class ConversationService {
     try {
       const data = await this.conversationModel.aggregate([
         {
-          $match: match,
+          $match: this.applyBotScope(match, botScope),
         },
         {
           $group: {
@@ -1138,9 +1453,10 @@ export class ConversationService {
     }
   }
 
-  async TotalCountPlatform() {
+  async TotalCountPlatform(botScope?: Types.ObjectId[] | null) {
     try {
       const result = await this.conversationModel.aggregate([
+        { $match: this.applyBotScope({}, botScope) },
         {
           $facet: {
             total: [
@@ -1217,7 +1533,10 @@ export class ConversationService {
     }
   }
 
-  async DayWisePlatform(params: ReportParamsDto) {
+  async DayWisePlatform(
+    params: ReportParamsDto,
+    botScope?: Types.ObjectId[] | null
+  ) {
     const { id: botId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
@@ -1234,13 +1553,15 @@ export class ConversationService {
     }
 
     if (botId) {
-      match["bot"] = new ObjectId(botId);
+      match["bot"] = Types.ObjectId.isValid(botId)
+        ? new ObjectId(botId)
+        : { $in: [] };
     }
 
     try {
       const data = await this.conversationModel.aggregate([
         {
-          $match: match,
+          $match: this.applyBotScope(match, botScope),
         },
         {
           $group: {
@@ -1326,7 +1647,10 @@ export class ConversationService {
     }
   }
 
-  async DateWisePlatform(params: ReportParamsDto) {
+  async DateWisePlatform(
+    params: ReportParamsDto,
+    botScope?: Types.ObjectId[] | null
+  ) {
     const { id: botId, startDate } = params;
     let endDate = params.endDate;
     if (!endDate) {
@@ -1343,13 +1667,15 @@ export class ConversationService {
     }
 
     if (botId) {
-      match["bot"] = new ObjectId(botId);
+      match["bot"] = Types.ObjectId.isValid(botId)
+        ? new ObjectId(botId)
+        : { $in: [] };
     }
 
     try {
       const data = await this.conversationModel.aggregate([
         {
-          $match: match,
+          $match: this.applyBotScope(match, botScope),
         },
         {
           $group: {
@@ -1476,7 +1802,8 @@ export class ConversationService {
     ]);
   }
 
-  async getHistoryStats() {
+  async getHistoryStats(user?: TenantContext) {
+    const botIds = await this.tenantScope.orgBotIds(user);
     return Promise.all([
       this.getTotalCount(
         30,
@@ -1484,7 +1811,8 @@ export class ConversationService {
         "Total Conversations",
         ConversationStatusEnum.COMPLETED,
         true,
-        true
+        true,
+        botIds
       ),
       this.getTotalCount(
         30,
@@ -1492,7 +1820,8 @@ export class ConversationService {
         "Handled By Bot",
         ConversationStatusEnum.COMPLETED,
         false,
-        true
+        true,
+        botIds
       ),
       this.getTotalCount(
         30,
@@ -1500,31 +1829,41 @@ export class ConversationService {
         "Handled By Agent",
         ConversationStatusEnum.COMPLETED,
         false,
-        true
+        true,
+        botIds
       ),
     ]);
   }
 
-  async getBlockStats() {
+  async getBlockStats(user?: TenantContext) {
+    const botIds = await this.tenantScope.orgBotIds(user);
     return Promise.all([
       this.getTotalCount(
         30,
         false,
         "Blocked By Bot",
-        ConversationStatusEnum.BLOCKED
+        ConversationStatusEnum.BLOCKED,
+        undefined,
+        undefined,
+        botIds
       ),
       this.getTotalCount(
         30,
         true,
         "Blocked By Agent",
-        ConversationStatusEnum.BLOCKED
+        ConversationStatusEnum.BLOCKED,
+        undefined,
+        undefined,
+        botIds
       ),
       this.getTotalCount(
         30,
         false,
         "Total Blocked Conversations",
         ConversationStatusEnum.COMPLETED,
-        true
+        true,
+        undefined,
+        botIds
       ),
     ]);
   }
@@ -1538,6 +1877,9 @@ export class ConversationService {
       conversation.agentCallEndedAt = new Date();
       await conversation.save();
     }
+    // The agent ended the handover: close the request so a later one alerts anew.
+    // The chat goes back to the bot, so an open incident stays open (R10.2).
+    this.eventEmitter.emit("conversation.ended", { conversationId, cause: "agent_release" });
   }
 
   @OnEvent("report-conversation", { async: true })
@@ -1582,10 +1924,22 @@ export class ConversationService {
       this.logger.error("error in getting chat", err);
     }
   }
-  async homeConversationCount(filter: any, status?: ConversationStatusEnum) {
+  async homeConversationCount(
+    filter: any,
+    status?: ConversationStatusEnum,
+    user?: TenantContext
+  ) {
     if (!filter) filter = "day";
+    // moment().startOf() accepts only unit names; anything else is rejected
+    // rather than silently producing an invalid date.
+    if (!["day", "week", "month", "year"].includes(filter)) filter = "day";
+    const scope = this.applyBotScope(
+      {},
+      user ? await this.tenantScope.orgBotIds(user) : undefined
+    );
     try {
       const total = await this.conversationModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(moment().startOf(filter).toISOString()),
         },
@@ -1594,6 +1948,7 @@ export class ConversationService {
 
       let percentageChange = 0;
       const previousTotal = await this.conversationModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(
             moment().subtract(1, filter).startOf(filter).toISOString()

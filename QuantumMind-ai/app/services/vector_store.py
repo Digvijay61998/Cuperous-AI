@@ -202,6 +202,38 @@ class VectorStoreService:
             )
         return hits
 
+    def search_source_prefix(
+        self, client_id: str, query: str, source_prefix: str, top_k: int = 3
+    ) -> list[dict]:
+        """Most similar chunks whose ``source`` starts with ``source_prefix``.
+
+        Used to dedupe learned Q&A (crm-incident-handover R21.3) against only
+        the ``incident:*`` sources of one tenant. Result dicts: {source, text,
+        score}; score is cosine similarity. The caller validates the prefix
+        (letters, digits, ':' and '-'), so it carries no LIKE wildcard.
+        """
+        query_vec = self.embeddings.embed_query(query)
+        expr = (
+            f'client_id == "{_escape(client_id)}" && '
+            f'source like "{_escape(source_prefix)}%"'
+        )
+        results = self._collection.search(
+            data=[query_vec],
+            anns_field="vector",
+            param={"metric_type": "COSINE", "params": {"ef": 64}},
+            limit=top_k,
+            expr=expr,
+            output_fields=["text", "source"],
+        )
+        return [
+            {
+                "source": hit.entity.get("source"),
+                "text": hit.entity.get("text"),
+                "score": float(hit.score),
+            }
+            for hit in results[0]
+        ]
+
     def sources_for_texts(self, client_id: str, texts: list[str]) -> list[str]:
         """Resolve chunk texts back to their logical ``source`` names.
 

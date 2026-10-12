@@ -692,13 +692,42 @@ reached the channel has no `externalMessageId`, so `advanceChannelMessageStatus`
 - `botEnabled` and `action` are **mutually exclusive** (400
   `ambiguous_bot_control`): the two action methods each write `botEnabled`
   themselves, so honouring both would make the result depend on application order.
-- An `agent` cannot seize a thread assigned to a colleague (409
-  `thread_owned_by_other_agent`); an `admin` can, or a thread held by someone who
-  went offline is stuck forever.
+- Nobody can seize a thread assigned to a colleague with a plain takeover (409
+  `thread_owned_by_other_agent` with `ownerName`), **admins included** since
+  crm-incident-handover Phase 4. An admin who needs it uses the explicit
+  override below, which is logged and tells the previous owner.
 - **`syncSocketStateOwnership`** mirrors the committed thread flags onto the
   visitor's in-memory state. `routeToBotOrAgent` treats the thread as
   authoritative but *also* reads socket state; leaving the two disagreeing would
   route the next inbound message by stale ownership.
+
+#### Single owner, override and typing (crm-incident-handover R7, R8)
+
+Details and operations: [`CRM-INCIDENT-HANDOVER.md`](./CRM-INCIDENT-HANDOVER.md).
+
+- **Claim is one conditional write.** `ChannelThreadService.claim` updates the
+  thread only when it has no owner or the caller already owns it, so two agents
+  pressing Take over at the same moment end with exactly one owner. A re-claim by
+  the owner is a no-op: no event.
+- **Release is owner-only** (`releaseIfOwner`).
+- **Override:** `POST /inbox/threads/:id/override {targetAgentId?}`, org admin
+  only. The target must be active, in the same org and assigned to the bot. The
+  write is conditional on the owner the admin saw (409 `ownership_changed` if it
+  moved). Logged on the open incident (`ownershipLog`, `kind: override`); the
+  previous owner gets `inbox:ownership-overridden`.
+- **Owner-only replies:** `InboxService.sendMessage` rejects a non-owner with
+  `not_thread_owner` before anything is stored; the legacy gateway path answers
+  `chat-message-rejected {ownerName, text}` so the typed text is not lost.
+- **Exactly one `inbox:thread-updated` per real ownership change**, none for a
+  no-op.
+- **Typing:** gateway `agent-typing` (owner only, at most once per 3 s per
+  agent and visitor) fans out `inbox:agent-typing` to the other dashboard
+  viewers and `typing` to the widget when the bot's `typingIndicator` is on.
+  Clients clear it after 5 s or on the next message. Widget threads only.
+- **Widget threads and incidents:** a takeover emits `agent.took.over`, which
+  tells the visitor the agent's name once and moves the open incident to
+  `agent_active`; a release emits `agent.released`, recorded on the incident,
+  which stays open.
 
 #### Optimistic send + the echo race
 
@@ -982,7 +1011,9 @@ funnels through it and none can bypass it.
 ### 5.4 Still-open UX gaps (unchanged)
 
 - No unread decrement broadcast when another agent reads a thread.
-- No typing indicator / presence.
+- Typing: agent -> widget and agent -> other dashboard viewers exist for
+  widget threads (see "Single owner, override and typing"). No visitor typing,
+  no presence, nothing for WhatsApp.
 - No in-thread search.
 - No composer draft persistence across thread switches (safe-by-design).
 - **Media still 📎-only** — the largest visible gap, blocked on the raw-message
@@ -999,7 +1030,8 @@ reports before Phase 5's tenancy work makes it per-account.
 - **No unread badge decrement on the thread list when an agent reads elsewhere.**
   `markRead` clears the server count, but another agent's dashboard only learns via
   a full refetch.
-- **No typing indicator or presence**, either direction. baileys supports both.
+- **No typing indicator or presence on WhatsApp**, either direction (baileys
+  supports both). Widget threads have the agent typing indicator.
 - **No search within a thread.** OpenWA leans on global search for this; we have
   neither.
 - **The composer has no draft persistence.** Switching threads discards a typed

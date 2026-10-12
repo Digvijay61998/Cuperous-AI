@@ -27,9 +27,11 @@ export interface ChannelProviders {
 // ** Fetch providers grouped by channel + which is active
 export const fetchMessagingProviders = createAsyncThunk(
   'messaging/fetchProviders',
-  async () => {
+  async (botId: string | undefined = undefined) => {
     try {
-      const response = await Axios.get('messaging/providers');
+      const response = await Axios.get('messaging/providers', {
+        params: botId ? { botId } : undefined,
+      });
       return response.data;
     } catch (error: any) {
       console.log('Messaging providers API:Error >>>>', error);
@@ -42,16 +44,22 @@ export const fetchMessagingProviders = createAsyncThunk(
 export const setActiveProvider = createAsyncThunk(
   'messaging/setActiveProvider',
   async (
-    { channel, providerId }: { channel: string; providerId: string },
+    {
+      channel,
+      providerId,
+      botId,
+    }: { channel: string; providerId: string; botId?: string },
     { dispatch }: Redux,
   ) => {
     try {
+      // Org admins may only change the provider for one of their own bots;
+      // only the platform owner can change the global default.
       const response = await Axios.patch(
         `messaging/providers/${channel}/active`,
-        { providerId },
+        { providerId, ...(botId ? { botId } : {}) },
       );
       toast.success(`Active provider updated for ${channel}`);
-      dispatch(fetchMessagingProviders());
+      dispatch(fetchMessagingProviders(botId));
       return response.data;
     } catch (error: any) {
       console.log('Set active provider API:Error >>>>', error);

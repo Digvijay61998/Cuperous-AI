@@ -1,5 +1,7 @@
 // ** React Imports
-import { KeyboardEvent, SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, SyntheticEvent, useContext, useEffect, useRef, useState } from 'react';
+import { ChatContext } from 'src/context/SocketContext';
+import { shouldSendTyping } from './ownership';
 
 // ** MUI Imports
 import Box from '@mui/material/Box';
@@ -29,6 +31,8 @@ interface Props {
   disabledReason?: string;
   replyTo?: InboxMessage | null;
   onClearReply?: () => void;
+  /** Send "owner is typing" signals (owner of a widget chat only). */
+  canSignalTyping?: boolean;
 }
 
 /** Matches the caps the existing agent console applies. */
@@ -62,8 +66,10 @@ const ThreadComposer = ({
   disabledReason,
   replyTo,
   onClearReply,
+  canSignalTyping,
 }: Props) => {
   const dispatch = useDispatch<AppDispatch>();
+  const chatContext: any = useContext(ChatContext);
   const [text, setText] = useState('');
   const [staged, setStaged] = useState<{
     url: string;
@@ -84,8 +90,13 @@ const ThreadComposer = ({
   const uploadSeq = useRef(0);
 
   // Leaving a thread must not carry a draft or an attachment into the next one.
+  // Losing ownership does NOT clear the draft (R8.5): only the thread change does.
+  const threadIdRef = useRef(thread.id);
+  const lastTypingAt = useRef<number | null>(null);
   useEffect(() => {
+    threadIdRef.current = thread.id;
     uploadSeq.current += 1;
+    lastTypingAt.current = null;
     setText('');
     setStaged(null);
     setUploading(false);
@@ -93,6 +104,15 @@ const ThreadComposer = ({
 
   const disabled = !!disabledReason;
   const canSubmit = !disabled && !uploading && (!!text.trim() || !!staged);
+
+  // Throttled "owner is typing" signal (R8.6), widget chats only.
+  const signalTyping = () => {
+    if (!canSignalTyping || !thread.visitor?.id) return;
+    const now = Date.now();
+    if (!shouldSendTyping(lastTypingAt.current, now)) return;
+    lastTypingAt.current = now;
+    chatContext?.emitAgentTyping?.(thread.visitor.id, thread.id);
+  };
 
   const handleFile = async (e: any) => {
     const file: File | undefined = e.target.files?.[0];
@@ -172,6 +192,7 @@ const ThreadComposer = ({
     setStaged(null);
     onClearReply?.();
 
+    const sentOn = thread.id;
     dispatch(
       sendInboxMessage({
         threadId: thread.id,
@@ -183,7 +204,14 @@ const ThreadComposer = ({
         fileName: attachment?.fileName,
         quotedMessageId,
       }),
-    );
+    ).then((res: any) => {
+      // Not the owner any more (R8.9): nothing was sent, so give the agent
+      // their text back (unless they already typed something new).
+      if (res?.payload?.reason === 'not_thread_owner' && threadIdRef.current === sentOn) {
+        setText((current) => current || message);
+        if (attachment) setStaged((current) => current || attachment);
+      }
+    });
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -261,7 +289,10 @@ const ThreadComposer = ({
           size="small"
           value={text}
           disabled={disabled}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (e.target.value) signalTyping();
+          }}
           onKeyDown={handleKeyDown}
           placeholder={
             disabledReason || 'Type a reply... (Enter to send, Shift+Enter for a new line)'

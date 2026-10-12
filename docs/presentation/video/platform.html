@@ -1,0 +1,589 @@
+<!doctype html>
+<!--
+  JarCube platform · 2-minute product video: build a bot, train it, integrate it,
+  serve support at scale, track a service request step by step, see the
+  customer in CRM, and improve from analytics.
+  Deterministic timeline: window.seek(t). Open in a browser and press Space
+  to preview in real time. Rendered by: node record.mjs --page platform.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JarCube · Platform video</title>
+<style>
+  :root { --bg:#050914; --blue:#1450f5; --cyan:#22d3ee; --violet:#8b5cf6; --text:#e8eeff; --muted:#8a9bc7;
+          --green:#34d399; --amber:#fbbf24; --red:#f87171; --glass:rgba(20,34,72,.55); --line:rgba(120,160,255,.22); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:1920px; height:1080px; overflow:hidden; background:var(--bg);
+    font-family:"Noto Sans","DejaVu Sans",sans-serif; color:var(--text); }
+  #stage { position:absolute; inset:0; overflow:hidden; }
+  canvas#bg { position:absolute; inset:0; }
+  .grid { position:absolute; left:-50%; right:-50%; bottom:-10%; height:60%;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:80px 80px; transform:perspective(600px) rotateX(62deg);
+    mask-image:linear-gradient(to top,rgba(0,0,0,.9),transparent 85%); opacity:.5; }
+  .glow { position:absolute; border-radius:50%; filter:blur(120px); opacity:.42; }
+  .scene { position:absolute; inset:0; opacity:0; }
+  .center { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  h1 { font-size:100px; font-weight:800; letter-spacing:-2px; line-height:1.05; }
+  h2 { font-size:56px; font-weight:800; letter-spacing:-1px; line-height:1.12; }
+  .grad { background:linear-gradient(90deg,#fff 0%,var(--cyan) 45%,var(--violet) 100%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { font-size:30px; color:var(--muted); margin-top:22px; }
+  .kicker { font-size:21px; letter-spacing:8px; text-transform:uppercase; color:var(--cyan); margin-bottom:18px; }
+  .glass { background:var(--glass); border:1px solid var(--line); border-radius:24px; backdrop-filter:blur(18px);
+    box-shadow:0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06); }
+  .head { position:absolute; left:110px; top:70px; text-align:left; }
+  .head h2 { font-size:52px; }
+  .step-no { display:inline-block; font-size:20px; font-weight:800; letter-spacing:4px; color:#06101f; background:var(--cyan);
+    padding:6px 16px; border-radius:999px; margin-bottom:16px; }
+  .pill { display:inline-block; padding:6px 14px; border-radius:999px; font-size:16px; font-weight:800; color:#06101f; }
+  .pill.g{background:var(--green)} .pill.a{background:var(--amber)} .pill.r{background:var(--red)} .pill.c{background:var(--cyan)} .pill.v{background:var(--violet);color:#fff}
+
+  /* orb */
+  .orb { position:relative; width:240px; height:240px; }
+  .orb .core { position:absolute; inset:46px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#fff 0%,#9be8ff 14%,var(--cyan) 32%,var(--blue) 62%,#0a1440 100%);
+    box-shadow:0 0 80px var(--cyan),0 0 160px rgba(20,80,245,.7); }
+  .orb .ring { position:absolute; inset:0; border-radius:50%; border:2px solid rgba(34,211,238,.55); }
+  .orb .ring.r2 { inset:18px; border-color:rgba(139,92,246,.55); border-style:dashed; }
+  .orb .ring.r3 { inset:-26px; border-color:rgba(34,211,238,.18); }
+
+  /* dashboard shell */
+  .dash { position:absolute; left:110px; top:210px; width:1700px; height:800px; display:flex; overflow:hidden; }
+  .side { width:300px; padding:28px 18px; background:rgba(5,12,32,.7); border-right:1px solid var(--line); }
+  .side .brand { font-size:28px; font-weight:800; margin:0 0 26px 12px; }
+  .side .brand span { color:var(--cyan); }
+  .nav { font-size:19px; color:var(--muted); padding:11px 14px; border-radius:12px; margin-bottom:4px; }
+  .nav.on { background:linear-gradient(90deg,rgba(20,80,245,.7),rgba(139,92,246,.4)); color:#fff; font-weight:700; }
+  .main { flex:1; position:relative; padding:30px 34px; }
+  .main h3 { font-size:30px; margin-bottom:22px; }
+
+  /* flow builder */
+  .canvas { position:absolute; inset:90px 30px 30px 30px; border-radius:18px;
+    background-image:radial-gradient(rgba(120,160,255,.25) 1.5px,transparent 1.5px); background-size:28px 28px; }
+  .fnode { position:absolute; width:250px; padding:16px 18px; border-radius:16px; background:rgba(12,22,52,.92);
+    border:1px solid var(--line); font-size:19px; font-weight:700; }
+  .fnode small { display:block; font-size:15px; color:var(--muted); font-weight:400; margin-top:6px; }
+  .fnode .ic { font-size:22px; margin-right:8px; }
+  svg.wires { position:absolute; inset:0; overflow:visible; pointer-events:none; }
+  .palette { position:absolute; right:30px; top:90px; width:250px; padding:18px; }
+  .palette div { font-size:16px; color:var(--muted); padding:8px 10px; border-radius:10px; border:1px dashed var(--line); margin-bottom:8px; }
+
+  /* train */
+  .sources { display:flex; flex-direction:column; gap:18px; position:absolute; left:40px; top:110px; width:420px; }
+  .src { padding:20px 24px; font-size:22px; display:flex; align-items:center; gap:16px; }
+  .src b { font-size:30px; }
+  .src .bar { flex:1; height:8px; border-radius:8px; background:rgba(255,255,255,.08); overflow:hidden; }
+  .src .bar i { display:block; height:100%; background:linear-gradient(90deg,var(--cyan),var(--violet)); }
+  .brain { position:absolute; left:640px; top:120px; width:560px; height:520px; }
+  .kb-stats { position:absolute; right:40px; top:120px; width:300px; display:flex; flex-direction:column; gap:18px; }
+  .kb-stats .glass { padding:22px; }
+  .kb-stats .n { font-size:46px; font-weight:800; }
+  .kb-stats .l { font-size:17px; color:var(--muted); }
+
+  /* integrate */
+  .code { position:absolute; left:40px; top:110px; width:760px; padding:30px; font-family:"DejaVu Sans Mono",monospace;
+    font-size:21px; line-height:1.7; white-space:pre; color:#bfe3ff; }
+  .code .k { color:var(--violet); } .code .s { color:var(--green); } .code .c { color:var(--muted); }
+  .site { position:absolute; right:40px; top:110px; width:740px; height:560px; overflow:hidden; }
+  .site .top { height:56px; background:rgba(5,12,32,.8); border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; padding:0 20px; }
+  .site .top i { width:14px; height:14px; border-radius:50%; background:#334; display:block; }
+  .site .blk { margin:24px; height:30px; border-radius:10px; background:rgba(255,255,255,.06); }
+  .bubble-btn { position:absolute; right:28px; bottom:28px; width:84px; height:84px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#fff,var(--cyan) 35%,var(--blue) 75%); box-shadow:0 0 40px var(--cyan); }
+  .channels { position:absolute; left:40px; bottom:40px; display:flex; gap:18px; }
+  .chan { padding:16px 24px; font-size:21px; }
+
+  /* scale wall */
+  .wall { position:absolute; left:110px; top:220px; width:1180px; height:790px; display:grid;
+    grid-template-columns:repeat(4,1fr); gap:16px; }
+  .mini { padding:16px; font-size:15.5px; line-height:1.35; overflow:hidden; position:relative; }
+  .mini .who { font-size:13px; color:var(--muted); margin-bottom:8px; display:flex; justify-content:space-between; }
+  .mini .q { background:linear-gradient(135deg,var(--blue),var(--violet)); padding:9px 12px; border-radius:12px 12px 4px 12px; margin-left:22px; margin-bottom:8px; }
+  .mini .a { background:rgba(255,255,255,.07); border:1px solid var(--line); padding:9px 12px; border-radius:12px 12px 12px 4px; margin-right:22px; }
+  .mini .st { position:absolute; right:12px; bottom:10px; font-size:12px; }
+  .kpis { position:absolute; right:110px; top:220px; width:470px; display:flex; flex-direction:column; gap:16px; }
+  .kpi { padding:22px 26px; }
+  .kpi .n { font-size:52px; font-weight:800; }
+  .kpi .l { font-size:18px; color:var(--muted); }
+
+  /* ticket journey */
+  .chatbox { position:absolute; left:110px; top:220px; width:600px; height:780px; display:flex; flex-direction:column; overflow:hidden; }
+  .chatbox .hd { padding:20px 24px; background:linear-gradient(90deg,rgba(20,80,245,.55),rgba(139,92,246,.35)); font-size:22px; font-weight:700; }
+  .msgs { flex:1; padding:20px; display:flex; flex-direction:column; justify-content:flex-end; gap:12px; overflow:hidden; }
+  .msg { max-width:88%; padding:14px 18px; border-radius:18px; font-size:19px; line-height:1.4; white-space:pre-line; }
+  .msg.bot { align-self:flex-start; background:rgba(255,255,255,.07); border:1px solid var(--line); border-bottom-left-radius:5px; }
+  .msg.user { align-self:flex-end; background:linear-gradient(135deg,var(--blue),var(--violet)); border-bottom-right-radius:5px; }
+  .msg.agent { align-self:flex-start; background:rgba(251,191,36,.12); border:1px solid var(--amber); border-bottom-left-radius:5px; }
+  .msg .tag { font-size:13px; font-weight:800; letter-spacing:2px; color:var(--amber); display:block; margin-bottom:4px; }
+  .ticket { position:absolute; left:760px; top:220px; width:1050px; height:780px; padding:30px 34px; }
+  .ticket .row1 { display:flex; align-items:center; gap:18px; margin-bottom:8px; }
+  .ticket .id { font-size:34px; font-weight:800; }
+  .ticket .subj { font-size:22px; color:var(--muted); margin-bottom:22px; }
+  .meta { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:26px; }
+  .meta div { padding:14px 16px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid var(--line); font-size:17px; color:var(--muted); }
+  .meta b { display:block; color:#fff; font-size:20px; margin-top:4px; }
+  .track { position:relative; display:flex; justify-content:space-between; margin:10px 20px 28px; }
+  .track .ln { position:absolute; left:30px; right:30px; top:28px; height:4px; background:rgba(255,255,255,.1); }
+  .track .ln i { display:block; height:100%; background:linear-gradient(90deg,var(--cyan),var(--green)); }
+  .tstep { position:relative; width:150px; text-align:center; font-size:17px; color:var(--muted); }
+  .tstep .dot { width:60px; height:60px; margin:0 auto 12px; border-radius:50%; border:2px solid var(--line); background:#0b1530;
+    display:flex; align-items:center; justify-content:center; font-size:24px; }
+  .tstep.on { color:#fff; font-weight:700; }
+  .tstep.on .dot { border-color:var(--cyan); box-shadow:0 0 26px var(--cyan); background:#0d2a52; }
+  .log { display:flex; flex-direction:column; gap:10px; }
+  .log div { font-size:18px; padding:12px 16px; border-radius:12px; background:rgba(255,255,255,.04); border-left:3px solid var(--cyan); }
+  .log div span { color:var(--muted); margin-right:12px; font-size:16px; }
+
+  /* CRM */
+  .crm { position:absolute; left:110px; top:220px; width:1700px; height:780px; display:flex; gap:24px; }
+  .crm .card360 { width:520px; padding:30px; }
+  .avatar { width:110px; height:110px; border-radius:50%; background:linear-gradient(135deg,var(--cyan),var(--violet));
+    display:flex; align-items:center; justify-content:center; font-size:44px; font-weight:800; margin-bottom:18px; }
+  .card360 h4 { font-size:32px; } .card360 .role { font-size:20px; color:var(--muted); margin:6px 0 20px; }
+  .fields div { display:flex; justify-content:space-between; font-size:18px; padding:11px 0; border-bottom:1px solid var(--line); }
+  .fields div span { color:var(--muted); }
+  .timeline { flex:1; padding:30px; }
+  .timeline h4 { font-size:26px; margin-bottom:20px; }
+  .ev { display:flex; gap:18px; align-items:flex-start; padding:15px 18px; border-radius:16px; background:rgba(255,255,255,.04);
+    border:1px solid var(--line); margin-bottom:12px; font-size:19px; min-width:0; }
+  .ev > div:nth-child(2) { flex:1; min-width:0; }
+  .timeline { overflow:hidden; }
+  .ev .ic { width:46px; height:46px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; flex:none; background:rgba(34,211,238,.15); }
+  .ev small { display:block; color:var(--muted); font-size:15px; margin-top:4px; }
+  .ev .when { margin-left:auto; color:var(--muted); font-size:15px; white-space:nowrap; }
+
+  /* analytics */
+  .charts { position:absolute; left:110px; top:220px; width:1700px; height:780px; display:grid; grid-template-columns:1.3fr 1fr; gap:24px; }
+  .chart { padding:28px 32px; position:relative; }
+  .chart h4 { font-size:24px; margin-bottom:16px; }
+  .bars { display:flex; align-items:flex-end; gap:16px; height:300px; margin-top:20px; }
+  .bars div { flex:1; border-radius:10px 10px 4px 4px; background:linear-gradient(180deg,var(--cyan),var(--blue)); position:relative; }
+  .bars div span { position:absolute; bottom:-30px; left:0; right:0; text-align:center; font-size:15px; color:var(--muted); }
+  .donut { width:300px; height:300px; margin:10px auto; position:relative; }
+  .donut b { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:58px; font-weight:800; }
+  .loop { display:flex; gap:14px; align-items:center; justify-content:center; margin-top:16px; font-size:19px; }
+  .loop span { padding:12px 16px; border-radius:12px; background:rgba(255,255,255,.05); border:1px solid var(--line); }
+
+  .vignette { position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.65) 100%); }
+  .scan { position:absolute; inset:0; pointer-events:none; opacity:.05; background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 4px); }
+  #flash { position:absolute; inset:0; background:#bfefff; opacity:0; pointer-events:none; }
+  .progress { position:absolute; left:0; bottom:0; height:4px; background:linear-gradient(90deg,var(--cyan),var(--violet)); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="bg" width="1920" height="1080"></canvas>
+  <div class="glow" id="g1" style="width:900px;height:900px;background:#1450f5;left:-200px;top:-300px"></div>
+  <div class="glow" id="g2" style="width:800px;height:800px;background:#8b5cf6;right:-200px;bottom:-300px"></div>
+  <div class="grid" id="grid"></div>
+
+  <!-- 1 intro -->
+  <section class="scene center" id="s-intro">
+    <div class="orb" id="orb1"><div class="ring r3"></div><div class="ring"></div><div class="ring r2"></div><div class="core"></div></div>
+    <div class="kicker" style="margin-top:56px" id="i-k">JarCube platform</div>
+    <h1 class="grad" id="i-t">Support at any scale</h1>
+    <div class="sub" id="i-s">Build · Train · Integrate · Resolve · Learn</div>
+  </section>
+
+  <!-- 2 build -->
+  <section class="scene" id="s-build">
+    <div class="head"><div class="step-no">STEP 1 · BUILD</div><h2>Design the conversation, <span class="grad">no code</span></h2></div>
+    <div class="dash glass" id="d-build">
+      <div class="side"><div class="brand">Jar<span>Cube</span></div>
+        <div class="nav">Dashboards</div><div class="nav">Conversations</div><div class="nav on">Bots</div><div class="nav">Agents</div>
+        <div class="nav">Service Requests</div><div class="nav">Question Bank</div><div class="nav">CRM</div><div class="nav">Reports</div></div>
+      <div class="main"><h3>myKONE Assistant · Flow builder</h3>
+        <div class="canvas" id="canvas">
+          <svg class="wires" id="fwires"></svg>
+          <div class="fnode" id="fn0" style="left:20px;top:250px"><span class="ic">🏁</span>Start<small>greets every visitor</small></div>
+          <div class="fnode" id="fn1" style="left:320px;top:250px"><span class="ic">💬</span>Main menu<small>buttons + free text</small></div>
+          <div class="fnode" id="fn2" style="left:640px;top:40px"><span class="ic">🤖</span>AI answer<small>grounded in your docs</small></div>
+          <div class="fnode" id="fn3" style="left:640px;top:250px"><span class="ic">🔗</span>Webhook<small>live customer data</small></div>
+          <div class="fnode" id="fn4" style="left:640px;top:460px"><span class="ic">🧾</span>Questionnaire<small>validated details</small></div>
+          <div class="fnode" id="fn5" style="left:960px;top:360px"><span class="ic">🎫</span>Service request<small>ticket with full chat</small></div>
+          <div class="fnode" id="fn6" style="left:960px;top:560px"><span class="ic">🙋</span>Transfer to agent<small>live takeover</small></div>
+        </div>
+        <div class="palette glass" id="palette"><div>+ Bot response</div><div>+ User input</div><div>+ AI node</div><div>+ Webhook</div>
+          <div>+ Set attributes</div><div>+ File upload</div><div>+ Open template</div><div>+ Segments</div><div>+ Go to step</div><div>+ Close chat</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 train -->
+  <section class="scene" id="s-train">
+    <div class="head"><div class="step-no">STEP 2 · TRAIN</div><h2>Teach it your knowledge <span class="grad">in minutes</span></h2></div>
+    <div class="dash glass">
+      <div class="side"><div class="brand">Jar<span>Cube</span></div>
+        <div class="nav">Dashboards</div><div class="nav">Conversations</div><div class="nav on">Bots › Training data</div><div class="nav">Agents</div>
+        <div class="nav">Service Requests</div><div class="nav">Question Bank</div><div class="nav">CRM</div><div class="nav">Reports</div></div>
+      <div class="main">
+        <div class="sources">
+          <div class="src glass" id="src0"><b>📄</b>Knowledge-Base.pdf<div class="bar"><i id="sb0"></i></div></div>
+          <div class="src glass" id="src1"><b>🌐</b>mykone.kone.com<div class="bar"><i id="sb1"></i></div></div>
+          <div class="src glass" id="src2"><b>📝</b>Process guides.docx<div class="bar"><i id="sb2"></i></div></div>
+          <div class="src glass" id="src3"><b>❓</b>Question bank · Q&amp;A<div class="bar"><i id="sb3"></i></div></div>
+        </div>
+        <canvas class="brain" id="brain" width="560" height="520"></canvas>
+        <div class="kb-stats">
+          <div class="glass"><div class="n grad" id="k1">0</div><div class="l">knowledge chunks indexed</div></div>
+          <div class="glass"><div class="n grad" id="k2">0</div><div class="l">approved answers</div></div>
+          <div class="glass"><div class="n grad">100%</div><div class="l">answers grounded in your content</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 integrate -->
+  <section class="scene" id="s-int">
+    <div class="head"><div class="step-no">STEP 3 · INTEGRATE</div><h2>One snippet. <span class="grad">Every channel.</span></h2></div>
+    <div class="dash glass" style="background:transparent;border:none;box-shadow:none;backdrop-filter:none">
+      <div class="code glass" id="code"></div>
+      <div class="site glass" id="site">
+        <div class="top"><i></i><i></i><i></i><span style="margin-left:14px;color:var(--muted);font-size:17px">my.kone.com</span></div>
+        <div class="blk" style="width:60%"></div><div class="blk" style="width:85%;height:120px"></div>
+        <div class="blk" style="width:70%"></div><div class="blk" style="width:50%"></div>
+        <div class="bubble-btn" id="bbtn"></div>
+      </div>
+      <div class="channels" id="chans">
+        <div class="chan glass">🖥 Web widget</div><div class="chan glass">💬 WhatsApp</div><div class="chan glass">✈️ Telegram</div>
+        <div class="chan glass">📘 Messenger</div><div class="chan glass">🔗 Webhooks &amp; APIs</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 scale -->
+  <section class="scene" id="s-scale">
+    <div class="head"><div class="step-no">STEP 4 · SCALE</div><h2>Thousands of customers, <span class="grad">all at once</span></h2></div>
+    <div class="wall" id="wall"></div>
+    <div class="kpis">
+      <div class="kpi glass"><div class="n grad" id="m1">0</div><div class="l">conversations today</div></div>
+      <div class="kpi glass"><div class="n grad" id="m2">0%</div><div class="l">resolved by AI, no wait</div></div>
+      <div class="kpi glass"><div class="n grad" id="m3">0 s</div><div class="l">average first reply</div></div>
+      <div class="kpi glass"><div class="n" id="m4" style="color:var(--amber)">☆☆☆☆☆</div><div class="l">customer satisfaction</div></div>
+    </div>
+  </section>
+
+  <!-- 6 ticket journey -->
+  <section class="scene" id="s-ticket">
+    <div class="head"><div class="step-no">STEP 5 · RESOLVE</div><h2>When it needs a person, <span class="grad">nothing gets lost</span></h2></div>
+    <div class="chatbox glass"><div class="hd">💬 myKONE Assistant</div><div class="msgs" id="tmsgs"></div></div>
+    <div class="ticket glass" id="ticket">
+      <div class="row1"><span class="id" id="tid">Service request</span><span class="pill r" id="tprio">HIGH</span><span class="pill c" id="tstat">OPEN</span></div>
+      <div class="subj">Door keeps reopening · Elevator 41230018 · Tower A</div>
+      <div class="meta">
+        <div>Channel<b>Web widget</b></div><div>Customer<b>Anna Virtanen</b></div>
+        <div>Assignee<b id="tassg">Unassigned</b></div><div>SLA<b id="tsla">4 h left</b></div>
+      </div>
+      <div class="track"><div class="ln"><i id="tln"></i></div>
+        <div class="tstep" id="ts0"><div class="dot">✚</div>Created</div>
+        <div class="tstep" id="ts1"><div class="dot">👤</div>Assigned</div>
+        <div class="tstep" id="ts2"><div class="dot">💬</div>Commented</div>
+        <div class="tstep" id="ts3"><div class="dot">✔</div>Resolved</div>
+        <div class="tstep" id="ts4"><div class="dot">🔒</div>Closed</div>
+      </div>
+      <div class="log" id="tlog"></div>
+    </div>
+  </section>
+
+  <!-- 7 CRM -->
+  <section class="scene" id="s-crm">
+    <div class="head"><div class="step-no">STEP 6 · KNOW THE CUSTOMER</div><h2>Every conversation in <span class="grad">one customer view</span></h2></div>
+    <div class="crm">
+      <div class="card360 glass" id="c360">
+        <div class="avatar">AV</div><h4>Anna Virtanen</h4><div class="role">Facility Manager · Riverside Properties</div>
+        <div class="fields">
+          <div><span>Company</span>Riverside Properties</div><div><span>Sites</span>4</div>
+          <div><span>Equipment</span>12 units</div><div><span>Open requests</span><b id="copen">1</b></div>
+          <div><span>Satisfaction</span><b style="color:var(--amber)">★★★★★</b></div><div><span>Segment</span>Delivery reminders</div>
+        </div>
+      </div>
+      <div class="timeline glass"><h4>Activity timeline</h4><div id="tl"></div></div>
+    </div>
+  </section>
+
+  <!-- 8 analytics -->
+  <section class="scene" id="s-ana">
+    <div class="head"><div class="step-no">STEP 7 · LEARN</div><h2>Measure everything. <span class="grad">Improve every week.</span></h2></div>
+    <div class="charts">
+      <div class="chart glass"><h4>Conversations vs. service requests · last 7 days</h4><div class="bars" id="bars"></div>
+        <div style="display:flex;gap:26px;margin-top:50px;font-size:17px;color:var(--muted)">
+          <span><b style="color:var(--cyan)">■</b> solved by AI</span><span><b style="color:var(--amber)">■</b> needed a specialist</span></div></div>
+      <div class="chart glass"><h4>Resolved without waiting</h4>
+        <div class="donut"><svg viewBox="0 0 100 100" width="300" height="300"><circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"/>
+          <circle id="dn" cx="50" cy="50" r="40" fill="none" stroke="url(#gd)" stroke-width="12" stroke-linecap="round" transform="rotate(-90 50 50)" stroke-dasharray="0 252"/>
+          <defs><linearGradient id="gd"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs></svg><b id="dnv">0%</b></div>
+        <div class="loop" id="loop"><span>❓ Unanswered</span>→<span>📝 Teach in Question Bank</span>→<span>🤖 Answered next time</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 outro -->
+  <section class="scene center" id="s-out">
+    <div class="orb" id="orb2"><div class="ring r3"></div><div class="ring"></div><div class="ring r2"></div><div class="core"></div></div>
+    <h1 class="grad" style="margin-top:56px;font-size:86px">Happier customers. Lighter queues.</h1>
+    <div class="sub">JarCube · AI assistant, live inbox, service requests and CRM in one platform</div>
+  </section>
+
+  <div class="vignette"></div><div class="scan"></div><div id="flash"></div><div class="progress" id="progress"></div>
+</div>
+
+<script>
+const DURATION = 120;
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = (t) => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const outBack = (t) => { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const rise = (el, p, d = 40) => { const e = ease(clamp(p)); el.style.opacity = e; el.style.transform = `translateY(${(1 - e) * d}px)`; };
+const fmt = (n) => Math.round(n).toLocaleString("en-US");
+
+const SCENES = [["s-intro",0,8],["s-build",8,22],["s-train",22,34],["s-int",34,46],["s-scale",46,62],
+                ["s-ticket",62,90],["s-crm",90,101],["s-ana",101,113],["s-out",113,120]];
+const CUTS = SCENES.slice(1).map((s) => s[1]);
+
+// ---------------------------------------------------------------- background
+const cv = $("#bg"), cx = cv.getContext("2d");
+let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+const P = Array.from({ length: 140 }, () => ({ x: rnd() * 1920, y: rnd() * 1080, z: .3 + rnd() * 1.2, p: rnd() * 6.28 }));
+function drawBg(t) {
+  cx.clearRect(0, 0, 1920, 1080);
+  const pts = P.map((q) => ({ x: (q.x + t * 14 * q.z) % 1960 - 20, y: q.y + Math.sin(t * .4 + q.p) * 22 * q.z, z: q.z }));
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y, d = dx * dx + dy * dy;
+    if (d < 16000) { cx.strokeStyle = `rgba(90,150,255,${(1 - d / 16000) * .15})`; cx.beginPath(); cx.moveTo(pts[i].x, pts[i].y); cx.lineTo(pts[j].x, pts[j].y); cx.stroke(); }
+  }
+  for (const q of pts) { cx.fillStyle = `rgba(160,220,255,${.25 + q.z * .35})`; cx.beginPath(); cx.arc(q.x, q.y, q.z * 1.8, 0, 6.28); cx.fill(); }
+}
+function orb(el, t) {
+  const r = el.querySelectorAll(".ring");
+  r[0].style.transform = `rotate(${t * 20}deg) scale(${1 + .04 * Math.sin(t * 2)})`;
+  r[1].style.transform = `rotate(${t * 40}deg)`; r[2].style.transform = `rotate(${-t * 60}deg)`;
+  el.querySelector(".core").style.transform = `scale(${1 + .05 * Math.sin(t * 3.2)})`;
+}
+
+// ---------------------------------------------------------------- 2 build
+const FN = ["fn0","fn1","fn2","fn3","fn4","fn5","fn6"];
+const FE = [[0,1],[1,2],[1,3],[1,4],[2,5],[4,5],[5,6],[3,5]];
+function center(id, side) {
+  const el = document.getElementById(id); const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+  return side === "r" ? [x + 250, y + 36] : [x, y + 36];
+}
+function sceneBuild(t) {
+  FN.forEach((id, i) => { const p = outBack(clamp((t - (9.2 + i * .9)) / .5)); const el = document.getElementById(id);
+    el.style.opacity = clamp(p * 1.5); el.style.transform = `scale(${.7 + .3 * p})`;
+    el.style.boxShadow = t > 9.2 + i * .9 && t < 10.4 + i * .9 ? "0 0 30px rgba(34,211,238,.6)" : "none"; });
+  rise($("#palette"), prog(t, 8.6, 9.6), 20);
+  $("#fwires").innerHTML = FE.map(([a, b], k) => {
+    const e = ease(prog(t, 10.5 + k * .8, 11.4 + k * .8)); if (e <= 0) return "";
+    const [x1, y1] = center(FN[a], "r"), [x2, y2] = center(FN[b], "l"); const mx = (x1 + x2) / 2;
+    const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    const pulse = (t * .6 + k * .17) % 1;
+    return `<path d="${d}" fill="none" stroke="#22d3ee" stroke-width="3" opacity=".8" pathLength="1" stroke-dasharray="${e} 1"/>` +
+      (e >= 1 ? pulseDot(x1, y1, mx, x2, y2, pulse) : "");
+  }).join("");
+}
+function pulseDot(x1, y1, mx, x2, y2, s) {
+  const u = 1 - s, x = u*u*u*x1 + 3*u*u*s*mx + 3*u*s*s*mx + s*s*s*x2, y = u*u*u*y1 + 3*u*u*s*y1 + 3*u*s*s*y2 + s*s*s*y2;
+  return `<circle cx="${x}" cy="${y}" r="7" fill="#8b5cf6" style="filter:drop-shadow(0 0 10px #8b5cf6)"/>`;
+}
+
+// ---------------------------------------------------------------- 3 train
+const bctx = () => $("#brain").getContext("2d");
+let s2 = 3; const r2 = () => ((s2 = (s2 * 48271) % 2147483647) / 2147483647);
+const NODES = Array.from({ length: 70 }, () => ({ a: r2() * 6.28, r: 40 + r2() * 200, s: .2 + r2() * .6, k: r2() }));
+function sceneTrain(t) {
+  for (let i = 0; i < 4; i++) {
+    rise(document.getElementById("src" + i), prog(t, 22.6 + i * .5, 23.3 + i * .5), 30);
+    document.getElementById("sb" + i).style.width = `${ease(prog(t, 23.6 + i * .9, 26.6 + i * .9)) * 100}%`;
+  }
+  const fill = prog(t, 24, 31.5);
+  $("#k1").textContent = fmt(4812 * ease(fill)); $("#k2").textContent = fmt(183 * ease(fill));
+  const c = bctx(); c.clearRect(0, 0, 560, 520); const cxp = 280, cyp = 260;
+  const shown = Math.floor(NODES.length * ease(fill));
+  const pts = NODES.slice(0, shown).map((n) => [cxp + Math.cos(n.a + t * n.s * .4) * n.r, cyp + Math.sin(n.a + t * n.s * .4) * n.r * .85]);
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1], d = dx * dx + dy * dy;
+    if (d < 9000) { c.strokeStyle = `rgba(139,92,246,${(1 - d / 9000) * .5})`; c.beginPath(); c.moveTo(...pts[i]); c.lineTo(...pts[j]); c.stroke(); }
+  }
+  pts.forEach(([x, y], i) => { c.fillStyle = i % 3 ? "#22d3ee" : "#8b5cf6"; c.beginPath(); c.arc(x, y, 4, 0, 6.28); c.fill(); });
+  const g = c.createRadialGradient(cxp, cyp, 0, cxp, cyp, 90); g.addColorStop(0, "rgba(255,255,255,.9)"); g.addColorStop(.3, "rgba(34,211,238,.6)"); g.addColorStop(1, "rgba(20,80,245,0)");
+  c.fillStyle = g; c.beginPath(); c.arc(cxp, cyp, 90 * (1 + .06 * Math.sin(t * 3)), 0, 6.28); c.fill();
+  // streams from sources into the brain
+  for (let i = 0; i < 4; i++) {
+    if (t < 23.6 + i * .9 || t > 26.6 + i * .9 + .5) continue;
+    for (let k = 0; k < 4; k++) { const s = ((t * 1.4 + k * .25) % 1); const x = -40 + s * (cxp + 40), y = 60 + i * 115 + (cyp - (60 + i * 115)) * s;
+      c.fillStyle = "rgba(34,211,238,.9)"; c.beginPath(); c.arc(x, y, 5, 0, 6.28); c.fill(); }
+  }
+}
+
+// ---------------------------------------------------------------- 4 integrate
+// [css class, text] segments; newlines are explicit.
+const CODE = [
+  ['c', '<!-- add once, on every page -->\n'],
+  // "<\/script>" is escaped so the HTML parser doesn't end this script block.
+  ['k', '<script>\n'],
+  ['', '  window.botId   = '], ['s', '"mykone-assistant"'], ['', ';\n'],
+  ['', '  window.baseUrl = '], ['s', '"https://api.jarcube.com"'], ['', ';\n'],
+  ['k', '<\/script>\n'],
+  ['k', '<script '], ['', 'type='], ['s', '"module"'], ['', '\n        src='], ['s', '"…/widget/plugin.js"'], ['k', '><\/script>'],
+];
+const CODE_LEN = CODE.reduce((n, [, s]) => n + s.length, 0);
+function sceneInt(t) {
+  rise($("#code"), prog(t, 34.4, 35.2), 30); rise($("#site"), prog(t, 34.8, 35.6), 30);
+  const n = Math.floor(CODE_LEN * prog(t, 35.4, 40));
+  let left = n, html = "";
+  for (const [c, s] of CODE) {
+    if (left <= 0) break; const part = s.slice(0, left); left -= s.length;
+    const esc = part.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    html += c ? `<span class="${c}">${esc}</span>` : esc;
+  }
+  $("#code").innerHTML = html + (Math.floor(t * 3) % 2 && n < CODE_LEN ? "▍" : "");
+  const b = outBack(clamp((t - 40.4) / .6)); $("#bbtn").style.transform = `scale(${b})`;
+  $("#bbtn").style.boxShadow = `0 0 ${40 + 30 * Math.max(0, Math.sin(t * 4))}px var(--cyan)`;
+  document.querySelectorAll("#chans .chan").forEach((el, i) => rise(el, prog(t, 41.5 + i * .4, 42.2 + i * .4), 30));
+}
+
+// ---------------------------------------------------------------- 5 scale wall
+const CONVOS = [
+  ["Riverside Properties", "Where is elevator 41234561?", "Production started. Next: shipped, est. 4 Nov."],
+  ["Nordic Malls", "What does 'Waiting for PO' mean?", "Add your PO number so KONE can plan the work."],
+  ["City Hospital", "When is the next service visit?", "Planned for 14 Oct, 09:00–11:00."],
+  ["Harbor Towers", "Download my September invoice", "Invoices › open it › Download invoice (pdf)."],
+  ["Aurora Offices", "How do I add a new user?", "My team › Add new member › choose role and sites."],
+  ["Metro Station 7", "Escalator stopped this morning?", "Callout open. Technician on the way."],
+  ["Lakeside Hotel", "Explain my inspection report", "3 remarks, 1 safety issue with a repair tender ready."],
+  ["Granite Bank", "Why can't I see invoices?", "You need the View Invoices permission."],
+  ["Sunrise Clinic", "Talk to a person please", "Connecting you with a KONE specialist…"],
+  ["Polar Arena", "Is elevator B running?", "In operation, real-time monitored."],
+  ["Westgate Mall", "Approve tender in chat?", "Here's the link to review and approve it."],
+  ["Seaview Homes", "What do I do before installation?", "5 site-readiness tasks. Here's the list."],
+];
+function sceneScale(t) {
+  const wall = $("#wall");
+  if (!wall.dataset.ok) { wall.dataset.ok = 1; wall.innerHTML = CONVOS.map((c, i) => `<div class="mini glass" id="cv${i}"><div class="who"><span>${c[0]}</span><span id="cvc${i}"></span></div>
+    <div class="q">${c[1]}</div><div class="a" id="cva${i}">${c[2]}</div><span class="st" id="cvs${i}"></span></div>`).join(""); }
+  CONVOS.forEach((c, i) => {
+    const start = 46.6 + (i % 4) * .45 + Math.floor(i / 4) * 1.1;
+    const p = outBack(clamp((t - start) / .5)); const el = document.getElementById("cv" + i);
+    el.style.opacity = clamp(p * 1.4); el.style.transform = `scale(${.8 + .2 * p})`;
+    const ans = clamp((t - start - 1.2) / 1.1); document.getElementById("cva" + i).style.opacity = ease(ans);
+    const handed = i === 8;
+    document.getElementById("cvs" + i).innerHTML = ans >= 1 ? (handed ? '<span class="pill a">AGENT</span>' : '<span class="pill g">RESOLVED</span>') : "";
+    document.getElementById("cvc" + i).textContent = ["EN", "FI", "SV", "EN", "DE", "EN", "FR", "IT", "EN", "FI", "ES", "NL"][i];
+    el.style.borderColor = ans >= 1 ? (handed ? "var(--amber)" : "rgba(52,211,153,.6)") : "var(--line)";
+  });
+  const p = ease(prog(t, 47, 60));
+  $("#m1").textContent = fmt(12480 * p); $("#m2").textContent = `${Math.round(81 * p)}%`;
+  $("#m3").textContent = `${Math.max(2, Math.round(30 - 28 * p))} s`;
+  const stars = Math.round(5 * ease(prog(t, 52, 60))); $("#m4").textContent = "★".repeat(stars) + "☆".repeat(5 - stars);
+  document.querySelectorAll(".kpi").forEach((el, i) => rise(el, prog(t, 46.5 + i * .4, 47.3 + i * .4), 30));
+}
+
+// ---------------------------------------------------------------- 6 ticket journey
+const TMSG = [
+  [63.0, "user", "The door of elevator 41230018 keeps reopening on floor 3."],
+  [65.0, "bot", "Thanks Anna. It's in operation, but I can't fix a door fault from here. I'll raise a service request for a technician."],
+  [67.6, "bot", "✅ Service request SR_9f2K7a raised (priority HIGH). You'll get updates here and by email."],
+  [73.6, "agent", "Hi Anna, I'm Laura from KONE. A technician is booked for today 14:00."],
+  [82.6, "bot", "Update: SR_9f2K7a is resolved. The door sensor was replaced. How did we do?"],
+  [85.0, "user", "★★★★★  Fast and easy, thank you!"],
+];
+const STEPS = [[67.8, "Created", "by myKONE Assistant · full chat attached · priority HIGH"],
+               [70.6, "Assigned", "auto-routed to Laura (Door specialists · Finland)"],
+               [73.8, "Commented", "Laura: technician booked for 14:00 today"],
+               [79.4, "Resolved", "door sensor replaced · equipment back in operation"],
+               [86.4, "Closed", "customer rated 5★ · knowledge base updated"]];
+function sceneTicket(t) {
+  rise($("#ticket"), prog(t, 67.4, 68.4), 40);
+  let html = "";
+  for (const [at, who, txt] of TMSG) {
+    if (who !== "user" && t >= at - 1.1 && t < at) html += `<div class="msg bot" style="opacity:.8">● ● ●</div>`;
+    if (t >= at) { const p = outBack(clamp((t - at) / .45));
+      const tag = who === "agent" ? '<span class="tag">KONE SPECIALIST · LIVE</span>' : "";
+      html += `<div class="msg ${who}" style="opacity:${clamp(p * 1.4)};transform:scale(${.86 + .14 * p})">${tag}${txt}</div>`; }
+  }
+  $("#tmsgs").innerHTML = html;
+  const done = STEPS.filter(([at]) => t >= at).length;
+  $("#tid").textContent = t >= 67.8 ? "SR_9f2K7a" : "Service request";
+  $("#tstat").textContent = done >= 5 ? "CLOSED" : done >= 4 ? "RESOLVED" : "OPEN";
+  $("#tstat").className = "pill " + (done >= 4 ? "g" : "c");
+  $("#tassg").textContent = done >= 2 ? "Laura M." : "Unassigned";
+  $("#tsla").textContent = done >= 4 ? "Met · 2 h 40 min" : done >= 1 ? `${(4 - prog(t, 67.8, 79.4) * 1.3).toFixed(1)} h left` : "—";
+  for (let i = 0; i < 5; i++) {
+    const el = document.getElementById("ts" + i), on = t >= STEPS[i][0]; el.classList.toggle("on", on);
+    const pop = on ? outBack(clamp((t - STEPS[i][0]) / .5)) : 1; el.querySelector(".dot").style.transform = `scale(${on ? .7 + .3 * pop : 1})`;
+  }
+  // Progress line: fills to the latest reached step, animating over 0.8 s.
+  let seg = 0;
+  if (done > 1) {
+    const from = (done - 2) / 4, to = (done - 1) / 4;
+    seg = from + (to - from) * ease(prog(t, STEPS[done - 1][0], STEPS[done - 1][0] + .8));
+  }
+  $("#tln").style.width = `${clamp(seg) * 100}%`;
+  $("#tlog").innerHTML = STEPS.filter(([at]) => t >= at).map(([at, s, d]) =>
+    `<div style="opacity:${ease(clamp((t - at) / .5))}"><span>${s.toUpperCase()}</span>${d}</div>`).join("");
+}
+
+// ---------------------------------------------------------------- 7 CRM
+const EVENTS = [
+  ["💬", "Conversation with myKONE Assistant", "Door fault on 41230018 · 6 messages", "Today 10:12"],
+  ["🎫", "Service request SR_9f2K7a · Closed", "Resolved in 2 h 40 min · rated 5★", "Today 12:52"],
+  ["📞", "Call · Laura M.", "Confirmed technician visit and follow-up", "Today 10:31"],
+  ["✉️", "Email · Delivery update", "Riverside Offices · Production started", "Yesterday"],
+  ["✅", "Task · Review repair tender", "Tower A door operator · due Fri", "Mon"],
+  ["💼", "Deal · Tower B Upgrade", "Stage: Contract sent", "Last week"],
+];
+function sceneCrm(t) {
+  rise($("#c360"), prog(t, 90.4, 91.3), 40);
+  $("#tl").innerHTML = EVENTS.map(([ic, a, b, w], i) => {
+    const p = ease(prog(t, 91.2 + i * .9, 91.9 + i * .9));
+    return `<div class="ev" style="opacity:${p};transform:translateX(${(1 - p) * 40}px)"><div class="ic">${ic}</div><div>${a}<small>${b}</small></div><div class="when">${w}</div></div>`;
+  }).join("");
+  $("#copen").textContent = t > 93 ? "0" : "1";
+}
+
+// ---------------------------------------------------------------- 8 analytics
+const DAYS = [["Mon", 62, 11], ["Tue", 70, 12], ["Wed", 66, 10], ["Thu", 78, 12], ["Fri", 84, 11], ["Sat", 48, 6], ["Sun", 40, 5]];
+function sceneAna(t) {
+  const p = ease(prog(t, 101.6, 105));
+  $("#bars").innerHTML = DAYS.map(([d, ai, ag], i) => {
+    const q = ease(prog(t, 101.6 + i * .25, 103 + i * .25));
+    return `<div style="height:${(ai + ag) * 3.2 * q}px;background:linear-gradient(180deg,var(--cyan) ${(ai / (ai + ag)) * 100}%,var(--amber) ${(ai / (ai + ag)) * 100}%)"><span>${d}</span></div>`;
+  }).join("");
+  const v = 81 * p; $("#dn").setAttribute("stroke-dasharray", `${(v / 100) * 251.3} 252`); $("#dnv").textContent = `${Math.round(v)}%`;
+  document.querySelectorAll("#loop span").forEach((el, i) => { const q = ease(prog(t, 106 + i * 1.1, 106.8 + i * 1.1));
+    el.style.opacity = .25 + .75 * q; el.style.borderColor = q > .9 ? "var(--cyan)" : "var(--line)"; });
+}
+
+// ---------------------------------------------------------------- master
+function seek(t) {
+  drawBg(t);
+  $("#g1").style.transform = `translate(${Math.sin(t * .2) * 120}px,${Math.cos(t * .15) * 80}px)`;
+  $("#g2").style.transform = `translate(${Math.cos(t * .18) * 120}px,${Math.sin(t * .22) * 80}px)`;
+  $("#grid").style.backgroundPosition = `0 ${t * 40}px`;
+  $("#progress").style.width = `${(t / DURATION) * 100}%`;
+  for (const [id, a, b] of SCENES) {
+    const el = document.getElementById(id), al = clamp(Math.min((t - a) / .8, (b - t) / .8));
+    el.style.opacity = al; el.style.display = al > 0 ? "" : "none"; el.style.transform = `scale(${1 + .03 * (1 - al)})`;
+  }
+  $("#flash").style.opacity = Math.max(...CUTS.map((c) => clamp(1 - Math.abs(t - c) / .25) * .16));
+  document.querySelectorAll(".head").forEach((h) => { const sc = h.closest(".scene"); const a = SCENES.find((s) => s[0] === sc.id)[1]; rise(h, prog(t, a + .2, a + 1), 30); });
+
+  if (t < 8) { orb($("#orb1"), t); rise($("#orb1"), prog(t, 0, 1.2), 0); rise($("#i-k"), prog(t, 1, 2)); rise($("#i-t"), prog(t, 1.6, 2.8), 60); rise($("#i-s"), prog(t, 2.6, 3.6)); }
+  else if (t < 22) sceneBuild(t);
+  else if (t < 34) sceneTrain(t);
+  else if (t < 46) sceneInt(t);
+  else if (t < 62) sceneScale(t);
+  else if (t < 90) sceneTicket(t);
+  else if (t < 101) sceneCrm(t);
+  else if (t < 113) sceneAna(t);
+  else orb($("#orb2"), t);
+}
+window.seek = seek; window.DURATION = DURATION;
+let playing = false, t0 = 0, start = 0; seek(0);
+addEventListener("keydown", (e) => { if (e.code !== "Space") return; playing = !playing; start = performance.now() - t0 * 1000;
+  const loop = () => { if (!playing) return; t0 = (performance.now() - start) / 1000; if (t0 > DURATION) { t0 = 0; start = performance.now(); } seek(t0); requestAnimationFrame(loop); }; loop(); });
+</script>
+</body>
+</html>

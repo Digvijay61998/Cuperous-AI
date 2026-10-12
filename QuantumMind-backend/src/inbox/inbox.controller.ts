@@ -11,6 +11,7 @@ import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
 import { CurrentUser } from 'src/util';
 import { BotControlDto } from './dto/bot-control.dto';
+import { OverrideOwnerDto } from './dto/override-owner.dto';
 import { ListMessagesDto } from './dto/list-messages.dto';
 import { ListThreadsDto } from './dto/list-threads.dto';
 import { SendInboxMessageDto } from './dto/send-message.dto';
@@ -119,6 +120,18 @@ export class InboxController {
     @Body() dto: BotControlDto,
   ) {
     return this.inboxService.setBotControl(user, id, dto);
+  }
+
+  @Post('threads/:id/override')
+  @ApiOperation({
+    summary: 'Org admin: take the chat, or give it to another agent, even if owned',
+  })
+  overrideOwner(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: OverrideOwnerDto,
+  ) {
+    return this.inboxService.overrideOwner(user, id, dto?.targetAgentId);
   }
 
   @Post('threads/:id/read')

@@ -32,6 +32,22 @@ export interface BotPayload {
   // the bot's own id when not set.
   clientId?: string;
   companyName?: string;
+  // ** Transfer To Agent node **
+  /** Agent group routing ("within" | "another"), set by the flow builder. */
+  group?: string;
+  /** Transfers from this node raise a high-priority (emergency) agent alert. */
+  emergency?: boolean;
+  /**
+   * Marks the node as a Terminal_Outcome: after it runs, the bot sends the
+   * Closure_Prompt instead of continuing (R14.1). Set by the flow builder.
+   */
+  terminal?: boolean;
+  // ** Ticket node **
+  /**
+   * Attribute aliases appended under the problem in the Service Request
+   * description, in order (R1.1). Default: ticket_summary, ticket_reference.
+   */
+  ticketAttributes?: string[];
 }
 
 export interface TemplateVariableMapping {

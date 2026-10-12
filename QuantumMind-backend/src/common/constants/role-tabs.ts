@@ -6,6 +6,9 @@ import { Role } from '../enums/role.enum';
  * source of truth for tab-based access; the UI filters its navigation from the
  * same mapping (surfaced via `GET /me/entitlements`) and each tab's APIs are
  * guarded with `@Roles(...)`.
+ *
+ * MIRROR: `QuantumMind-ui/src/utils/role-tabs.ts` holds an identical copy of
+ * the tab keys and ROLE_TABS matrix. Keep both in sync (design §5.1).
  */
 export enum Tab {
   DASHBOARDS = 'dashboards',
@@ -39,7 +42,8 @@ const ALL_TABS: Tab[] = Object.values(Tab);
  * - AGENT sees the conversation-oriented tabs only.
  */
 export const ROLE_TABS: Record<Role, Tab[]> = {
-  [Role.SUPER_ADMIN]: [],
+  // Full access: everything an ORG_ADMIN can see, across organizations.
+  [Role.SUPER_ADMIN]: ALL_TABS,
   [Role.ORG_ADMIN]: ALL_TABS,
   [Role.ORG_MANAGER]: ALL_TABS.filter((t) => t !== Tab.CHANNEL_PROVIDERS),
   [Role.AGENT]: [
@@ -50,4 +54,13 @@ export const ROLE_TABS: Record<Role, Tab[]> = {
   ],
 };
 
-export const tabsForRole = (role: Role): Tab[] => ROLE_TABS[role] ?? [];
+/**
+ * Tabs visible to `role`. Fails closed: unknown / missing roles (including
+ * inherited object keys like "constructor") get no tabs. Returns a copy so
+ * callers cannot mutate the shared matrix.
+ */
+export const tabsForRole = (role: Role | string | null | undefined): Tab[] =>
+  typeof role === 'string' &&
+  Object.prototype.hasOwnProperty.call(ROLE_TABS, role)
+    ? [...ROLE_TABS[role as Role]]
+    : [];

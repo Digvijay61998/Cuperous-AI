@@ -12,6 +12,7 @@ import Axios from 'src/helper/Axios';
 
 // ** Toasters Imports
 import { toast } from 'react-hot-toast';
+import { ownershipErrorText } from 'src/views/apps/inbox/ownership';
 import {
   InboxMessage,
   InboxMessageEvent,
@@ -136,7 +137,8 @@ export const getInboxMessages = createAsyncThunk(
       if (params.before) query.before = params.before;
       const response = await Axios.get(
         `/inbox/threads/${params.threadId}/messages`,
-        { params: query },
+        // R9.10: past 10 s treat it as failed and offer Retry.
+        { params: query, timeout: 10_000 },
       );
       return { threadId: params.threadId, ...response.data };
     } catch (error: any) {
@@ -230,10 +232,17 @@ export const sendInboxMessage = createAsyncThunk(
           dispatch(getInboxChannelStatus(channel));
         }
       }
+      // Not the owner (R7.2): refresh the thread so the header/composer show
+      // who is handling it (R8.9); the reducer drops the never-sent bubble.
+      if (reason === 'not_thread_owner') {
+        dispatch(refreshInboxThread(params.threadId));
+      }
       return rejectWithValue({
         threadId: params.threadId,
         correlationId: params.correlationId,
         reason,
+        // Returned so the composer can put the text back (R8.9).
+        message: params.message,
       });
     }
   },
@@ -303,14 +312,43 @@ export const retryInboxMessage = createAsyncThunk(
   },
 );
 
+/**
+ * Ownership rejections (R8.9): toast naming the current owner and refetch the
+ * thread so the header, buttons and composer reflect it. Other errors fall
+ * back to the generic toast. Returns true when handled.
+ */
+const handleOwnershipError = (error: any, threadId: string, dispatch: any): boolean => {
+  const text = ownershipErrorText(error?.response?.data);
+  if (!text) return false;
+  toast.error(text);
+  dispatch(refreshInboxThread(threadId));
+  return true;
+};
+
+/** Re-read one thread (after an ownership conflict) and fold it in. */
+export const refreshInboxThread = createAsyncThunk(
+  'inbox/refreshThread',
+  async (threadId: string) => {
+    try {
+      const response = await Axios.get(`/inbox/threads/${threadId}`);
+      return response.data;
+    } catch {
+      return null; // best effort; the socket update will follow
+    }
+  },
+);
+
 /** Pause/resume the bot, or take a thread over and hand it back. */
 export const setInboxBotControl = createAsyncThunk(
   'inbox/setBotControl',
-  async (params: {
-    threadId: string;
-    botEnabled?: boolean;
-    action?: 'takeover' | 'release';
-  }) => {
+  async (
+    params: {
+      threadId: string;
+      botEnabled?: boolean;
+      action?: 'takeover' | 'release';
+    },
+    { dispatch },
+  ) => {
     try {
       const response = await Axios.patch(
         `/inbox/threads/${params.threadId}/bot`,
@@ -318,8 +356,36 @@ export const setInboxBotControl = createAsyncThunk(
       );
       return response.data;
     } catch (error: any) {
-      reportError(error, 'Inbox bot-control API');
+      if (!handleOwnershipError(error, params.threadId, dispatch)) {
+        reportError(error, 'Inbox bot-control API');
+      }
       throw error;
+    }
+  },
+);
+
+/**
+ * Org admin override (R7.3, R8.3): take the chat, or give it to another
+ * agent. Only called after the confirmation dialog. On failure the state is
+ * left as it was and the dialog shows the error (R8.4).
+ */
+export const overrideInboxOwner = createAsyncThunk(
+  'inbox/overrideOwner',
+  async (params: { threadId: string; targetAgentId?: string }, { dispatch, rejectWithValue }) => {
+    try {
+      const response = await Axios.post(`/inbox/threads/${params.threadId}/override`, {
+        targetAgentId: params.targetAgentId,
+      });
+      return response.data;
+    } catch (error: any) {
+      const text = ownershipErrorText(error?.response?.data);
+      if (text) dispatch(refreshInboxThread(params.threadId));
+      return rejectWithValue({
+        message:
+          text ||
+          (typeof error?.response?.data?.message === 'string' ? error.response.data.message : '') ||
+          'The override did not complete.',
+      });
     }
   },
 );
@@ -354,9 +420,18 @@ interface InboxState {
   loadingChannels: boolean;
   loadingThreads: boolean;
   loadingMessages: boolean;
+  /**
+   * "<name> is replying…" per thread/conversation key (R8.6). `at` is the
+   * client receive time; the view hides it 5 s later (R8.7).
+   */
+  typingByKey: Record<string, { name: string; agentId: string; at: number }>;
+  /** First history load failed for these threads (R9.10). */
+  messagesErrorByThread: Record<string, boolean>;
 }
 
 const initialState: InboxState = {
+  typingByKey: {},
+  messagesErrorByThread: {},
   channels: [],
   channelStatus: {},
   // The existing chat box stays the default view, so nothing changes for an
@@ -388,6 +463,21 @@ export const inboxSlice = createSlice({
   name: 'inbox',
   initialState,
   reducers: {
+    /** The owner is typing (R8.6). Keyed by thread id and by conversation id. */
+    inboxAgentTyping: (
+      state,
+      action: { payload: { threadId?: string; conversationId?: string; agentId: string; name: string; at?: number } },
+    ) => {
+      const { threadId, conversationId, agentId, name } = action.payload;
+      const at = action.payload.at ?? Date.now();
+      for (const key of [threadId, conversationId]) {
+        if (key) state.typingByKey[key] = { agentId, name, at };
+      }
+    },
+    /** Clear on delivery of the owner's message (R8.7). */
+    inboxAgentTypingCleared: (state, action: { payload: { keys: (string | undefined)[] } }) => {
+      for (const key of action.payload.keys) if (key) delete state.typingByKey[key];
+    },
     setInboxTab: (state, action) => {
       state.activeTab = action.payload;
       // Switching tabs closes whatever thread was open, so a thread from the
@@ -428,6 +518,12 @@ export const inboxSlice = createSlice({
      */
     inboxMessageReceived: (state, action: { payload: InboxMessageEvent }) => {
       const { channel, threadId, message, thread } = action.payload;
+
+      // The owner's reply was delivered: stop "is replying…" (R8.7).
+      if ((message as any)?.direction === 'outbound') {
+        delete state.typingByKey[threadId];
+        if ((thread as any)?.chatId) delete state.typingByKey[(thread as any).chatId];
+      }
 
       // Only merge into a list we already hold. Seeding a partial list from a
       // socket event would leave a thread showing one message with no way to
@@ -600,6 +696,7 @@ export const inboxSlice = createSlice({
     builder.addCase(getInboxMessages.fulfilled, (state, action) => {
       state.loadingMessages = false;
       const { threadId, messages, nextCursor, hasMore } = action.payload || {};
+      if (threadId) delete state.messagesErrorByThread[threadId];
       if (!threadId) return;
       // Merged, not replaced: a socket event can land between the request and
       // its response, and replacing would drop that message until a refetch.
@@ -610,8 +707,13 @@ export const inboxSlice = createSlice({
       state.messageCursorByThread[threadId] = nextCursor ?? null;
       state.hasMoreByThread[threadId] = !!hasMore;
     });
-    builder.addCase(getInboxMessages.rejected, (state) => {
+    builder.addCase(getInboxMessages.rejected, (state, action) => {
       state.loadingMessages = false;
+      // R9.10: remember the failure so the view shows an error + Retry
+      // instead of an empty thread. Only first loads; a failed "older" page
+      // keeps what is already shown.
+      const threadId = (action.meta.arg as any)?.threadId;
+      if (threadId && !(action.meta.arg as any)?.before) state.messagesErrorByThread[threadId] = true;
     });
 
     builder.addCase(sendInboxMessage.fulfilled, (state, action) => {
@@ -631,6 +733,14 @@ export const inboxSlice = createSlice({
       if (!payload?.threadId) return;
       const list = state.messagesByThread[payload.threadId];
       if (!list) return;
+      // Never sent and nothing was stored server-side (R7.2): remove the
+      // bubble; the composer restores the text instead (R8.9).
+      if (payload.reason === 'not_thread_owner') {
+        state.messagesByThread[payload.threadId] = list.filter(
+          (m: any) => m.correlationId !== payload.correlationId,
+        );
+        return;
+      }
       // The row stays rendered as `failed` so the agent can see what did not send
       // and retry it, rather than the message vanishing.
       state.messagesByThread[payload.threadId] = failOptimistic(
@@ -639,15 +749,17 @@ export const inboxSlice = createSlice({
       );
     });
 
-    builder.addCase(setInboxBotControl.fulfilled, (state, action) => {
-      const thread = action.payload;
-      if (!thread?.channel) return;
+    // In place: ownership changed, not activity, so the row must not reorder.
+    const replaceThread = (state: any, thread: any) => {
+      if (!thread?.channel || !thread?.id) return;
       const list = state.threadsByChannel[thread.channel];
       if (!list) return;
-      const idx = list.findIndex((t) => t.id === thread.id);
-      // In place: ownership changed, not activity, so the row must not reorder.
+      const idx = list.findIndex((t: any) => t.id === thread.id);
       if (idx !== -1) list[idx] = thread;
-    });
+    };
+    builder.addCase(setInboxBotControl.fulfilled, (state, action) => replaceThread(state, action.payload));
+    builder.addCase(overrideInboxOwner.fulfilled, (state, action) => replaceThread(state, action.payload));
+    builder.addCase(refreshInboxThread.fulfilled, (state, action) => replaceThread(state, action.payload));
 
     builder.addCase(markInboxThreadRead.fulfilled, (state, action) => {
       const threadId = action.payload;
@@ -676,6 +788,8 @@ export const {
   inboxOptimisticSend,
   inboxExpirePending,
   inboxSocketGap,
+  inboxAgentTyping,
+  inboxAgentTypingCleared,
 } = inboxSlice.actions;
 
 export default inboxSlice.reducer;

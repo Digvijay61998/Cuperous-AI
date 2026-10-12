@@ -1,3 +1,5 @@
+import TypingIndecator from "./components/TypingIndicator";
+import StatusNotice from "./components/StatusNotice";
 // ** React Imports
 import {
   forwardRef,
@@ -18,7 +20,6 @@ import { TransitionProps } from "@mui/material/transitions";
 // ** Icon Imports
 import { Icon } from "@iconify/react";
 // ** Third Party Components
-import Alert from "@mui/material/Alert";
 import PerfectScrollbarComponent, {
   ScrollBarProps,
 } from "react-perfect-scrollbar";
@@ -46,10 +47,59 @@ import { RootState } from "../../../store";
 
 
 const PerfectScrollbar = styled(PerfectScrollbarComponent)<
-  ScrollBarProps & { ref: Ref<unknown> }
+  ScrollBarProps & { ref?: Ref<unknown> }
 >(({ theme }) => ({
   padding: theme.spacing(1),
 }));
+
+// Defined at module level so its identity is stable across renders. When it
+// lived inside ChatLog, every re-render remounted the scroll container and
+// reset scrollTop to 0.
+const ScrollWrapper = forwardRef<
+  HTMLElement,
+  { hidden: boolean; children: ReactNode }
+>(({ hidden, children }, ref) => {
+  if (hidden) {
+    return (
+      <Box
+        ref={ref}
+        sx={{ p: 2, height: "100%", overflowY: "auto", overflowX: "hidden" }}
+      >
+        {children}
+      </Box>
+    );
+  }
+  return (
+    <PerfectScrollbar
+      containerRef={(el: HTMLElement) => {
+        if (typeof ref === "function") ref(el);
+        else if (ref) ref.current = el;
+      }}
+      options={{ wheelPropagation: false }}
+    >
+      {children}
+    </PerfectScrollbar>
+  );
+});
+
+/**
+ * True only for messages the visitor sent. Locally echoed messages are tagged
+ * `senderRole: "visitor"`; the id check covers any that carry the visitor id.
+ * Everything delivered by the server on `chat-message-bot` (bot, AI, flow,
+ * agent replies from the dashboard) is NOT the visitor — an agent reply arrives
+ * with no senderId, which the old `senderId === visitorId` check matched
+ * against an equally-undefined visitorId and drew on the visitor's side.
+ */
+export function isVisitorMessage(msg: any, visitorId?: string): boolean {
+  if (msg?.senderRole) return msg.senderRole === "visitor";
+  return !!visitorId && !!msg?.senderId && String(msg.senderId) === String(visitorId);
+}
+
+function groupKey(msg: any, fromVisitor: boolean): string {
+  if (fromVisitor) return "visitor";
+  if (msg?.switchToAgent || msg?.senderRole === "agent") return "agent";
+  return `org:${msg?.senderId ?? "bot"}`;
+}
 
 const ChatLog = (props: any) => {
   // ** Props
@@ -65,12 +115,13 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
   const chatArea = useRef<any>(null);
   // ** Scroll to chat bottom
   const scrollToBottom = () => {
-    if (chatArea.current) {
-      // @ts-ignore
-
-      // scroll bottom of chat
-      chatArea.current.scrollTop = chatArea.current.scrollHeight;
-    }
+    // Wait a frame so newly rendered messages (button lists etc.) are laid out
+    // before measuring scrollHeight.
+    requestAnimationFrame(() => {
+      if (chatArea.current) {
+        chatArea.current.scrollTop = chatArea.current.scrollHeight;
+      }
+    });
   };
   // ** Formats chat data based on sender
   const formattedChatData = () => {
@@ -79,28 +130,23 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
       chatLog = messageArray;
     }
 
+    // Group consecutive messages by SIDE + author, WhatsApp-style: the visitor
+    // on one side, everything from the org (bot, AI, flow, agent) on the other.
+    // Grouping on the raw senderId alone merged the visitor's echoes with agent
+    // replies, because both could arrive with no senderId at all.
     const formattedChatLog: any[] = [];
-    let chatMessageSenderId = messageArray[0]?.senderId
-      ? messageArray[0].senderId
-      : "bot";
-    let msgGroup: any = {
-      senderId: chatMessageSenderId,
-      messages: [],
-    };
-    chatLog.forEach((msg: any, index: number) => {
-      if (chatMessageSenderId === msg.senderId) {
+    let msgGroup: any = null;
+    chatLog.forEach((msg: any) => {
+      const fromVisitor = isVisitorMessage(msg, visitorId);
+      const key = groupKey(msg, fromVisitor);
+      if (msgGroup && msgGroup.key === key) {
         msgGroup.messages.push(msg);
       } else {
-        chatMessageSenderId = msg.senderId;
-
-        formattedChatLog.push(msgGroup);
-        msgGroup = {
-          senderId: chatMessageSenderId,
-          messages: [msg],
-        };
+        if (msgGroup) formattedChatLog.push(msgGroup);
+        msgGroup = { key, isVisitor: fromVisitor, messages: [msg] };
       }
-      if (index === chatLog.length - 1) formattedChatLog.push(msgGroup);
     });
+    if (msgGroup) formattedChatLog.push(msgGroup);
 
     return formattedChatLog;
   };
@@ -129,7 +175,8 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
 
   const renderChats = () => {
     return formattedChatData().map((item: any, index: number) => {
-      const isSender = item.senderId === visitorId;
+      // Visitor = right; bot, AI, flow and agent = left.
+      const isSender = item.isVisitor;
       return (
         <Box
           key={index}
@@ -171,9 +218,7 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
                   "&:not(:last-of-type)": { mb: 1 }
                   }}>
                   <div>
-                    {chat.info && (
-                      <Alert severity={chat.info}>{chat.value}</Alert>
-                    )}
+                    {chat.info && <StatusNotice severity={chat.info} text={chat.value} />}
                     {chat.type === "text" &&
                       !chat?.info &&
                       chat?.value &&
@@ -194,6 +239,7 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
                         buttons={chat.buttons || []}
                         message={chat.value || ""}
                         visitorId={visitorId}
+                        disabled={props.ended === true}
                       />
                     )}
                     {chat.type === "quick_reply" && (
@@ -206,6 +252,7 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
                         message={chat.value || ""}
                         visitorId={visitorId}
                         handleButtonFunction={handleButtonFunction}
+                        disabled={props.ended === true}
                       />
                     )}
                     {chat.type === "image" && (
@@ -250,29 +297,18 @@ const {isSoundOn} = useSelector((state: RootState)=> state.bot)
     });
   };
 
-  const ScrollWrapper = ({ children }: { children: ReactNode }) => {
-    if (hidden) {
-      return (
-        <Box
-          ref={chatArea}
-          sx={{ p: 2, height: "100%", overflowY: "auto", overflowX: "hidden" }}
-        >
-          {children}
-        </Box>
-      );
-    } else {
-      return (
-        <PerfectScrollbar ref={chatArea} options={{ wheelPropagation: false }}>
-          {children}
-        </PerfectScrollbar>
-      );
-    }
-  };
   return (
     <>
-      <Box sx={{ height: "calc(100% - 8.4375rem)" }}>
-        <ScrollWrapper>
+      {/* Fills the space between header and input (parent is a flex column). */}
+      <Box sx={{ flex: 1, minHeight: 0 }}>
+        <ScrollWrapper hidden={hidden} ref={chatArea}>
           {renderChats()}
+
+          {(props.agentTyping || props.botTyping) && (
+            <Box sx={{ display: "flex", mt: 1.5, ml: 4 }}>
+              <TypingIndecator label={props.agentTyping ? "Agent is typing" : "Assistant is typing"} />
+            </Box>
+          )}
 
           {props.isFeedbackOpen && (
             <Feedback socket={props.socket} {...props} />

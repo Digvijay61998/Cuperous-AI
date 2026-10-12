@@ -3,6 +3,14 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { toast } from "react-hot-toast";
 import axios from "axios";
 import { RootState } from "..";
+import {
+  endedEventApplies,
+  markSessionEnded,
+  readSession,
+  resumeRequest,
+  showEndedWithoutConnecting,
+  writeSession,
+} from "./session";
 interface DataParams {
   botId: string;
 }
@@ -14,20 +22,47 @@ interface Redux {
 
 // get node details
 // ** Fetch Users
+/**
+ * Create (or resume) the visitor session. Attaches the stored session for this
+ * bot so a reload continues the same conversation (R9.3), and saves what the
+ * server returns. `data.startNew` = "Start new chat" (R14).
+ */
 export const fetchVisitor = createAsyncThunk(
   "fetch/visitor",
   async (data: any) => {
     try {
+      const botId: string | undefined = data.botId || window.botId;
+      const store = typeof window !== "undefined" ? window.localStorage : null;
+      const startNew = data.startNew === true;
+      let stored = botId ? readSession(store, botId) : null;
+      // "Start new chat" with storage disabled: keep the same visitor (R14.9).
+      if (!stored && startNew && data.visitorId) {
+        stored = { visitorId: String(data.visitorId), savedAt: Date.now() };
+      }
+      // R14.7: a closed conversation shows the Ended_State on reload, with
+      // no request and no socket, until the visitor starts a new chat.
+      if (showEndedWithoutConnecting(stored, { startNew })) {
+        return { ended: true, visitorId: stored!.visitorId, conversationId: stored!.conversationId };
+      }
       const response = await axios.post(
         `${window.baseUrl}/api/widget/visitor`,
         {
           ...data.data,
+          ...resumeRequest(stored, { startNew }),
         },{
           headers:{
             Authorization: `Bearer ${data.token}`
           }
         }
       );
+      if (botId && response.data?.visitorId) {
+        writeSession(store, botId, {
+          visitorId: response.data.visitorId,
+          conversationId: response.data.conversationId,
+          // The server found the stored conversation closed (R14.7).
+          ended: response.data.ended === true,
+        });
+      }
       return response.data;
     } catch (error: any) {
       console.log("error", error);
@@ -99,11 +134,18 @@ export const bot = createSlice({
     languages: [] as any,
     widgetToken: null,
     isSoundOn: true,
-    isLocation: false as any
+    isLocation: false as any,
+    /** Ended_State (R14.6): input and buttons disabled, "Start new chat" shown. */
+    ended: false,
+    endedNotice: "" as string,
   },
   reducers: {
     addMessage: (state, action) => {
       state.messages.push(action.payload);
+    },
+    conversationEnded: (state, action) => {
+      state.ended = true;
+      state.endedNotice = action.payload?.notice || "";
     },
 
     clearMessages: (state) => {
@@ -117,6 +159,8 @@ export const bot = createSlice({
     builder.addCase(fetchVisitor.fulfilled, (state, action) => {
       state.accessToken = action.payload?.accessToken;
       state.visitorId = action.payload?.visitorId;
+      state.ended = action.payload?.ended === true;
+      if (!state.ended) state.endedNotice = "";
     });
     builder.addCase(getBotMetadata.fulfilled, (state, action) => {
       state.botSettings = action.payload?.botSettings;
@@ -130,6 +174,22 @@ export const bot = createSlice({
     });
   },
 });
-export const { addMessage, clearMessages, toggleSound } = bot.actions;
+export const { addMessage, clearMessages, toggleSound, conversationEnded } = bot.actions;
+
+/**
+ * Socket `conversation-ended` (R14.2, R14.5): persist `ended` for this bot so
+ * a reload shows the Ended_State (R14.7), then switch the UI. An event for an
+ * older conversation is ignored.
+ */
+export const handleConversationEnded =
+  (payload: { conversationId?: string; notice?: string } | undefined) =>
+  (dispatch: Dispatch<any>) => {
+    const botId: string | undefined = window.botId;
+    const store = typeof window !== "undefined" ? window.localStorage : null;
+    const stored = botId ? readSession(store, botId) : null;
+    if (!endedEventApplies(stored, payload?.conversationId)) return;
+    if (botId) markSessionEnded(store, botId);
+    dispatch(conversationEnded({ notice: payload?.notice }));
+  };
 
 export default bot.reducer;

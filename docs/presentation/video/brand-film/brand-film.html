@@ -1,0 +1,554 @@
+<!doctype html>
+<!--
+  JarCube · 30-second live-action brand film · edit master / animatic.
+
+  What this page is:
+    - The locked 30.0 s edit timeline (16 shots, 24 fps) for the brand film.
+    - Live-action shots are footage slots. Drop footage/<SHOT>.webm (or .mp4) in
+      ./footage and it plays in place of the slate. Until then a slate shows the
+      shot brief, so the full film can be reviewed for timing today.
+    - Product screens (phone notifications, WhatsApp conversation, booking
+      WebView, booking website) are built here as clean, readable inserts so no
+      AI-generated interface text ever reaches the final film. Labels mirror the
+      real salon-booking-template (QuantumMind-templates).
+    - End card uses the real JarCube logo (assets/jarcube-logo.png).
+
+  Preview: open in Chrome, press Space to play/pause, Left/Right to step 1 frame.
+  Insert-only plates for screen replacement: brand-film.html?insert=1B (or 3B, 4B, 7B).
+  Render:  node ../record.mjs --page "brand-film/brand-film.html" --fps 24 --to 30 --scale 2 --out brand-film/JarCube-Brand-Film-30s.mp4
+  Deterministic timeline: window.seek(t) (returns a Promise once video frames are ready).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JarCube · Brand film 30s</title>
+<style>
+  :root {
+    --navy:#070f24; --navy2:#0c1838; --electric:#2f7bff; --ice:#9cc4ff; --text:#eef3ff; --muted:#93a3c8;
+    /* Aura Salon & Spa (fictional client) — configured template theme */
+    --aura:#2e5e55; --aura-2:#c9a27e; --aura-ink:#1c2422; --aura-bg:#f6f3ee;
+    /* WhatsApp light theme */
+    --wa-bg:#efeae2; --wa-out:#d9fdd3; --wa-in:#ffffff; --wa-green:#00a884; --wa-ink:#111b21; --wa-sub:#667781; --wa-tick:#53bdeb;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:1920px; height:1080px; overflow:hidden; background:#000;
+    font-family:"Inter","Noto Sans","Segoe UI",Roboto,"DejaVu Sans",sans-serif; color:var(--text); }
+  #stage { position:absolute; inset:0; overflow:hidden; background:#000; }
+  .shot { position:absolute; inset:0; opacity:0; overflow:hidden; }
+  .shot video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; }
+  .shot.has-footage video { display:block; }
+  .shot.has-footage .slate { display:none; }
+
+  /* ---------- slate for live-action slots ---------- */
+  .slate { position:absolute; inset:0; padding:90px 120px; display:flex; flex-direction:column; justify-content:center;
+    background:radial-gradient(1200px 700px at 30% 40%,#2a2620 0%,#121110 70%); color:#efe7dc; }
+  .slate .row { display:flex; gap:22px; align-items:center; margin-bottom:28px; font-size:22px; letter-spacing:3px; text-transform:uppercase; color:#c9b9a3; }
+  .slate .row b { color:#111; background:#e9c46a; padding:6px 14px; border-radius:6px; letter-spacing:2px; }
+  .slate h3 { font-size:54px; font-weight:700; line-height:1.15; max-width:1500px; margin-bottom:22px; color:#fff; }
+  .slate p { font-size:27px; line-height:1.5; max-width:1500px; color:#d8cbb8; }
+  .slate .drop { position:absolute; left:120px; bottom:70px; font-size:20px; color:#8d8172; font-family:"DejaVu Sans Mono",monospace; }
+
+  /* ---------- shared insert background (shallow-focus salon bokeh) ---------- */
+  .bokeh { position:absolute; inset:-60px; background:
+      radial-gradient(160px 160px at 12% 22%,rgba(255,226,170,.55),transparent 70%),
+      radial-gradient(220px 220px at 85% 18%,rgba(255,240,215,.45),transparent 70%),
+      radial-gradient(120px 120px at 74% 78%,rgba(255,210,150,.4),transparent 70%),
+      radial-gradient(260px 260px at 20% 82%,rgba(160,190,175,.35),transparent 70%),
+      radial-gradient(1400px 900px at 50% 50%,#6d5a48 0%,#3a2f27 60%,#1d1814 100%);
+    filter:blur(6px); }
+  .vignette { position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.45) 100%); }
+  .push { position:absolute; inset:0; transform-origin:50% 50%; }
+
+  /* ---------- phone ---------- */
+  .phone { position:absolute; left:50%; top:50%; width:476px; height:980px; margin:-490px 0 0 -238px;
+    border-radius:62px; background:#0b0b0d; padding:14px;
+    box-shadow:0 0 0 2px #2b2b30, 0 50px 120px rgba(0,0,0,.6), inset 0 0 0 1px #444; }
+  .screen { position:relative; width:100%; height:100%; border-radius:50px; overflow:hidden; background:#000; }
+  .statusbar { position:absolute; left:0; right:0; top:0; height:44px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 30px; font-size:17px; font-weight:600; z-index:5; }
+  .statusbar .ic { display:flex; gap:7px; align-items:center; }
+  .statusbar .ic i { display:block; background:currentColor; border-radius:2px; }
+  .punch { position:absolute; top:14px; left:50%; width:16px; height:16px; margin-left:-8px; border-radius:50%; background:#000; z-index:6; }
+
+  /* lock screen notifications (1B) */
+  .lock { position:absolute; inset:0; background:linear-gradient(180deg,#3d4a46 0%,#26302d 55%,#171d1b 100%); color:#fff; }
+  .lock .clock { position:absolute; top:110px; width:100%; text-align:center; font-size:88px; font-weight:300; letter-spacing:-2px; }
+  .lock .date { position:absolute; top:220px; width:100%; text-align:center; font-size:20px; color:rgba(255,255,255,.8); }
+  .notifs { position:absolute; left:16px; right:16px; top:290px; display:flex; flex-direction:column; gap:10px; }
+  .notif { background:rgba(245,247,246,.94); color:var(--wa-ink); border-radius:22px; padding:14px 16px; display:flex; gap:12px; }
+  .notif .app { width:34px; height:34px; border-radius:50%; background:var(--wa-green); flex:none; display:flex; align-items:center; justify-content:center; }
+  .notif .app svg { width:20px; height:20px; }
+  .notif .meta { font-size:13px; color:var(--wa-sub); margin-bottom:2px; }
+  .notif .who { font-size:16px; font-weight:700; }
+  .notif .txt { font-size:16px; line-height:1.3; color:#2b3438; }
+
+  /* WhatsApp chat (3B) */
+  .wa { position:absolute; inset:0; background:var(--wa-bg); color:var(--wa-ink); }
+  .wa .statusbar { color:#fff; background:#008069; }
+  .wa .hd { position:absolute; top:44px; left:0; right:0; height:72px; background:#008069; color:#fff; display:flex; align-items:center; gap:12px; padding:0 16px; z-index:4; }
+  .wa .hd .av { width:44px; height:44px; border-radius:50%; background:var(--aura); color:#f3e6d6; font-weight:700; font-size:20px;
+    display:flex; align-items:center; justify-content:center; font-family:Georgia,serif; }
+  .wa .hd .nm { font-size:19px; font-weight:600; }
+  .wa .hd .st { font-size:14px; opacity:.85; }
+  .wa .hd .tools { margin-left:auto; display:flex; gap:20px; }
+  .wa .hd .tools svg { width:22px; height:22px; }
+  .wa .body { position:absolute; top:116px; bottom:72px; left:0; right:0; padding:14px 12px; display:flex; flex-direction:column; justify-content:flex-end; gap:8px;
+    background-image:radial-gradient(rgba(0,0,0,.035) 1.5px,transparent 1.5px); background-size:22px 22px; }
+  .daypill { align-self:center; background:#fff; color:var(--wa-sub); font-size:13px; padding:5px 12px; border-radius:8px; box-shadow:0 1px .5px rgba(0,0,0,.13); margin-bottom:6px; }
+  .bub { max-width:82%; padding:8px 10px 6px 11px; border-radius:10px; font-size:16.5px; line-height:1.38; box-shadow:0 1px .5px rgba(0,0,0,.13); position:relative; }
+  .bub.out { align-self:flex-end; background:var(--wa-out); border-top-right-radius:2px; }
+  .bub.in { align-self:flex-start; background:var(--wa-in); border-top-left-radius:2px; }
+  .bub .tm { float:right; margin:6px 0 -4px 10px; font-size:11.5px; color:var(--wa-sub); display:flex; gap:3px; align-items:center; }
+  .bub .tm .tk { color:var(--wa-tick); font-weight:700; letter-spacing:-3px; }
+  .bub .cta { margin:8px -10px -6px -11px; border-top:1px solid #e9edef; padding:11px; text-align:center; color:#027eb5; font-weight:600; font-size:16px;
+    display:flex; align-items:center; justify-content:center; gap:8px; }
+  .typing { align-self:flex-start; background:#fff; border-radius:10px; border-top-left-radius:2px; padding:12px 16px; display:flex; gap:5px; box-shadow:0 1px .5px rgba(0,0,0,.13); }
+  .typing i { width:8px; height:8px; border-radius:50%; background:#9aa5ab; display:block; }
+  .wa .input { position:absolute; bottom:0; left:0; right:0; height:72px; display:flex; gap:8px; align-items:center; padding:0 10px 12px; }
+  .wa .input .fld { flex:1; height:50px; border-radius:25px; background:#fff; display:flex; align-items:center; padding:0 18px; color:#8696a0; font-size:17px; }
+  .wa .input .mic { width:50px; height:50px; border-radius:50%; background:var(--wa-green); display:flex; align-items:center; justify-content:center; }
+  .tap { position:absolute; width:64px; height:64px; margin:-32px 0 0 -32px; border-radius:50%; background:rgba(255,255,255,.55);
+    border:2px solid rgba(0,0,0,.08); pointer-events:none; z-index:20; opacity:0; }
+
+  /* in-chat booking WebView (real template screens, Aura theme) */
+  .sheet { position:absolute; left:0; right:0; bottom:0; height:92%; background:var(--aura-bg); border-radius:18px 18px 0 0; z-index:10;
+    box-shadow:0 -10px 40px rgba(0,0,0,.25); color:var(--aura-ink); transform:translateY(100%); }
+  .sheet .bar { height:52px; display:flex; align-items:center; gap:14px; padding:0 18px; border-bottom:1px solid #e6e0d6; font-size:16px; font-weight:600; background:#fff; border-radius:18px 18px 0 0; }
+  .sheet .bar .x { font-size:22px; color:#555; }
+  .sheet { overflow:hidden; }
+  .sheet .pg { position:absolute; top:52px; left:0; right:0; bottom:0; padding:18px 18px 0; background:var(--aura-bg); }
+  .brandrow { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .brandrow .lg { width:36px; height:36px; border-radius:10px; background:var(--aura); color:#f3e6d6; font-family:Georgia,serif; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .brandrow .nm { font-weight:700; font-size:17px; }
+  .dots { display:flex; gap:6px; margin-left:auto; } .dots span { width:22px; height:5px; border-radius:3px; background:#ddd5c8; } .dots span.on { background:var(--aura); }
+  .sec { font-size:19px; font-weight:700; margin:6px 0 12px; }
+  .days { display:flex; gap:8px; margin-bottom:18px; }
+  .day { width:58px; padding:8px 0; border-radius:14px; background:#fff; border:1px solid #e6e0d6; text-align:center; }
+  .day span { display:block; font-size:12px; color:#7b746a; } .day b { display:block; font-size:20px; margin:2px 0; }
+  .day.sel { background:var(--aura); border-color:var(--aura); color:#fff; } .day.sel span { color:#d9e7e3; }
+  .slots { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .slot { padding:13px 0; text-align:center; border-radius:12px; background:#fff; border:1px solid #e6e0d6; font-size:16px; font-weight:600; }
+  .slot.sel { background:var(--aura); border-color:var(--aura); color:#fff; }
+  .foot { position:absolute; left:18px; right:18px; bottom:22px; }
+  .btn { display:block; width:100%; padding:16px 0; border-radius:14px; text-align:center; font-weight:700; font-size:17px; background:var(--aura); color:#fff; }
+  .btn.ghost { background:#e9e2d7; color:#8b8478; }
+  .fieldset label { display:block; font-size:13px; color:#7b746a; margin:10px 0 5px; }
+  .fieldset .in { background:#fff; border:1px solid #e6e0d6; border-radius:12px; padding:13px 14px; font-size:16px; }
+  .summary { margin-top:16px; background:#fff; border:1px solid #e6e0d6; border-radius:14px; padding:6px 14px; }
+  .summary div { display:flex; justify-content:space-between; padding:9px 0; font-size:15.5px; border-bottom:1px solid #f0ebe3; }
+  .summary div:last-child { border-bottom:0; font-weight:700; }
+  .summary span { color:#7b746a; }
+  .success { text-align:center; padding-top:40px; }
+  .success .chk { width:84px; height:84px; margin:0 auto 18px; border-radius:50%; background:var(--aura); color:#fff; font-size:44px; display:flex; align-items:center; justify-content:center; }
+  .success h4 { font-size:23px; margin-bottom:8px; }
+  .success .hint { font-size:13.5px; color:#7b746a; margin-top:12px; }
+
+  /* ---------- laptop website (4B) ---------- */
+  .laptop { position:absolute; left:110px; top:70px; width:1700px; height:950px; border-radius:26px; background:#141416; padding:22px;
+    box-shadow:0 40px 120px rgba(0,0,0,.6), inset 0 0 0 1px #333; }
+  .browser { width:100%; height:100%; border-radius:8px; overflow:hidden; background:var(--aura-bg); color:var(--aura-ink); position:relative; }
+  .chrome { height:52px; background:#ecebe8; display:flex; align-items:center; gap:14px; padding:0 18px; border-bottom:1px solid #d9d6d0; }
+  .chrome .tl { display:flex; gap:8px; } .chrome .tl i { width:13px; height:13px; border-radius:50%; display:block; background:#d0ccc5; }
+  .chrome .url { flex:1; max-width:640px; margin:0 auto; height:32px; border-radius:16px; background:#fff; display:flex; align-items:center; gap:8px; padding:0 16px; font-size:15px; color:#555; }
+  .site-nav { height:84px; display:flex; align-items:center; padding:0 60px; gap:40px; border-bottom:1px solid #e6e0d6; background:#fff; }
+  .site-nav .logo { font-family:Georgia,"DejaVu Serif",serif; font-size:30px; color:var(--aura); letter-spacing:1px; }
+  .site-nav .logo small { font-family:inherit; font-size:15px; color:#9a8a76; margin-left:8px; letter-spacing:3px; text-transform:uppercase; }
+  .site-nav a { font-size:17px; color:#4a524f; }
+  .site-nav .bk { margin-left:auto; background:var(--aura); color:#fff; padding:12px 24px; border-radius:30px; font-weight:700; font-size:16px; }
+  .site { display:grid; grid-template-columns:1.25fr 1fr; gap:40px; padding:40px 60px; }
+  .site h2 { font-family:Georgia,"DejaVu Serif",serif; font-size:40px; font-weight:400; margin-bottom:6px; }
+  .site .lede { color:#6f685e; font-size:18px; margin-bottom:26px; }
+  .svc { display:flex; align-items:center; gap:20px; background:#fff; border:1px solid #e6e0d6; border-radius:18px; padding:20px 22px; margin-bottom:14px; }
+  .svc .sw { width:64px; height:64px; border-radius:14px; flex:none; }
+  .svc .nm { font-size:20px; font-weight:700; } .svc .ds { font-size:15px; color:#7b746a; margin-top:4px; }
+  .svc .pr { margin-left:auto; text-align:right; font-size:20px; font-weight:700; } .svc .pr small { display:block; font-size:14px; color:#7b746a; font-weight:400; }
+  .svc.sel { border-color:var(--aura); box-shadow:0 0 0 2px var(--aura) inset; }
+  .panel { background:#fff; border:1px solid #e6e0d6; border-radius:22px; padding:28px; position:relative; }
+  .panel .days .day { width:66px; } .panel .slots { grid-template-columns:repeat(4,1fr); }
+  .panel .who { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:18px; }
+  .panel .btn { margin-top:20px; }
+  .done { position:absolute; inset:0; border-radius:22px; background:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; opacity:0; }
+  .cursor { position:absolute; width:26px; height:26px; z-index:30; pointer-events:none; }
+
+  /* ---------- lower-third super ---------- */
+  .super { position:absolute; left:120px; bottom:110px; z-index:50; opacity:0; display:flex; align-items:center; gap:18px; }
+  .super .bar { width:4px; height:74px; background:var(--electric); box-shadow:0 0 18px rgba(47,123,255,.8); }
+  .super .k { font-size:17px; letter-spacing:5px; text-transform:uppercase; color:var(--ice); margin-bottom:6px; }
+  .super .t { font-size:36px; font-weight:600; color:#fff; text-shadow:0 2px 18px rgba(0,0,0,.6); }
+
+  /* ---------- end card (7B) ---------- */
+  .endcard { position:absolute; inset:0; background:
+      radial-gradient(900px 520px at 50% 34%,rgba(47,123,255,.20),transparent 70%),
+      radial-gradient(1600px 1000px at 50% 120%,#0c1a40 0%,var(--navy) 60%,#040815 100%); }
+  .endcard .sweep { position:absolute; top:-30%; width:520px; height:160%; transform:rotate(18deg);
+    background:linear-gradient(90deg,transparent,rgba(160,195,255,.07),transparent); }
+  .endcard .lockup { position:absolute; left:0; right:0; top:250px; display:flex; align-items:center; justify-content:center; gap:34px; }
+  .endcard .lockup img { width:250px; height:auto; filter:drop-shadow(0 12px 40px rgba(80,90,255,.35)); }
+  .endcard .word { font-size:112px; font-weight:800; letter-spacing:-3px; color:#fff; }
+  .endcard .accent { position:absolute; left:50%; top:560px; height:2px; transform:translateX(-50%);
+    background:linear-gradient(90deg,transparent,var(--electric),transparent); box-shadow:0 0 16px rgba(47,123,255,.9); }
+  .endcard .tag { position:absolute; left:0; right:0; top:600px; text-align:center; font-size:46px; font-weight:300; letter-spacing:1px; color:#e9efff; }
+  .endcard .cta { position:absolute; left:0; right:0; top:705px; text-align:center; font-size:30px; color:var(--ice); }
+  .endcard .url { position:absolute; left:0; right:0; top:775px; text-align:center; font-size:22px; letter-spacing:4px; color:var(--muted); }
+
+  /* ---------- review HUD (preview only, never rendered) ---------- */
+  #hud { position:fixed; right:16px; top:12px; z-index:999; font:14px "DejaVu Sans Mono",monospace; color:#fff; background:rgba(0,0,0,.6); padding:6px 10px; border-radius:6px; display:none; }
+  body.preview #hud { display:block; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud"></div>
+
+<script>
+const FPS = 24, DURATION = 30;
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const ramp = (t, a, b) => ease((t - a) / (b - a));           // 0→1 between a and b
+const tc = (s) => { const f = Math.round(s * FPS); const p = (n) => String(n).padStart(2, '0');
+  return `00:00:${p(Math.floor(f / FPS))}:${p(f % FPS)}`; };
+
+/* ======================================================================
+   Edit decision list. start/end in seconds. xf = dissolve-in length.
+   type live  → footage slot (footage/<id>.webm|.mp4) with brief slate
+   type ui    → built product insert (accurate text)
+   type end   → brand end card
+   ====================================================================== */
+const SHOTS = [
+  { id:'1A', start:0.00,  end:1.75,  type:'live', scene:'1 · The problem',
+    title:'Busy salon, owner styling a client, phone buzzing on the counter',
+    brief:'Wide, slow dolly-in. Ananya (owner) finishes a blow-dry for a seated client. Her phone lights up and vibrates on the reception counter in the foreground, screen angled away from camera.' },
+  { id:'1B', start:1.75,  end:3.25,  type:'ui', scene:'1 · The problem', render:renderNotifs,
+    title:'Insert: unanswered WhatsApp enquiries on the lock screen' },
+  { id:'1C', start:3.25,  end:4.50,  type:'live', scene:'1 · The problem',
+    title:'Owner juggles phone and client; a walk-in waits',
+    brief:'MCU. Ananya types a quick reply with one hand, glances at her paper appointment diary, then back to her client. Rack focus to Priya at the door checking her own phone, waiting. Busy, not distressed.' },
+  { id:'2A', start:4.50,  end:6.25,  type:'live', scene:'2 · Discovering JarCube', xf:0.33,
+    title:'JarCube specialist opens the laptop at the salon lounge table',
+    brief:'Over-shoulder. Rohan (JarCube specialist, navy polo) turns the laptop toward Ananya. Screen = REAL screen recording of the JarCube dashboard: Bots → flow builder showing the salon booking journey. Composite in post.' },
+  { id:'2B', start:6.25,  end:8.00,  type:'live', scene:'2 · Discovering JarCube',
+    title:'Owner leans in as the workflow makes sense',
+    brief:'CU on Ananya. She leans toward the screen, a small nod, a half smile. Rohan points to one step on screen. Natural dialogue (optional, under VO): "So it answers the price and sends them the booking link?" "Exactly."' },
+  { id:'3A', start:8.00,  end:9.00,  type:'live', scene:'3 · WhatsApp AI in action',
+    title:'Customer messages the salon from home',
+    brief:'Priya on a sofa in a bright Bengaluru apartment, evening window light. She types on her phone, screen facing her (not camera).' },
+  { id:'3B', start:9.00,  end:14.00, type:'ui', scene:'3 · WhatsApp AI in action', render:renderChat,
+    title:'Insert: WhatsApp enquiry → AI answer → booking flow → confirmation' },
+  { id:'3C', start:14.00, end:15.00, type:'live', scene:'3 · WhatsApp AI in action',
+    title:'Customer reacts, booked',
+    brief:'MCU. Priya reads the confirmation, relaxed smile, sets the phone down on the cushion.' },
+  { id:'4A', start:15.00, end:16.25, type:'live', scene:'4 · The custom website',
+    title:'Customer opens the salon website on her laptop',
+    brief:'Same apartment, dining table, same wardrobe. Priya opens the Aura Salon website on a laptop to book a manicure for next week. Screen faces away or is replaced in post.' },
+  { id:'4B', start:16.25, end:19.00, type:'ui', scene:'4 · The custom website', render:renderSite,
+    title:'Insert: services → date & time → confirm booking on the website' },
+  { id:'5A', start:19.00, end:20.75, type:'live', scene:'5 · The owner\'s new experience',
+    title:'Owner reviews enquiries and bookings in the JarCube inbox',
+    brief:'Morning, salon reception. Ananya with coffee, scrolling the JarCube shared inbox on the reception laptop. Screen = REAL recording of the inbox with the demo conversations from 3B/4B. Composite in post.' },
+  { id:'5B', start:20.75, end:22.50, type:'live', scene:'5 · The owner\'s new experience',
+    title:'Owner greets an arriving client, salon calm and organised',
+    brief:'Medium. Ananya steps out from behind the counter and greets a client by name. Phone rests face-down. Tidy stations, soft music, staff working in background.' },
+  { id:'6A', start:22.50, end:24.25, type:'live', scene:'6 · Human support from JarCube', xf:0.25,
+    title:'Specialist and owner configure and test together',
+    brief:'Two-shot, side by side at the lounge table. Rohan adjusts a WhatsApp template in the dashboard (REAL screen recording: Templates). Ananya watches, then points at the laptop.' },
+  { id:'6B', start:24.25, end:25.75, type:'live', scene:'6 · Human support from JarCube',
+    title:'Testing the booking journey on the owner\'s phone',
+    brief:'CU on hands. Ananya taps through the booking link on her own phone while Rohan checks the matching entry on the laptop. They share a quick laugh: it works.' },
+  { id:'7A', start:25.75, end:27.00, type:'live', scene:'7 · The premium ending',
+    title:'Owner welcomes Priya, the satisfied customer',
+    brief:'Salon entrance, golden practical light. Ananya welcomes Priya ("Priya, hi! 12:30, right on time."), guides her in. Gentle push-in, hold on smiles.' },
+  { id:'7B', start:27.00, end:30.00, type:'end', scene:'7 · The premium ending', xf:0.5, render:renderEnd,
+    title:'End card: logo, tagline, call to action' },
+];
+
+const SUPERS = [
+  { start:22.75, end:25.60, k:'JarCube team', t:'Setup and implementation support for your first three months' },
+];
+
+/* ---------------------------------------------------------------- icons */
+const WA_ICON = '<svg viewBox="0 0 24 24"><path fill="#fff" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.4.8 3.2.6a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg>';
+const LINK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#027eb5" stroke-width="2.4"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>';
+const CURSOR = '<svg class="cursor" viewBox="0 0 24 24"><path d="M3 2l17 10-7.5 1.5L9 21z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+const statusbar = (dark) => `<div class="statusbar" style="color:${dark ? '#fff' : '#111'}"><span>11:24</span>
+  <span class="ic"><i style="width:4px;height:8px"></i><i style="width:4px;height:11px"></i><i style="width:4px;height:14px"></i><i style="width:26px;height:12px;border-radius:3px"></i></span></div><div class="punch"></div>`;
+
+/* ---------------------------------------------------------------- 1B lock screen */
+const NOTIFS = [
+  ['Sneha', 'Hi, is a hair spa possible tomorrow evening?'],
+  ['Rahul', 'What do you charge for a men\'s haircut?'],
+  ['Kavya', 'Can I book a facial for Saturday?'],
+  ['Ritu',  'Hello? Are you open on Sunday?'],
+];
+function buildNotifs(el) {
+  el.innerHTML = `<div class="bokeh"></div><div class="push"><div class="phone"><div class="screen"><div class="lock">${statusbar(true)}
+    <div class="clock">11:24</div><div class="date">Saturday, 10 October</div>
+    <div class="notifs">${NOTIFS.map(([w, m]) => `<div class="notif"><div class="app">${WA_ICON}</div><div><div class="meta">WhatsApp · now</div>
+      <div class="who">${w}</div><div class="txt">${m}</div></div></div>`).join('')}</div></div></div></div></div><div class="vignette"></div>`;
+}
+function renderNotifs(el, lt) {
+  el.querySelector('.push').style.transform = `scale(${1.02 + lt * 0.03})`;
+  el.querySelectorAll('.notif').forEach((n, i) => {
+    const p = ramp(lt, 0.1 + i * 0.28, 0.32 + i * 0.28);
+    n.style.opacity = p; n.style.transform = `translateY(${(1 - p) * -24}px) scale(${0.96 + p * 0.04})`;
+  });
+}
+
+/* ---------------------------------------------------------------- 3B WhatsApp + booking WebView */
+const SLOTS = ['10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+function buildChat(el) {
+  el.innerHTML = `<div class="bokeh"></div><div class="push"><div class="phone"><div class="screen"><div class="wa">${statusbar(true)}
+    <div class="hd"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"><path d="M15 5l-7 7 7 7"/></svg>
+      <div class="av">A</div><div><div class="nm">Aura Salon &amp; Spa</div><div class="st">Business account</div></div>
+      <div class="tools"><svg viewBox="0 0 24 24" fill="#fff"><path d="M15 8v8H4V8h11m1-2H3v12h13v-4.5l5 3.5V7l-5 3.5z"/></svg>
+      <svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></div></div>
+    <div class="body">
+      <div class="daypill">Today</div>
+      <div class="bub out" id="m1">Hi! What's the price for a hair spa? Do you have any slot this Saturday?<span class="tm">19:42 <span class="tk">✓✓</span></span></div>
+      <div class="typing" id="ty"><i></i><i></i><i></i></div>
+      <div class="bub in" id="m2">Hi Priya! A Hair Spa at Aura Salon &amp; Spa is ₹1,200 and takes about 60 minutes.<br><br>We're open Saturday from 10 AM to 8 PM. Tap below to choose the time that suits you.<span class="tm">19:42</span>
+        <div class="cta">${LINK_ICON} Book a slot</div></div>
+    </div>
+    <div class="input"><div class="fld">Message</div><div class="mic"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1a7 7 0 0 0 6-6.9z"/></svg></div></div>
+
+    <div class="sheet" id="sheet"><div class="bar"><span class="x">✕</span> Book an appointment</div>
+      <div class="pg" id="pgSchedule">
+        <div class="brandrow"><div class="lg">A</div><div class="nm">Aura Salon &amp; Spa</div><div class="dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div></div>
+        <div class="sec">Pick a date &amp; time</div>
+        <div class="days">${[['Thu','15'],['Fri','16'],['Sat','17'],['Sun','18'],['Mon','19']].map(([w, d]) => `<div class="day${d === '17' ? ' sel' : ''}"><span>${w}</span><b>${d}</b><span>Oct</span></div>`).join('')}</div>
+        <div class="slots">${SLOTS.map((s) => `<div class="slot" data-s="${s}">${s}</div>`).join('')}</div>
+        <div class="foot"><div class="btn ghost" id="cont">Continue</div></div>
+      </div>
+      <div class="pg" id="pgReview" style="opacity:0">
+        <div class="brandrow"><div class="lg">A</div><div class="nm">Aura Salon &amp; Spa</div><div class="dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div></div>
+        <div class="sec">Your details</div>
+        <div class="fieldset"><label>Full name</label><div class="in">Priya Sharma</div><label>Phone number</label><div class="in">+91 90000 12345</div></div>
+        <div class="summary"><div><span>Hair Spa</span><b>₹1,200</b></div><div><span>Date</span><b>Sat, 17 Oct</b></div><div><span>Time</span><b>12:30</b></div><div><span>Total</span><b>₹1,200</b></div></div>
+        <div class="foot"><div class="btn" id="conf">Confirm booking</div></div>
+      </div>
+      <div class="pg" id="pgDone" style="opacity:0">
+        <div class="success"><div class="chk">✓</div><h4>Your appointment is confirmed!</h4>
+          <div class="summary" style="text-align:left"><div><span>Hair Spa</span><b>₹1,200</b></div><div><span>Date</span><b>Sat, 17 Oct</b></div><div><span>Time</span><b>12:30</b></div><div><span>Total</span><b>₹1,200</b></div></div>
+          <div class="btn" style="margin-top:22px">Return to chat</div><div class="hint">You can close this window and return to your chat.</div></div>
+      </div>
+    </div>
+    <div class="tap" id="tap"></div>
+  </div></div></div></div><div class="vignette"></div>`;
+}
+// Centre of `target` in the unscaled coordinate space of `frame` (ignores the camera push transform).
+function centreIn(frame, target, baseWidth) {
+  const fr = frame.getBoundingClientRect(), r = target.getBoundingClientRect();
+  const k = fr.width / baseWidth;
+  return [(r.left + r.width / 2 - fr.left) / k, (r.top + r.height / 2 - fr.top) / k];
+}
+// Tap helper: show a touch ripple on `target` around time `at`.
+function tapAt(tapEl, lt, at, target) {
+  const d = lt - at;
+  if (d < -0.12 || d > 0.3) return false;
+  const screen = tapEl.parentElement;
+  const [x, y] = centreIn(screen, target, screen.offsetWidth);
+  tapEl.style.left = x + 'px'; tapEl.style.top = y + 'px';
+  tapEl.style.opacity = d < 0 ? 0.9 : 0.9 * (1 - d / 0.3);
+  tapEl.style.transform = `scale(${d < 0 ? 0.8 : 0.8 + d * 1.6})`;
+  return true;
+}
+function renderChat(el, lt) {
+  const $ = (s) => el.querySelector(s);
+  el.querySelector('.push').style.transform = `scale(${1.03 + lt * 0.006})`;
+  const m1 = ramp(lt, 0.05, 0.3), ty = lt > 0.5 && lt < 1.15, m2 = ramp(lt, 1.15, 1.4);
+  $('#m1').style.opacity = m1; $('#m1').style.transform = `translateY(${(1 - m1) * 14}px)`;
+  $('#ty').style.display = ty ? 'flex' : 'none';
+  $('#ty').querySelectorAll('i').forEach((d, i) => d.style.opacity = 0.35 + 0.65 * Math.abs(Math.sin((lt * 6) + i)));
+  $('#m2').style.display = lt >= 1.15 ? 'block' : 'none';
+  $('#m2').style.opacity = m2; $('#m2').style.transform = `translateY(${(1 - m2) * 14}px)`;
+  // WebView sheet slides up after tapping "Book a slot"
+  const sh = ramp(lt, 2.05, 2.4);
+  $('#sheet').style.transform = `translateY(${(1 - sh) * 100}%)`;
+  const picked = lt >= 2.75;
+  el.querySelectorAll('.slot').forEach((s) => s.classList.toggle('sel', picked && s.dataset.s === '12:30'));
+  $('#cont').className = 'btn' + (picked ? '' : ' ghost');
+  const rv = ramp(lt, 3.1, 3.3), dn = ramp(lt, 3.95, 4.2);
+  // Pages push left like the real WebView navigation; never two screens of text overlapping.
+  $('#pgSchedule').style.transform = `translateX(${-rv * 100}%)`;
+  $('#pgReview').style.opacity = 1;
+  $('#pgReview').style.transform = `translateX(${(1 - rv) * 100 - dn * 100}%)`;
+  $('#pgDone').style.opacity = 1;
+  $('#pgDone').style.transform = `translateX(${(1 - dn) * 100}%)`;
+  const tap = $('#tap');
+  tap.style.opacity = 0;
+  tapAt(tap, lt, 1.9, $('#m2 .cta')) || tapAt(tap, lt, 2.75, $('.slot[data-s="12:30"]')) ||
+    tapAt(tap, lt, 3.0, $('#cont')) || tapAt(tap, lt, 3.8, $('#conf'));
+}
+
+/* ---------------------------------------------------------------- 4B website */
+const SERVICES = [
+  ['Hair Spa', 'Deep-conditioning treatment', '₹1,200', '60 min', '#b7cfc5'],
+  ['Haircut & Styling', 'Consultation, cut and blow-dry', '₹800', '45 min', '#d9c3a5'],
+  ['Classic Manicure', 'Shape, cuticle care and polish', '₹650', '40 min', '#e3b9ad'],
+  ['Signature Facial', 'Cleanse, exfoliate and mask', '₹1,800', '60 min', '#c7c0d8'],
+];
+const WEB_SLOTS = ['11:00','11:30','12:00','12:30','15:30','16:00','16:30','17:00'];
+function buildSite(el) {
+  el.innerHTML = `<div class="bokeh"></div><div class="push"><div class="laptop"><div class="browser">
+    <div class="chrome"><div class="tl"><i></i><i></i><i></i></div><div class="url">🔒 aurasalon.in/book</div></div>
+    <div class="site-nav"><div class="logo">Aura<small>Salon &amp; Spa</small></div><a>Services</a><a>Our team</a><a>Visit us</a><div class="bk">Book now</div></div>
+    <div class="site">
+      <div><h2>Our services</h2><div class="lede">Indiranagar, Bengaluru · Open daily 10 AM to 8 PM</div>
+        ${SERVICES.map(([n, d, p, m, c], i) => `<div class="svc" data-i="${i}"><div class="sw" style="background:${c}"></div><div><div class="nm">${n}</div><div class="ds">${d}</div></div><div class="pr">${p}<small>${m}</small></div></div>`).join('')}
+      </div>
+      <div class="panel"><div class="sec" style="font-size:24px">Pick a date &amp; time</div>
+        <div class="days">${[['Tue','20'],['Wed','21'],['Thu','22'],['Fri','23'],['Sat','24']].map(([w, d]) => `<div class="day" data-d="${d}"><span>${w}</span><b>${d}</b><span>Oct</span></div>`).join('')}</div>
+        <div class="slots">${WEB_SLOTS.map((s) => `<div class="slot" data-s="${s}">${s}</div>`).join('')}</div>
+        <div class="who fieldset"><div><label>Full name</label><div class="in">Priya Sharma</div></div><div><label>Phone number</label><div class="in">+91 90000 12345</div></div></div>
+        <div class="btn ghost" id="wconf">Confirm booking</div>
+        <div class="done" id="wdone"><div class="success" style="padding:0"><div class="chk">✓</div><h4 style="font-size:28px">Your appointment is confirmed!</h4>
+          <div class="summary" style="min-width:420px;text-align:left"><div><span>Classic Manicure</span><b>₹650</b></div><div><span>Date</span><b>Thu, 22 Oct</b></div><div><span>Time</span><b>16:30</b></div><div><span>Total</span><b>₹650</b></div></div></div></div>
+      </div>
+    </div>${CURSOR}</div></div></div><div class="vignette"></div>`;
+}
+function renderSite(el, lt) {
+  const $ = (s) => el.querySelector(s);
+  el.querySelector('.push').style.transform = `scale(${1.0 + lt * 0.012})`;
+  const svc = lt >= 0.45, day = lt >= 1.0, slot = lt >= 1.45, conf = lt >= 1.95;
+  el.querySelectorAll('.svc').forEach((s) => s.classList.toggle('sel', svc && s.dataset.i === '2'));
+  el.querySelectorAll('.panel .day').forEach((d) => d.classList.toggle('sel', day && d.dataset.d === '22'));
+  el.querySelectorAll('.panel .slot').forEach((s) => s.classList.toggle('sel', slot && s.dataset.s === '16:30'));
+  $('#wconf').className = 'btn' + (slot ? '' : ' ghost');
+  // Solid wipe-up reveal (no semi-transparent text overlap).
+  const wk = conf ? ramp(lt, 2.05, 2.3) : 0;
+  $('#wdone').style.opacity = wk > 0 ? 1 : 0;
+  $('#wdone').style.clipPath = `inset(${(1 - wk) * 100}% 0 0 0 round 22px)`;
+  // cursor path (browser-local px): service → Thu 22 → 16:30 → Confirm
+  const br = $('.browser'), at = (sel) => centreIn(br, $(sel), br.offsetWidth);
+  const P = [[...at('.svc[data-i="0"]'), 0], [...at('.svc[data-i="2"]'), 0.4], [...at('.panel .day[data-d="22"]'), 0.95],
+    [...at('.panel .slot[data-s="16:30"]'), 1.4], [...at('#wconf'), 1.9], [...at('#wconf'), 2.8]];
+  let x = P[0][0], y = P[0][1];
+  for (let i = 0; i < P.length - 1; i++) {
+    const [x0, y0, t0] = P[i], [x1, y1, t1] = P[i + 1];
+    if (lt >= t0) { const k = ramp(lt, t0, t1); x = x0 + (x1 - x0) * k; y = y0 + (y1 - y0) * k; }
+  }
+  const c = $('.cursor'); c.style.left = x + 'px'; c.style.top = y + 'px';
+  const click = [0.45, 1.0, 1.45, 1.95].some((t) => lt >= t && lt < t + 0.1);
+  c.style.transform = click ? 'scale(.85)' : 'scale(1)';
+}
+
+/* ---------------------------------------------------------------- 7B end card */
+function buildEnd(el) {
+  el.innerHTML = `<div class="endcard"><div class="sweep"></div>
+    <div class="lockup"><img src="assets/jarcube-logo.png" alt="JarCube logo"><div class="word">JarCube</div></div>
+    <div class="accent"></div>
+    <div class="tag">Intelligence, Elevated. Possibilities, Redefined.</div>
+    <div class="cta">Build your smarter customer experience with JarCube.</div>
+    <div class="url">JARCUBE.COM</div></div>`;
+}
+function renderEnd(el, lt) {
+  const $ = (s) => el.querySelector(s);
+  const lg = ramp(lt, 0.15, 0.85);
+  $('.lockup').style.opacity = lg; $('.lockup').style.transform = `scale(${0.965 + lg * 0.035})`;
+  $('.accent').style.width = 900 * ramp(lt, 0.6, 1.3) + 'px';
+  const tg = ramp(lt, 0.8, 1.35), ct = ramp(lt, 1.45, 1.95), ur = ramp(lt, 1.8, 2.3);
+  $('.tag').style.opacity = tg; $('.tag').style.transform = `translateY(${(1 - tg) * 12}px)`;
+  $('.cta').style.opacity = ct; $('.cta').style.transform = `translateY(${(1 - ct) * 10}px)`;
+  $('.url').style.opacity = ur;
+  $('.sweep').style.left = (-600 + lt * 900) + 'px';
+}
+
+/* ---------------------------------------------------------------- build stage */
+const stage = document.getElementById('stage');
+const BUILDERS = { '1B': buildNotifs, '3B': buildChat, '4B': buildSite, '7B': buildEnd };
+for (const s of SHOTS) {
+  const el = document.createElement('div');
+  el.className = 'shot'; el.dataset.id = s.id; s.el = el;
+  if (s.type === 'live') {
+    el.innerHTML = `<video muted playsinline preload="auto"></video>
+      <div class="slate"><div class="row"><b>SHOT ${s.id}</b><span>${s.scene}</span><span>${tc(s.start)} – ${tc(s.end)}</span><span>${(s.end - s.start).toFixed(2)} s</span></div>
+      <h3>${s.title}</h3><p>${s.brief}</p><div class="drop">drop footage/${s.id}.webm or footage/${s.id}.mp4 to replace this slate</div></div>`;
+    const v = el.querySelector('video');
+    // Try WebM first (plays in open-source Chromium), then MP4.
+    const sources = [`footage/${s.id}.webm`, `footage/${s.id}.mp4`];
+    s.ready = new Promise((resolve) => {
+      const tryNext = () => {
+        const src = sources.shift();
+        if (!src) { resolve(false); return; }
+        v.onloadeddata = () => { el.classList.add('has-footage'); s.video = v; resolve(true); };
+        v.onerror = tryNext;
+        v.src = src;
+      };
+      tryNext();
+      setTimeout(() => resolve(false), 4000);
+    });
+  } else {
+    BUILDERS[s.id](el);
+  }
+  stage.appendChild(el);
+}
+const superEls = SUPERS.map((sp) => {
+  const el = document.createElement('div');
+  el.className = 'super';
+  el.innerHTML = `<div class="bar"></div><div><div class="k">${sp.k}</div><div class="t">${sp.t}</div></div>`;
+  stage.appendChild(el); return el;
+});
+
+// ?insert=3B → render only that insert, full frame, on its own timeline (clean plate for screen replacement).
+const params = new URLSearchParams(location.search);
+const INSERT = params.get('insert');
+
+function seekVideo(v, time) {
+  return new Promise((resolve) => {
+    const target = clamp(time, 0, Math.max(0, (v.duration || 0) - 0.001));
+    if (Math.abs(v.currentTime - target) < 0.0005) { resolve(); return; }
+    const done = () => { v.removeEventListener('seeked', done); resolve(); };
+    v.addEventListener('seeked', done);
+    v.currentTime = target;
+    setTimeout(done, 1500);
+  });
+}
+
+window.seek = async function seek(t) {
+  await Promise.all(SHOTS.filter((s) => s.ready).map((s) => s.ready));
+  const pending = [];
+  for (const s of SHOTS) {
+    let op = 0, lt = t - s.start;
+    if (INSERT) {
+      op = s.id === INSERT ? 1 : 0; lt = t;
+    } else {
+      const xf = s.xf || 0;
+      if (t >= s.start - xf && t < s.end) op = xf && t < s.start ? ease((t - (s.start - xf)) / xf) : 1;
+      if (s.id === '7B' && t >= s.end) op = 1;  // hold last frame
+    }
+    s.el.style.opacity = op;
+    s.el.style.zIndex = SHOTS.indexOf(s);
+    if (!op) continue;
+    if (s.render) s.render(s.el, Math.max(0, lt));
+    if (s.video) pending.push(seekVideo(s.video, Math.max(0, lt)));
+  }
+  SUPERS.forEach((sp, i) => {
+    const o = INSERT ? 0 : ramp(t, sp.start, sp.start + 0.35) * (1 - ramp(t, sp.end - 0.3, sp.end));
+    superEls[i].style.opacity = o;
+    superEls[i].style.transform = `translateX(${(1 - o) * -16}px)`;
+  });
+  document.getElementById('hud').textContent =
+    `${tc(t)}  ${INSERT ? 'insert ' + INSERT : (SHOTS.find((s) => t >= s.start && t < s.end) || SHOTS[SHOTS.length - 1]).id}`;
+  await Promise.all(pending);
+};
+
+/* ---------------------------------------------------------------- preview controls */
+let cur = 0, playing = false, last = 0;
+const loop = async (now) => {
+  if (!playing) return;
+  cur += (now - last) / 1000; last = now;
+  if (cur >= DURATION) { cur = DURATION; playing = false; }
+  await window.seek(cur);
+  requestAnimationFrame(loop);
+};
+window.addEventListener('keydown', (e) => {
+  document.body.classList.add('preview');
+  if (e.code === 'Space') { e.preventDefault(); playing = !playing; if (cur >= DURATION) cur = 0; last = performance.now(); requestAnimationFrame(loop); }
+  if (e.code === 'ArrowRight') { cur = Math.min(DURATION, cur + 1 / FPS); window.seek(cur); }
+  if (e.code === 'ArrowLeft') { cur = Math.max(0, cur - 1 / FPS); window.seek(cur); }
+  if (e.code === 'Home') { cur = 0; window.seek(0); }
+});
+window.seek(Number(params.get('t') || 0));
+</script>
+</body>
+</html>

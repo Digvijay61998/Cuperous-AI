@@ -1,7 +1,8 @@
 // ** Type import
 import { VerticalNavItemsType } from 'src/@core/layouts/types';
 import { RoleEnum } from 'src/utils/role.enum';
-import { NAV_TITLE_TAB, ROLE_TABS } from 'src/utils/role-tabs';
+import { NAV_TITLE_TAB, tabsForRole } from 'src/utils/role-tabs';
+import { CrmPlugin, crmMenuChildren } from 'src/views/crm/plugins/crmPlugins';
 
 // Dedicated sidebar for the super-admin console.
 const superAdminNavigation = (): VerticalNavItemsType => [
@@ -76,6 +77,10 @@ const orgNavigation = (): VerticalNavItemsType => {
           // icon: 'ant-design:tag-filled',
           path: '/tag/list',
         },
+        {
+          title: 'Organization',
+          path: '/organization/settings',
+        },
         // {
         //   title: 'Scraping',
         //   // icon: 'material-symbols:screen-search-desktop-rounded',
@@ -83,11 +88,7 @@ const orgNavigation = (): VerticalNavItemsType => {
         // },
       ],
     },
-    {
-      title: 'Service Requests',
-      icon: 'carbon:request-quote',
-      path: '/service-request/list',
-    },
+    // Service Requests moved under CRM (crm-plugins-service-desk R17.5).
     {
       title: 'Question Bank',
       icon: 'wpf:faq',
@@ -211,15 +212,51 @@ const orgNavigation = (): VerticalNavItemsType => {
  * org nav filtered to the tabs their role may see (handles top-level groups,
  * which the path-based access() check can't gate because their path is empty).
  */
-const navigation = (role?: string): VerticalNavItemsType => {
-  if (role === RoleEnum.SUPER_ADMIN) return superAdminNavigation();
+/** Nav titles hidden when the org's plan does not enable the feature. */
+const FEATURE_GATED_TITLES: Record<string, string> = {
+  'Question Bank': 'question-bank',
+  Advertisements: 'advertisements',
+  Offers: 'offers',
+};
 
-  const allowedTabs = ROLE_TABS[role ?? ''] ?? ROLE_TABS[RoleEnum.ORG_ADMIN];
-  return orgNavigation().filter((item: any) => {
-    const tab = NAV_TITLE_TAB[item.title];
-    // Unmapped items stay visible; mapped items require the tab.
-    return tab === undefined || allowedTabs.includes(tab);
-  });
+const navigation = (
+  role?: string,
+  features?: Record<string, boolean> | null,
+  crmPlugins?: CrmPlugin[] | null,
+): VerticalNavItemsType => {
+  if (role === RoleEnum.SUPER_ADMIN) return superAdminNavigation();
+  // The CRM sub-menu follows the org's plugins (crm-plugins-service-desk R8.1).
+  const withCrm = (items: any[]) =>
+    items.map((item) => (item.title === 'CRM' ? { ...item, children: crmMenuChildren(crmPlugins, role) } : item));
+
+  // Unknown feature map (still loading) => do not hide anything.
+  const featureOn = (title: string) => {
+    const key = FEATURE_GATED_TITLES[title];
+    return !key || !features || features[key] === true;
+  };
+
+  // Fail closed: unknown / missing roles see no org tabs.
+  const allowedTabs = tabsForRole(role);
+  return withCrm(orgNavigation())
+    .map((item: any) =>
+      // CRM children carry their own tab: an agent sees the group with only
+      // Service Requests in it (R17.1, R17.2).
+      item.title === 'CRM'
+        ? { ...item, children: item.children.filter((c: any) => allowedTabs.includes(c.tab ?? 'crm')) }
+        : item,
+    )
+    .filter((item: any) => {
+      if (item.title === 'CRM') return item.children.length > 0;
+      const tab = NAV_TITLE_TAB[item.title];
+      // Unmapped items are hidden (fail closed); mapped items require the tab.
+      return tab !== undefined && allowedTabs.includes(tab) && featureOn(item.title);
+    })
+    .map((item: any) =>
+      item.children
+        ? { ...item, children: item.children.filter((c: any) => featureOn(c.title)) }
+        : item,
+    )
+    .filter((item: any) => !item.children || item.children.length > 0);
 };
 
 export default navigation;

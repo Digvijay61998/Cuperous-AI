@@ -12,7 +12,7 @@ import BotNodeDialogTitle from './common';
 import ViewInJson from '../view-node-in-json';
 import Autocomplete from "@mui/material/Autocomplete";
 import { useState } from 'react';
-import axios from 'axios';
+import Axios from 'src/helper/Axios';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -36,7 +36,7 @@ export default function index(props: any) {
 
     const handleSearchChange = async (e : any)=>{
         setTitle(e)
-        const response = await axios.post(process.env.NEXT_PUBLIC_API_URL + '/api/trainingdata/search', 
+        const response = await Axios.post('/trainingdata/search', 
         JSON.stringify({
           botId : botId,
           search : e
@@ -54,7 +54,7 @@ export default function index(props: any) {
     }
 
     const getFilesPerBot = async () =>{
-      const response = await axios.post(process.env.NEXT_PUBLIC_API_URL + '/api/trainingdata/bot/' + botId, 
+      const response = await Axios.post('/trainingdata/bot/' + botId, 
       JSON.stringify({
       }), {
         headers: {
@@ -69,7 +69,7 @@ export default function index(props: any) {
     }
 
     const getFilesPerNode = async ()=>{
-      const response = await axios.get(process.env.NEXT_PUBLIC_API_URL + '/api/trainingdata/node/' + nodeId, {
+      const response = await Axios.get('/trainingdata/node/' + nodeId, {
         headers: {
           'Content-Type': 'application/json'
         }

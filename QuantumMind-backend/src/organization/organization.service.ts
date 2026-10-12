@@ -1,8 +1,19 @@
 import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import { ORGANIZATION_PROVIDER } from 'src/constants';
 import { OrganizationStatus } from './enums/organization-status.enum';
 import { OrganizationDocument } from './entities/organization.entity';
+import {
+  defaultZoneForCountry,
+  resolveOrgTimeZone,
+} from 'src/common/time/org-time';
+
+/** Denormalized per-org usage counters used for race-safe quota checks. */
+export type CounterField =
+  | 'botCount'
+  | 'agentCount'
+  | 'templateCount'
+  | 'platformCount';
 
 @Injectable()
 export class OrganizationService {
@@ -14,6 +25,7 @@ export class OrganizationService {
   ) {}
 
   async findById(id: string): Promise<OrganizationDocument | null> {
+    if (!mongoose.isValidObjectId(id)) return null;
     return this.organizationModel.findById(id);
   }
 
@@ -30,6 +42,7 @@ export class OrganizationService {
     bots: number;
     agents: number;
     templates: number;
+    platforms: number;
   }> {
     const [row] = await this.organizationModel.aggregate([
       {
@@ -38,6 +51,7 @@ export class OrganizationService {
           bots: { $sum: '$botCount' },
           agents: { $sum: '$agentCount' },
           templates: { $sum: '$templateCount' },
+          platforms: { $sum: '$platformCount' },
         },
       },
     ]);
@@ -45,17 +59,19 @@ export class OrganizationService {
       bots: row?.bots ?? 0,
       agents: row?.agents ?? 0,
       templates: row?.templates ?? 0,
+      platforms: row?.platforms ?? 0,
     };
   }
 
-  /** URL-safe, unique-ish slug from a display name (collisions get a suffix). */
+  /** URL-safe slug from a display name (collisions get a numeric suffix). */
   private async uniqueSlug(name: string): Promise<string> {
     const base =
       name
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '') || 'org';
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'org';
     let slug = base;
     let n = 1;
     while (await this.organizationModel.exists({ slug })) {
@@ -64,26 +80,70 @@ export class OrganizationService {
     return slug;
   }
 
+  /**
+   * Creates an org. The slug pick is check-then-insert, so two concurrent
+   * creates with the same name can collide on the unique index; retry with a
+   * fresh slug a few times instead of surfacing a 500.
+   */
   async create(input: {
     name: string;
     createdBy?: string | null;
   }): Promise<OrganizationDocument> {
-    const slug = await this.uniqueSlug(input.name);
-    return this.organizationModel.create({
-      name: input.name,
-      slug,
-      createdBy: input.createdBy ?? null,
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const slug = await this.uniqueSlug(input.name);
+      try {
+        return await this.organizationModel.create({
+          name: input.name.trim(),
+          slug,
+          createdBy: input.createdBy ?? null,
+        });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+      }
+    }
+    throw new HttpException('Could not allocate a unique organization slug', 409);
   }
 
-  async setOwner(
+  /** Org-admin-editable settings (country / time zone). */
+  async getSettings(organizationId: string) {
+    const org = await this.findById(organizationId);
+    if (!org) return null;
+    return this.toSettingsView(org);
+  }
+
+  async updateSettings(
     organizationId: string,
-    ownerId: string,
-  ): Promise<void> {
-    await this.organizationModel.updateOne(
+    patch: { country?: string | null; timeZone?: string | null },
+  ) {
+    const $set: Record<string, string | null> = {};
+    if (patch.country !== undefined) {
+      $set.country = patch.country ? patch.country.trim().toUpperCase() : null;
+    }
+    if (patch.timeZone !== undefined) {
+      $set.timeZone = patch.timeZone ? patch.timeZone.trim() : null;
+    }
+    const org = await this.organizationModel.findOneAndUpdate(
       { _id: organizationId },
-      { ownerId },
+      Object.keys($set).length ? { $set } : {},
+      { new: true },
     );
+    return org ? this.toSettingsView(org) : null;
+  }
+
+  private toSettingsView(org: OrganizationDocument) {
+    const country = (org as any).country ?? null;
+    const timeZone = (org as any).timeZone ?? null;
+    return {
+      country,
+      timeZone,
+      // What dates are actually shown in (explicit zone > country > UTC).
+      effectiveTimeZone: resolveOrgTimeZone({ country, timeZone }),
+      countryDefaultTimeZone: defaultZoneForCountry(country) ?? null,
+    };
+  }
+
+  async setOwner(organizationId: string, ownerId: string): Promise<void> {
+    await this.organizationModel.updateOne({ _id: organizationId }, { ownerId });
   }
 
   async setStatus(
@@ -106,6 +166,7 @@ export class OrganizationService {
    * Projects `status` only to stay a fast, index-friendly read.
    */
   async getStatus(id: string): Promise<OrganizationStatus | null> {
+    if (!mongoose.isValidObjectId(id)) return null;
     const org = await this.organizationModel
       .findById(id)
       .select('status')
@@ -118,13 +179,22 @@ export class OrganizationService {
   }
 
   /**
+   * True when a token's org can no longer be used: suspended OR deleted.
+   * A token referencing a non-existent org must not keep working.
+   */
+  async isUnavailable(id: string): Promise<boolean> {
+    const status = await this.getStatus(id);
+    return status === null || status === OrganizationStatus.SUSPENDED;
+  }
+
+  /**
    * Race-safe quota reservation. Atomically increments a counter only if it is
    * still below `limit`; returns false when the quota is exhausted. Callers
    * must compensate (`releaseCounter`) if the subsequent create fails.
    */
   async reserveCounter(
     organizationId: string,
-    field: 'botCount' | 'agentCount' | 'templateCount',
+    field: CounterField,
     limit: number,
   ): Promise<boolean> {
     const updated = await this.organizationModel.findOneAndUpdate(
@@ -137,7 +207,7 @@ export class OrganizationService {
 
   async releaseCounter(
     organizationId: string,
-    field: 'botCount' | 'agentCount' | 'templateCount',
+    field: CounterField,
   ): Promise<void> {
     try {
       await this.organizationModel.updateOne(
@@ -150,6 +220,36 @@ export class OrganizationService {
         `Failed to release ${field} for org ${organizationId}: ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Recomputes the usage counters from the source collections. Used by the
+   * super-admin console to repair drift (e.g. a crash between the counter
+   * increment and the insert).
+   */
+  async reconcileCounters(organizationId: string) {
+    const oid = new mongoose.Types.ObjectId(String(organizationId));
+    const model = (name: string) => mongoose.model(name);
+    const safeCount = async (name: string, filter: Record<string, any>) => {
+      try {
+        return await model(name).countDocuments(filter);
+      } catch {
+        return 0;
+      }
+    };
+    const [botCount, agentCount, platformCount] = await Promise.all([
+      safeCount('Bot', { organizationId: oid, status: { $ne: 'deleted' } }),
+      safeCount('Agent', {
+        organizationId: oid,
+        role: { $in: ['org_manager', 'agent'] },
+      }),
+      safeCount('Social', { organizationId: oid }),
+    ]);
+    await this.organizationModel.updateOne(
+      { _id: oid },
+      { botCount, agentCount, platformCount },
+    );
+    return { botCount, agentCount, platformCount };
   }
 
   async assertActive(id: string): Promise<void> {

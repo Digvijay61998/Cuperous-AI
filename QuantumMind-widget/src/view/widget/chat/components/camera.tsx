@@ -62,10 +62,18 @@ export default function Camera({
           Authorization: 'Bearer ' + accessToken,
         },
       });
+      // Guard against a missing url (the endpoint returns { error } on failure)
+      // so we never emit `${baseUrl}/apiundefined` as an image.
+      if (!res.data?.url) {
+        toast.error(res.data?.error || 'Upload failed');
+        return;
+      }
+      const fileUrl = `${window.baseUrl}/api${res.data.url}`;
       const message = {
-        value: `${window.baseUrl}/api${res.data.url}`,
+        value: fileUrl,
         type: 'image',
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -76,10 +84,9 @@ export default function Camera({
       updatemyMessages(message);
       setIsCapturedImg(false);
       setIsCameraOpen(false);
-      console.log('uploadFileServer to server', res);
-      return `${window.baseUrl}/api${res.data.url}`;
+      return fileUrl;
     } catch (error: any) {
-      toast.error(error.response.data.message || error.message || 'Failed...');
+      toast.error(error.response?.data?.message || error.message || 'Failed...');
       return;
     }
   };

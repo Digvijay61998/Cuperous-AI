@@ -61,7 +61,7 @@ const Transition = forwardRef(function Transition(
 });
 
 const PerfectScrollbar = styled(PerfectScrollbarComponent)<
-  ScrollBarProps & { ref: Ref<unknown> }
+  ScrollBarProps & { ref?: Ref<unknown> }
 >(({ theme }) => ({
   padding: theme.spacing(1),
 }));
@@ -70,6 +70,24 @@ type ChatLogType = {
   hidden: boolean;
   data: any;
 };
+// Module-level so its identity is stable across renders. Defined inside the
+// component it remounted the scroll box on every render, resetting scrollTop.
+const ScrollWrapper = forwardRef<any, { hidden: boolean; children: ReactNode }>(
+  ({ hidden, children }, ref) =>
+    hidden ? (
+      <Box
+        ref={ref}
+        sx={{ p: 2, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}
+      >
+        {children}
+      </Box>
+    ) : (
+      <PerfectScrollbar ref={ref} options={{ wheelPropagation: false }}>
+        {children}
+      </PerfectScrollbar>
+    ),
+);
+
 const ChatLog = (props: any) => {
   // ** Props
   const { data, hidden } = props;
@@ -105,15 +123,14 @@ const ChatLog = (props: any) => {
 
   // ** Scroll to chat bottom
   const scrollToBottom = () => {
-    if (chatArea.current) {
-      if (hidden) {
-        // @ts-ignore
-        chatArea.current.scrollTop = Number.MAX_SAFE_INTEGER;
-      } else {
-        // @ts-ignore
-        chatArea.current._container.scrollTop = Number.MAX_SAFE_INTEGER;
-      }
-    }
+    // Scroll only the chat container. Never use scrollIntoView here: it also
+    // scrolls every scrollable ancestor (flow canvas, page), which shoved the
+    // whole flow builder up when messages arrived.
+    requestAnimationFrame(() => {
+      const el: any = chatArea.current;
+      const box: HTMLElement | null = el?._container ?? el;
+      if (box) box.scrollTop = box.scrollHeight;
+    });
   };
   // ** Formats chat data based on sender
   const formattedChatData = () => {
@@ -172,9 +189,6 @@ const ChatLog = (props: any) => {
   const renderChats = () => {
     return formattedChatData().map((item: any, index: number) => {
       const isSender = item.senderId === 'visitor_id_1010';
-      document.getElementById('scrollToBottom')?.scrollIntoView({
-        behavior: 'smooth'
-      });
       return (
         <Box
           key={index}
@@ -267,31 +281,12 @@ const ChatLog = (props: any) => {
     });
   };
 
-  const ScrollWrapper = ({ children }: { children: ReactNode }) => {
-    if (hidden) {
-      return (
-        <Box
-          ref={chatArea}
-          sx={{ p: 5, height: '100%', overflowY: 'auto', overflowX: 'hidden' }}
-        >
-          {children}
-        </Box>
-      );
-    } else {
-      return (
-        <PerfectScrollbar ref={chatArea} options={{ wheelPropagation: false }}>
-          {children}
-        </PerfectScrollbar>
-      );
-    }
-  };
 
   return (
     <>
      
       <Box sx={{ height: 'calc(100% - 8.4375rem)' }}>
-      <ScrollWrapper>{renderChats()}</ScrollWrapper>
-      <span id="scrollToBottom"> </span>
+      <ScrollWrapper hidden={hidden} ref={chatArea}>{renderChats()}</ScrollWrapper>
     </Box>
 
       {/* webview dialog with full screen */}

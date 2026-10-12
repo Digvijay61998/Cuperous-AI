@@ -75,7 +75,8 @@ const navigation = (): HorizontalNavItemsType => {
     {
       title: 'Service Requests',
       icon: 'carbon:request-quote',
-      path: '/service-request/list',
+      // The board lives under CRM now (crm-plugins-service-desk R17.5).
+      path: '/crm/service-requests',
     },
     {
       title: 'Question Bank',

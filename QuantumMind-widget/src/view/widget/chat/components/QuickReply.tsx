@@ -14,14 +14,18 @@ export default function ColorChips({
   socket,
   updatemyMessages,
   visitorId,
+  disabled = false,
 }: any) {
   const handleButton = async (e: any, item: any) => {
     e.preventDefault();
+    // Ended_State (R14.6): buttons of a closed chat do nothing.
+    if (disabled) return;
     if (item.type === "text") {
       const message = {
         value: item.value,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -35,6 +39,7 @@ export default function ColorChips({
         value: item.title,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -104,6 +109,7 @@ export default function ColorChips({
           buttons.map((item: any, index: number) => (
             <Button
               key={index}
+              disabled={disabled}
               onClick={(e: any) => handleButton(e, item)}
               sx={{
                 m: 0,

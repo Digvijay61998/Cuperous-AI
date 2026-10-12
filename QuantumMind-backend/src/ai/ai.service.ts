@@ -9,6 +9,20 @@ import { AI_USAGE_PROVIDER, KNOWLEDGE_PROVIDER } from "./constants";
 import { CreateKnowledgeDto } from "./dto/create-knowledge.dto";
 import { AiUsageDocument } from "./entities/ai-usage.entity";
 import { KnowledgeEntryDocument } from "./entities/knowledge-entry.entity";
+import {
+  ExtractContactResponse,
+  KnowledgeCandidateRequest,
+  KnowledgeCandidateResponse,
+  KnowledgeSimilarRequest,
+  KnowledgeSimilarResponse,
+  ProfileMergeRequest,
+  ProfileMergeResponse,
+  ServiceRequestSummaryRequest,
+  ServiceRequestSummaryResponse,
+} from "./ai-crm.types";
+
+/** Per-call timeout for the CRM AI endpoints (LLM-backed, so generous). */
+export const AI_CRM_TIMEOUT_MS = 60_000;
 
 @Injectable()
 export class AiService {
@@ -101,6 +115,78 @@ export class AiService {
 
     await entry.remove();
     return { success: true, id };
+  }
+
+  /**
+   * Remove one knowledge source by name (learned entries, R21.4). Idempotent:
+   * a source that is already gone is a success. Throws on an AI error so the
+   * caller can retry.
+   */
+  async removeKnowledgeSource(clientId: string, source: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(
+          `${this.aiUrl}/ingest/${encodeURIComponent(clientId)}/${encodeURIComponent(source)}`
+        )
+      );
+    } catch (error) {
+      if (error?.response?.status !== 404) {
+        this.logger.error(`Knowledge source delete failed: ${error.message}`);
+        throw error;
+      }
+    }
+    await this.knowledgeModel.deleteMany({ clientId, source });
+  }
+
+  // ------------------------------------------------------- CRM AI endpoints
+  // Server-side implementations land in P2 (extract), P7 (profile) and P8
+  // (knowledge). Until then the AI service 404s and callers treat any thrown
+  // error as "AI unavailable" and fall back (keep chats / skip auto-learn).
+
+  /** Fold one finished conversation into the rolling Visitor_Profile (R18). */
+  profileMerge(req: ProfileMergeRequest): Promise<ProfileMergeResponse> {
+    return this.postAi<ProfileMergeResponse>("/profile/merge", req);
+  }
+
+  /** Turn an agent resolution into a generalised, PII-free Q&A (R21.1). */
+  knowledgeCandidate(
+    req: KnowledgeCandidateRequest
+  ): Promise<KnowledgeCandidateResponse> {
+    return this.postAi<KnowledgeCandidateResponse>("/knowledge/candidate", req);
+  }
+
+  /** Best match among existing `incident:*` knowledge sources (R21.3). */
+  knowledgeSimilar(
+    req: KnowledgeSimilarRequest
+  ): Promise<KnowledgeSimilarResponse> {
+    return this.postAi<KnowledgeSimilarResponse>("/knowledge/similar", {
+      source_prefix: "incident:",
+      ...req,
+    });
+  }
+
+  /** Agent-facing summary of one service request (crm-plugins-service-desk R15). */
+  serviceRequestSummary(req: ServiceRequestSummaryRequest): Promise<ServiceRequestSummaryResponse> {
+    return this.postAi<ServiceRequestSummaryResponse>("/generate/service-request-summary", req);
+  }
+
+  /** Pull name/email/phone out of free text when regexes are ambiguous (R16.5). */
+  extractContact(text: string): Promise<ExtractContactResponse> {
+    return this.postAi<ExtractContactResponse>("/extract/contact", { text });
+  }
+
+  private async postAi<T>(path: string, body: unknown): Promise<T> {
+    try {
+      const res = await firstValueFrom(
+        this.httpService.post<T>(`${this.aiUrl}${path}`, body, {
+          timeout: AI_CRM_TIMEOUT_MS,
+        })
+      );
+      return res.data;
+    } catch (error) {
+      this.logger.warn(`AI ${path} failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   // ----------------------------------------------------------- usage / billing

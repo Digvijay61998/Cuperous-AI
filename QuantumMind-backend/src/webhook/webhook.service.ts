@@ -1,10 +1,16 @@
-import { Injectable, Inject, Logger, HttpException } from "@nestjs/common";
+import {
+  Injectable,
+  Inject,
+  Logger,
+  HttpException,
+  NotFoundException,
+} from "@nestjs/common";
 import { CreateWebhookDto } from "./dto/create-webhook.dto";
 import { UpdateWebhookDto } from "./dto/update-webhook.dto";
 import { WEBHOOK_PROVIDER, WEBHOOK_ACTIVITIES_PROVIDER } from "./constant";
 import { WebhookDocument } from "./entities/webhook.entity";
 import { WebHookActivitiesDocument } from "./entities/webhook-activities";
-import { Model } from "mongoose";
+import mongoose, { Model } from "mongoose";
 
 import { HttpService } from "@nestjs/axios";
 import { firstValueFrom } from "rxjs";
@@ -12,6 +18,12 @@ import { WebhookStatusEnum } from "./enums/webhook-status.enum";
 import { getDaySubtitle } from "src/util/get-subtitle";
 import { ReportParamsDto } from "src/util/report-params.dto";
 import { messageParser } from "src/whatsapp/util/message-parser";
+import {
+  isCrossOrg,
+  scopedFilter,
+  TenantContext,
+} from "src/common/tenant/tenant-context";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
 
 @Injectable()
 export class WebhookService {
@@ -24,13 +36,66 @@ export class WebhookService {
     @Inject(WEBHOOK_ACTIVITIES_PROVIDER)
     private readonly webhookActivitiesModel: Model<WebHookActivitiesDocument>,
 
-    private readonly httpService: HttpService
+    private readonly httpService: HttpService,
+
+    private readonly tenantScope: TenantScopeService
   ) {}
 
-  async create(createWebhookDto: CreateWebhookDto) {
+  /** find/count filter: org-pinned when a user is given, unscoped otherwise. */
+  private scope(
+    user: TenantContext | undefined,
+    filter: Record<string, any> = {}
+  ): Record<string, any> {
+    return user ? scopedFilter(user, filter) : filter;
+  }
+
+  /**
+   * Aggregation `$match` fragment for webhooks (aggregate does not auto-cast).
+   * Empty for internal callers / SUPER_ADMIN; fail-closed to
+   * `{ organizationId: null }` for an org caller without an organization.
+   */
+  private orgMatch(user: TenantContext | undefined): Record<string, any> {
+    if (!user || isCrossOrg(user)) return {};
+    const orgId = user.organizationId;
+    return {
+      organizationId:
+        orgId && mongoose.isValidObjectId(orgId)
+          ? new mongoose.Types.ObjectId(String(orgId))
+          : null,
+    };
+  }
+
+  /**
+   * Webhook activities carry no organizationId; they reference the `bot` that
+   * triggered the call, so they are scoped through the org's bots.
+   */
+  private async activityScope(
+    user: TenantContext | undefined
+  ): Promise<Record<string, any>> {
+    if (!user) return {};
+    return this.tenantScope.orgBotMatch(user, "bot");
+  }
+
+  /** Loads a webhook by id within the caller's scope, 404 otherwise. */
+  private async findScopedWebhook(webhookId: string, user?: TenantContext) {
+    if (!mongoose.isValidObjectId(webhookId)) {
+      throw new NotFoundException("Webhook not found");
+    }
+    const webhook = await this.webhookModel.findOne(
+      this.scope(user, { _id: webhookId })
+    );
+    if (!webhook) {
+      throw new NotFoundException("Webhook not found");
+    }
+    return webhook;
+  }
+
+  async create(createWebhookDto: CreateWebhookDto, user?: TenantContext) {
     try {
       const webhook = await this.webhookModel.create({
         ...createWebhookDto,
+        // Always stamped from the caller, never from the client payload.
+        organizationId: user?.organizationId ?? null,
       });
       return webhook;
     } catch (error) {
@@ -39,9 +104,12 @@ export class WebhookService {
     }
   }
 
-  async webhookList() {
+  async webhookList(user?: TenantContext) {
     try {
       return await this.webhookModel.aggregate([
+        {
+          $match: this.orgMatch(user),
+        },
         {
           $project: {
             id: "$_id",
@@ -56,11 +124,11 @@ export class WebhookService {
     }
   }
 
-  async getAllWebhooks() {
+  async getAllWebhooks(user?: TenantContext) {
     try {
-      const webhooks = await this.webhookModel.find({});
+      const webhooks = await this.webhookModel.find(this.scope(user));
 
-      const count = await this.webhookModel.countDocuments({});
+      const count = await this.webhookModel.countDocuments(this.scope(user));
 
       return { data: webhooks, count };
     } catch (error) {
@@ -69,8 +137,11 @@ export class WebhookService {
     }
   }
 
-  async getWebhook(webhookId: string) {
+  async getWebhook(webhookId: string, user?: TenantContext) {
     try {
+      if (user) {
+        return await this.findScopedWebhook(webhookId, user);
+      }
       const webhook = await this.webhookModel.findById(webhookId);
       return webhook;
     } catch (error) {
@@ -81,13 +152,26 @@ export class WebhookService {
     }
   }
 
-  async update(webhookId: string, updateWebhookDto: UpdateWebhookDto) {
+  async update(
+    webhookId: string,
+    updateWebhookDto: UpdateWebhookDto,
+    user?: TenantContext
+  ) {
     try {
-      const webhook = await this.webhookModel.findByIdAndUpdate(
-        webhookId,
-        updateWebhookDto,
+      if (user && !mongoose.isValidObjectId(webhookId)) {
+        throw new NotFoundException("Webhook not found");
+      }
+      // Never let a client move a webhook between organizations.
+      const { organizationId: _ignored, ...changes } =
+        updateWebhookDto as any;
+      const webhook = await this.webhookModel.findOneAndUpdate(
+        this.scope(user, { _id: webhookId }),
+        changes,
         { new: true }
       );
+      if (user && !webhook) {
+        throw new NotFoundException("Webhook not found");
+      }
       return webhook;
     } catch (error) {
       this.logger.error(
@@ -97,9 +181,17 @@ export class WebhookService {
     }
   }
 
-  async remove(webhookId: string) {
+  async remove(webhookId: string, user?: TenantContext) {
     try {
-      const webhook = await this.webhookModel.findByIdAndDelete(webhookId);
+      if (user && !mongoose.isValidObjectId(webhookId)) {
+        throw new NotFoundException("Webhook not found");
+      }
+      const webhook = await this.webhookModel.findOneAndDelete(
+        this.scope(user, { _id: webhookId })
+      );
+      if (user && !webhook) {
+        throw new NotFoundException("Webhook not found");
+      }
       return webhook;
     } catch (error) {
       this.logger.error(
@@ -109,11 +201,34 @@ export class WebhookService {
     }
   }
 
-  async callWebhook(webhookId: string, data: any, botId?: string) {
+  /**
+   * Executes a webhook from the bot runtime. Unscoped by default (internal
+   * caller); when `user` is provided it is org-scoped. When the webhook is
+   * org-owned and the triggering bot is known, the bot must belong to the same
+   * org so one tenant's flow cannot fire another tenant's webhook. Legacy
+   * webhooks without an organizationId keep working.
+   */
+  async callWebhook(
+    webhookId: string,
+    data: any,
+    botId?: string,
+    user?: TenantContext
+  ) {
     try {
-      const webhook = await this.webhookModel.findById(webhookId);
+      if (!mongoose.isValidObjectId(webhookId)) {
+        throw new HttpException("Webhook not found", 404);
+      }
+      const webhook = await this.webhookModel.findOne(
+        this.scope(user, { _id: webhookId })
+      );
       if (!webhook) {
         throw new HttpException("Webhook not found", 404);
+      }
+      if (botId && webhook.organizationId) {
+        const botOrgId = await this.tenantScope.orgIdForBot(botId);
+        if (botOrgId && botOrgId !== String(webhook.organizationId)) {
+          throw new HttpException("Webhook not found", 404);
+        }
       }
       let response: any;
       let message: any, metadata: any;
@@ -182,17 +297,19 @@ export class WebhookService {
     }
   }
 
-  async getWebhooksListForNode() {
-    const webhooks = await this.webhookModel.find();
+  async getWebhooksListForNode(user?: TenantContext) {
+    const webhooks = await this.webhookModel.find(this.scope(user));
     return webhooks.map((webhook) => ({
       id: webhook._id,
       name: webhook.name,
     }));
   }
 
-  async testwebhook(webhookId: string) {
+  async testwebhook(webhookId: string, user?: TenantContext) {
     try {
-      const webhook = await this.webhookModel.findById(webhookId);
+      const webhook = user
+        ? await this.findScopedWebhook(webhookId, user)
+        : await this.webhookModel.findById(webhookId);
       if (!webhook) {
         throw new HttpException("Webhook not found", 404);
       }
@@ -229,15 +346,17 @@ export class WebhookService {
     }
   }
 
-  async getTotalCount(days = 30) {
-    const total = await this.webhookModel.countDocuments();
+  async getTotalCount(days = 30, user?: TenantContext) {
+    const total = await this.webhookModel.countDocuments(this.scope(user));
     let percentageChange = 0;
     if (total) {
-      const agoCount = await this.webhookModel.countDocuments({
-        createdAt: {
-          $gte: new Date(new Date().setDate(new Date().getDate() - days)),
-        },
-      });
+      const agoCount = await this.webhookModel.countDocuments(
+        this.scope(user, {
+          createdAt: {
+            $gte: new Date(new Date().setDate(new Date().getDate() - days)),
+          },
+        })
+      );
       percentageChange = Math.round((agoCount / total) * 100);
     }
     return {
@@ -250,13 +369,16 @@ export class WebhookService {
     };
   }
 
-  async getSuccessCount(days = 30) {
+  async getSuccessCount(days = 30, user?: TenantContext) {
+    const scope = await this.activityScope(user);
     const total = await this.webhookActivitiesModel.countDocuments({
+      ...scope,
       status: WebhookStatusEnum.SUCCESS,
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.webhookActivitiesModel.countDocuments({
+        ...scope,
         status: WebhookStatusEnum.SUCCESS,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -276,13 +398,16 @@ export class WebhookService {
     };
   }
 
-  async getFailedCount(days = 30) {
+  async getFailedCount(days = 30, user?: TenantContext) {
+    const scope = await this.activityScope(user);
     const total = await this.webhookActivitiesModel.countDocuments({
+      ...scope,
       status: WebhookStatusEnum.FAILED,
     });
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.webhookActivitiesModel.countDocuments({
+        ...scope,
         status: WebhookStatusEnum.FAILED,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
@@ -302,11 +427,13 @@ export class WebhookService {
     };
   }
 
-  async totalwebhooksCalls(days = 30) {
-    const total = await this.webhookActivitiesModel.countDocuments();
+  async totalwebhooksCalls(days = 30, user?: TenantContext) {
+    const scope = await this.activityScope(user);
+    const total = await this.webhookActivitiesModel.countDocuments(scope);
     let percentageChange = 0;
     if (total) {
       const agoCount = await this.webhookActivitiesModel.countDocuments({
+        ...scope,
         createdAt: {
           $gte: new Date(new Date().setDate(new Date().getDate() - days)),
         },
@@ -325,22 +452,25 @@ export class WebhookService {
     };
   }
 
-  async stats(days = 30) {
+  async stats(days = 30, user?: TenantContext) {
     try {
       return Promise.all([
-        this.getTotalCount(days),
-        this.totalwebhooksCalls(days),
-        this.getSuccessCount(days),
-        this.getFailedCount(days),
+        this.getTotalCount(days, user),
+        this.totalwebhooksCalls(days, user),
+        this.getSuccessCount(days, user),
+        this.getFailedCount(days, user),
       ]);
     } catch (error) {
       throw new HttpException(error.message, error.status || 500);
     }
   }
 
-  async totalWebhookReport() {
+  async totalWebhookReport(user?: TenantContext) {
     try {
       const response = await this.webhookModel.aggregate([
+        {
+          $match: this.orgMatch(user),
+        },
         {
           $group: {
             _id: null,
@@ -361,14 +491,22 @@ export class WebhookService {
     }
   }
 
-  async dayWisePerformance(query: ReportParamsDto) {
+  /**
+   * Builds the activity `$match` for performance reports. Returns `null` when
+   * the requested webhook is invalid or outside the caller's org, in which
+   * case the report is empty.
+   */
+  private async buildActivityReportMatch(
+    query: ReportParamsDto,
+    user?: TenantContext
+  ): Promise<Record<string, any> | null> {
     const { startDate, id: webhookId } = query;
     let endDate = query.endDate;
     if (!endDate) {
       endDate = new Date().toISOString();
     }
 
-    const match = {};
+    const match: Record<string, any> = { ...(await this.activityScope(user)) };
 
     if (startDate) {
       match["createdAt"] = {
@@ -378,9 +516,22 @@ export class WebhookService {
     }
 
     if (webhookId) {
+      if (user) {
+        if (!mongoose.isValidObjectId(webhookId)) return null;
+        const owned = await this.webhookModel.exists(
+          this.scope(user, { _id: webhookId })
+        );
+        if (!owned) return null;
+      }
       match["webhookId"] = webhookId;
     }
+    return match;
+  }
+
+  async dayWisePerformance(query: ReportParamsDto, user?: TenantContext) {
     try {
+      const match = await this.buildActivityReportMatch(query, user);
+      if (!match) return [];
       const response = await this.webhookActivitiesModel.aggregate([
         {
           $match: match,
@@ -440,26 +591,10 @@ export class WebhookService {
     }
   }
 
-  async dateWisePerformance(query: ReportParamsDto) {
+  async dateWisePerformance(query: ReportParamsDto, user?: TenantContext) {
     try {
-      const { startDate, id: webhookId } = query;
-      let endDate = query.endDate;
-      if (!endDate) {
-        endDate = new Date().toISOString();
-      }
-
-      const match = {};
-
-      if (startDate) {
-        match["createdAt"] = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate),
-        };
-      }
-
-      if (webhookId) {
-        match["webhookId"] = webhookId;
-      }
+      const match = await this.buildActivityReportMatch(query, user);
+      if (!match) return [];
 
       const response = await this.webhookActivitiesModel.aggregate([
         {

@@ -1,7 +1,7 @@
 // ** Training Data manager: upload documents / scrape a website into the bot's
 // ** AI knowledge base, then list / view / delete ingested sources.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import axios from 'axios';
+import Axios from 'src/helper/Axios';
 import toast from 'react-hot-toast';
 
 import Box from '@mui/material/Box';
@@ -34,7 +34,6 @@ interface TrainingDoc {
   createdAt?: string;
 }
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL as string; // .../api
 
 const statusColor = (status: string) => {
   if (status === 'completed') return 'success';
@@ -59,7 +58,7 @@ export default function TrainingData({ botId }: { botId: string }) {
     if (!botId) return;
     setLoadingList(true);
     try {
-      const res = await axios.post(`${BACKEND}/trainingdata/bot/${botId}`, {});
+      const res = await Axios.post(`/trainingdata/bot/${botId}`, {});
       setDocs(Array.isArray(res.data) ? res.data : []);
     } catch (error: any) {
       console.error('Failed to load training data', error);
@@ -84,7 +83,7 @@ export default function TrainingData({ botId }: { botId: string }) {
       formData.append('botId', `${botId}`);
       Array.from(files).forEach((f) => formData.append('file', f));
 
-      const res = await axios.post(`${BACKEND}/trainingdata/upload`, formData, {
+      const res = await Axios.post(`/trainingdata/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -114,7 +113,7 @@ export default function TrainingData({ botId }: { botId: string }) {
     const loadingId = toast.loading('Scraping website... this runs in the background.');
     try {
       // 1. Kick off the scrape.
-      const res = await axios.post(`${BACKEND}/scraper`, {
+      const res = await Axios.post(`/scraper`, {
         url,
         clientId: botId,
         botId,
@@ -123,7 +122,7 @@ export default function TrainingData({ botId }: { botId: string }) {
       // 2. Ingest the scraped content into the knowledge base.
       const scrapeId = res.data?._id || res.data?.id;
       if (scrapeId) {
-        await axios.post(`${BACKEND}/scraper/${scrapeId}/ingest`, {
+        await Axios.post(`/scraper/${scrapeId}/ingest`, {
           clientId: botId,
           botId,
         });
@@ -150,7 +149,7 @@ export default function TrainingData({ botId }: { botId: string }) {
     setViewLoading(true);
     setViewDoc(null);
     try {
-      const res = await axios.get(`${BACKEND}/trainingdata/view/${doc._id}`);
+      const res = await Axios.get(`/trainingdata/view/${doc._id}`);
       setViewDoc({ filename: res.data.filename, content: res.data.content || '(no extracted text)' });
     } catch (error: any) {
       setViewDoc({ filename: doc.filename, content: 'Failed to load document content.' });
@@ -163,7 +162,7 @@ export default function TrainingData({ botId }: { botId: string }) {
     if (!window.confirm(`Remove "${doc.filename}" from the knowledge base?`)) return;
     const loadingId = toast.loading('Removing...');
     try {
-      await axios.delete(`${BACKEND}/trainingdata/${doc._id}`);
+      await Axios.delete(`/trainingdata/${doc._id}`);
       toast.dismiss(loadingId);
       toast.success('Removed from the knowledge base.');
       await fetchDocs();

@@ -53,16 +53,18 @@ const columns = [
     field: 'subject',
     headerName: 'Service Request',
     renderCell: ({row}: any) => (
-      // <Link href={`/service-request/view/{row?.id || row?._id}`} style={{cursor:"pointer"}} >
-        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography sx={{ fontWeight: 500, color: 'text.secondary' }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+        {/* Opens the request on the CRM board (crm-plugins-service-desk R17.5). */}
+        <Link href={`/crm/service-requests/${encodeURIComponent(row?._id || row?.id)}`} passHref>
+          <Typography component="a" sx={{ fontWeight: 500, color: 'primary.main', cursor: 'pointer' }}>
+            {row?.ticketId ? `${row.ticketId} · ` : ''}
             {row?.subject}
           </Typography>
-          <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-            {row?.description}
-          </Typography>
-        </Box>
-      // </Link>
+        </Link>
+        <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+          {row?.description}
+        </Typography>
+      </Box>
     ),
   },
   {

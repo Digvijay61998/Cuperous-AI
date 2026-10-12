@@ -12,6 +12,8 @@ type Props = {
   socket: any;
   updatemyMessages: any;
   visitorId: string;
+  /** Ended_State (R14.6): every button of a closed chat is disabled. */
+  disabled?: boolean;
 };
 export default function GroupOrientation({
   isSender,
@@ -21,14 +23,17 @@ export default function GroupOrientation({
   socket,
   updatemyMessages,
   visitorId,
+  disabled = false,
 }: Props) {
   const handleButton = async (e: any, item: any) => {
     e.preventDefault();
+    if (disabled) return;
     if (item.type === "text") {
       const message = {
         value: item.value,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -42,6 +47,7 @@ export default function GroupOrientation({
         value: item.title,
         type: "text",
         senderId: visitorId,
+        senderRole: "visitor",
         time: new Date().toISOString(),
         id: new Date().getTime(),
       };
@@ -126,6 +132,7 @@ export default function GroupOrientation({
                   <Button
                     key={index}
                     sx={buttonStyle}
+                    disabled={disabled}
                     onClick={(e: any) => handleButton(e, item)}
                   >
                     {item.title}
@@ -148,6 +155,7 @@ export default function GroupOrientation({
                   <Button
                     key={index}
                     sx={buttonStyle}
+                    disabled={disabled}
                     onClick={(e: any) => handleButton(e, item)}
                   >
                     {item.title}

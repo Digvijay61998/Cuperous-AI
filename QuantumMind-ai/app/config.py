@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # default because a bot that offers a handoff the surrounding workflow does
     # not implement is worse than one that stays quiet.
     allow_human_handoff_offer: bool = False
+    # Emit the structured `handover` signal (explicit-request check on the
+    # question + the model's stripped <<HANDOVER>> tag). Off -> handover is
+    # always false and the prompt is unchanged.
+    handover_signal_enabled: bool = True
 
     # ---- LLM provider ----
     # One of: openai | moonshot | anthropic

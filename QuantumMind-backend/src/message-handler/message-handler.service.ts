@@ -1,6 +1,103 @@
+import { EntitlementService } from "src/billing/entitlement.service";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
 import { HttpService } from "@nestjs/axios";
 
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { HandoverAlertService } from "src/handover-alert/handover-alert.service";
+import { IncidentService } from "src/incident/incident.service";
+import { NO_PROBLEM_TEXT } from "src/incident/constants";
+import { ProblemFlagEnum } from "src/incident/enums/incident.enum";
+import { buildTicketDescription } from "src/incident/ticket-description";
+import {
+  DEFAULT_PROBLEM_ALIAS,
+  DEFAULT_PROBLEM_QUESTION,
+  evaluateProblemAnswer,
+  GATE_ESCAPE_WORDS,
+  isProblemQuestionExpired,
+  PROBLEM_REASK_EXAMPLE,
+} from "src/incident/problem-gate";
+import { isFeatureOn } from "src/common/features";
+import {
+  ATTRIBUTE_CAPTURED,
+  IDENTITY_CONFLICT,
+  VISITOR_TEXT,
+} from "src/crm-bridge/crm-bridge.listener";
+import {
+  aliasField,
+  contactFieldOf,
+  CONFIRM_UPDATE,
+  CONFIRM_YES,
+  conflictQuestion,
+  confirmMessage,
+  IDENTITY_CHOICES,
+  IDENTITY_PROMPT_MAX_TURNS,
+  IdentityPromptService,
+  KnownField,
+  parseIdentityChoice,
+  PendingIdentity,
+} from "src/crm-bridge/identity-prompt.service";
+import { effectiveMapping } from "src/crm-bridge/identity";
+import {
+  CaptureSource,
+  VISITOR_DETAILS_UPDATED,
+  VisitorDetailsUpdated,
+} from "src/crm-bridge/contact-capture.service";
+import { Interval } from "@nestjs/schedule";
+import { ProfileService } from "src/profile/profile.service";
+import {
+  CLOSURE_IDLE_DEFAULT_MIN,
+  ClosureEndCause,
+  closingMessageText,
+  closureApplies,
+  closureIdleMinutes,
+  closurePromptMessage,
+  CONVERSATION_ENDED_EVENT,
+  DEFAULT_CLOSING_MESSAGE,
+  ENDED_NOTICE,
+  isClosureIdle,
+  isClosureLabel,
+  isMarkedTerminal,
+  parseClosureReply,
+  SOMETHING_ELSE_TEXT,
+} from "./closure";
+
+
+/**
+ * Default handover text (R19.2, D2): no hours, queues or availability.
+ * `{{ticketId}}` is replaced with the Service_Request ref.
+ */
+export const DEFAULT_HANDOVER_MESSAGE =
+  "Thank you for reaching out. Your incident ticket {{ticketId}} has been created and our team will follow up with you on it. Please keep this number for future reference.";
+
+/** Insert the ref; a template without the placeholder gets it appended. */
+export function renderHandoverMessage(template: string, ticketRef: string): string {
+  if (/\{\{\s*ticketId\s*\}\}/.test(template)) {
+    return template.replace(/\{\{\s*ticketId\s*\}\}/g, ticketRef);
+  }
+  return `${template.trim()} Your reference is ${ticketRef}.`;
+}
+
+/** Emitted when an agent takes over a widget conversation (R19.4). */
+export const AGENT_TOOK_OVER = "agent.took.over";
+import { AGENT_ACCEPT_LIVE, LIVE_CHAT_CONNECTED } from "src/incident/constants";
+/** What an agent's live accept of a waiting chat did. */
+export type LiveAcceptResult = "connected" | "taken" | "offline";
+/** Emitted when an agent releases a widget conversation to the bot (R10.2). */
+export const AGENT_RELEASED = "agent.released";
+
+/** Debounce for Conversation.flowPosition writes (design §7). */
+const FLOW_POSITION_DEBOUNCE_MS = 2000;
+
+/** Max wait for the Visitor_Profile before an AI call goes without it (R18.8). */
+const VISITOR_PROFILE_TIMEOUT_MS = 500;
+
+/** Max wait for CRM-known details before a QUESTIONS node just asks (R16). */
+const KNOWN_DETAILS_TIMEOUT_MS = 1500;
+
+/** Used when a TICKET node has no subject configured (D10: product-neutral). */
+const DEFAULT_TICKET_SUBJECT = "Service request from chat";
+import { AlertReasonEnum, AlertResolutionEnum } from "src/handover-alert/enums/handover-alert.enum";
+import { matchesAgentIntent } from "src/handover-alert/agent-intent";
 import { ConfigService } from "@nestjs/config";
 import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
 
@@ -122,8 +219,260 @@ export class MessageHandlerService {
     private readonly configService: ConfigService,
     private readonly messagingRegistry: MessagingProviderRegistry,
     private readonly templateSessionService: TemplateSessionService,
-    private readonly templateService: TemplateService
+    private readonly templateService: TemplateService,
+    private readonly tenantScope: TenantScopeService,
+    private readonly entitlementService?: EntitlementService,
+    // Optional so a missing provider (or an older test harness) degrades to
+    // "no alert" rather than breaking the visitor flow.
+    @Optional()
+    private readonly handoverAlertService?: HandoverAlertService,
+    // Optional for the same reason: no incident service means the TICKET node
+    // behaves as a plain Service Request and the problem gate is inert.
+    @Optional()
+    private readonly incidentService?: IncidentService,
+    // Optional: without it nothing is pre-filled and no identity question is asked.
+    @Optional()
+    private readonly identityPrompt?: IdentityPromptService,
+    // Optional: without it AI answers carry no Visitor_Profile (R18.8).
+    @Optional()
+    private readonly profileService?: ProfileService
   ) {}
+
+  // ------------------------------------- identity questions (R16, R17)
+
+  /** The resolver found a conflict: ask once with three buttons (R17.2). */
+  @OnEvent(IDENTITY_CONFLICT, { async: true })
+  async onIdentityConflict(p: { userId: string; contactId: string; conflict: any }) {
+    const s = this.socketStateService.getUserData(p.userId);
+    if (!s || s.mode === ModeEnum.preview || s.pendingIdentity) return;
+    const pending: PendingIdentity = {
+      field: p.conflict.field,
+      newValue: p.conflict.newValue,
+      contactId: p.contactId,
+      askedAt: Date.now(),
+      turns: 0,
+    };
+    this.socketStateService.updateUserData(p.userId, { pendingIdentity: pending });
+    await this.sendBotMessage(p.userId, [
+      {
+        type: ChatTypeEnum.BUTTONS,
+        value: conflictQuestion(p.conflict),
+        buttons: Object.values(IDENTITY_CHOICES).map((title) => ({
+          type: "text",
+          title,
+          value: title,
+        })),
+      },
+    ]);
+  }
+
+  /**
+   * Answer to the identity question. Returns true when the message was the
+   * answer (consumed). Any other message counts a turn; after 2 the new value
+   * becomes a proposal and the question lapses (R17.5). Never blocks the flow.
+   */
+  private async consumeIdentityAnswer(userId: string, message: any): Promise<boolean> {
+    const s = this.socketStateService.getUserData(userId);
+    const pending = s?.pendingIdentity;
+    if (!pending || !this.identityPrompt) return false;
+    const choice = parseIdentityChoice(message);
+    if (choice) {
+      this.socketStateService.updateUserData(userId, { pendingIdentity: undefined });
+      await this.identityPrompt.settle(String(s.botId), pending, choice);
+      await this.sendBotMessage(userId, [{ type: "text", value: "Thanks, noted." }]);
+      return true;
+    }
+    const turns = pending.turns + 1;
+    if (turns >= IDENTITY_PROMPT_MAX_TURNS) {
+      this.socketStateService.updateUserData(userId, { pendingIdentity: undefined });
+      void this.identityPrompt.settle(String(s.botId), pending, "unanswered");
+    } else {
+      this.socketStateService.updateUserData(userId, { pendingIdentity: { ...pending, turns } });
+    }
+    return false;
+  }
+
+  /**
+   * "Ask once" (R16.1, R16.2; crm-plugins-service-desk R23). Called before a
+   * QUESTIONS node asks its first question. Always on: whatever the visitor
+   * already told us (pre-chat form, an earlier answer, a returning visitor's
+   * contact, a WhatsApp number) is not asked again.
+   *
+   * When any contact field of the node is known, the known ones are filled
+   * and the visitor gets one confirm ("We'll follow up with you at …") with
+   * Yes / Update details. Yes continues with the node's remaining questions
+   * (or past the node when none are left). Returns true when the confirm was
+   * sent and nothing more should run.
+   */
+  private async prefillKnownDetails(userId: string, node: BotFlowNode): Promise<boolean> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s?.conversationId || !this.identityPrompt) return false;
+    const elements: any[] = node.payload?.elements || [];
+    if (!elements.length || elements.some((e) => e?.secure)) return false;
+
+    const mapping = s.botSettings?.contactMapping;
+    const contactEls = elements
+      .map((e) => ({ alias: e?.alias as string, field: contactFieldOf(e, mapping) }))
+      .filter((x) => x.alias && x.field) as { alias: string; field: KnownField }[];
+    if (!contactEls.length) return false;
+
+    // Bounded: a slow CRM must not stall the visitor; on timeout we just ask.
+    const known = await Promise.race([
+      this.identityPrompt
+        .known({
+          botId: String(s.botId),
+          conversationId: String(s.conversationId),
+          visitorId: String(userId),
+          attributes: s.attributes,
+          botSettings: s.botSettings,
+        })
+        .catch(() => ({})),
+      new Promise<Record<string, string>>((r) => setTimeout(() => r({}), KNOWN_DETAILS_TIMEOUT_MS)),
+    ]) as Record<string, string | undefined>;
+    const filled: Record<string, string> = {};
+    for (const { alias, field } of contactEls) {
+      const v = known[field];
+      if (v && !s.attributes?.[alias]) filled[alias] = v;
+    }
+    const attrs = { ...(s.attributes || {}), ...filled };
+    const knownEls = contactEls.filter(({ alias }) => attrs[alias]);
+    if (!knownEls.length) return false;
+    this.socketStateService.updateUserData(userId, { attributes: attrs });
+
+    // Known values to show: what the node will use (attributes win).
+    const shown: Record<string, string> = {};
+    for (const { alias, field } of knownEls) if (!shown[field]) shown[field] = String(attrs[alias]);
+    const fields = [...new Set(knownEls.map((x) => x.field))];
+    this.socketStateService.updateUserData(userId, {
+      pendingConfirm: {
+        nodeId: node.id,
+        fields,
+        values: Object.fromEntries(knownEls.map(({ alias }) => [alias, String(attrs[alias])])),
+        resumeAt: this.nextToAsk(userId, elements, 0),
+      },
+    });
+    await this.sendBotMessage(userId, [
+      {
+        type: ChatTypeEnum.BUTTONS,
+        value: confirmMessage(shown, fields),
+        buttons: [CONFIRM_YES, CONFIRM_UPDATE].map((title) => ({ type: "text", title, value: title })),
+      },
+    ]);
+    return true;
+  }
+
+  /**
+   * Index of the next element to ask, from `from`, skipping contact questions
+   * whose answer is already known (R16.1). `elements.length` when none left.
+   */
+  private nextToAsk(userId: string, elements: any[], from: number): number {
+    const s = this.socketStateService.getUserData(userId);
+    const attrs = s?.attributes || {};
+    const mapping = s?.botSettings?.contactMapping;
+    let i = from;
+    while (i < elements.length && elements[i]?.alias && contactFieldOf(elements[i], mapping) && attrs[elements[i].alias]) i++;
+    return i;
+  }
+
+  /** Continue a questionnaire at `index`, or leave it on SUCCESS when done. */
+  private async resumeQuestions(userId: string, node: BotFlowNode, index: number) {
+    const elements: any[] = node.payload?.elements || [];
+    if (index < elements.length) {
+      this.socketStateService.updateUserData(userId, { currentNode: node });
+      this.socketStateService.setQuestionNodeState(userId, node.id, { currentQuestion: index, lifespan: 0 });
+      await this.sendBotMessage(userId, [{ type: "text", value: elements[index].prompt }]);
+      return true;
+    }
+    this.socketStateService.setQuestionNodeState(userId, node.id, undefined as any);
+    const next = await Promise.all((node.next || []).map((id: string) => this.botsService.getBotNode(id).catch(() => null)));
+    const success = next.find((n: any) => n?.nodeType === NodeTypeEnum.SUCCESS) ?? next.find(Boolean);
+    if (!success) return false;
+    await this.handleNode(success, "", userId);
+    return true;
+  }
+
+  /**
+   * Reply to the confirm message. "Yes" continues as if answered (R16.2).
+   * "Update details" re-runs the node asking only the contact fields again
+   * (R16.3). Anything else drops the confirm and falls through to the flow,
+   * keeping the pre-filled values.
+   */
+  private async consumeConfirmAnswer(userId: string, message: any): Promise<boolean> {
+    const s = this.socketStateService.getUserData(userId);
+    const pc = s?.pendingConfirm;
+    if (!pc) return false;
+    this.socketStateService.updateUserData(userId, { pendingConfirm: undefined });
+    const t = typeof message === "string" ? message.trim().toLowerCase() : "";
+    const node = await this.botsService.getBotNode(pc.nodeId).catch(() => null);
+    if (!node) return false;
+
+    const resumeAt = typeof pc.resumeAt === "number" ? pc.resumeAt : (node.payload?.elements || []).length;
+    if (t === CONFIRM_YES.toLowerCase() || t === "yes" || t === "y") {
+      this.emitAttributeCaptured(userId, Object.keys(pc.values));
+      await this.resumeQuestions(userId, node, resumeAt);
+      return true;
+    }
+    if (t === CONFIRM_UPDATE.toLowerCase() || t === "update" || t === "no") {
+      // Forget the pre-filled values for this node so its questions are asked.
+      const attrs = { ...(s.attributes || {}) };
+      for (const alias of Object.keys(pc.values)) delete attrs[alias];
+      this.socketStateService.updateUserData(userId, {
+        attributes: attrs,
+        currentNode: node,
+        skipPrefillFor: node.id,
+      });
+      this.socketStateService.setQuestionNodeState(userId, node.id, undefined as any);
+      await this.handleNode(node, "", userId);
+      return true;
+    }
+    // Any other reply: keep the details on file (implicit yes). New details
+    // typed here ("my number is …") still reach the visitor record and CRM.
+    this.emitAttributeCaptured(userId, Object.keys(pc.values));
+    const raw = typeof message === "string" ? message.trim() : "";
+    if (raw && s.mode !== ModeEnum.preview) {
+      this.eventEmitter.emit(VISITOR_TEXT, { userId: String(userId), text: raw });
+    }
+    const elements: any[] = node.payload?.elements || [];
+    if (resumeAt < elements.length) {
+      // The node still has questions: ask the next one rather than reading
+      // this reply as its answer (the visitor has not seen it yet).
+      return this.resumeQuestions(userId, node, resumeAt);
+    }
+    // Nothing left to ask: move past the node, then let the new position
+    // handle the message. Without this the node would re-run and repeat the
+    // confirm on every message.
+    if (!(await this.resumeQuestions(userId, node, resumeAt))) return false;
+    const after = this.socketStateService.getUserData(userId)?.currentNode;
+    if (after && t) await this.handleNode(after, t, userId);
+    return true;
+  }
+
+  /**
+   * Raise the agent Handover_Alert for this visitor's conversation. Never
+   * throws: alerting is a side channel and must not affect the visitor flow.
+   */
+  private async raiseHandover(
+    userId: string,
+    reason: AlertReasonEnum,
+    extra: { handoverReason?: string } = {}
+  ): Promise<void> {
+    if (!this.handoverAlertService) return;
+    try {
+      const s = this.socketStateService.getUserData(userId);
+      if (!s?.conversationId || !s?.botId) return;
+      await this.handoverAlertService.raise({
+        conversationId: String(s.conversationId),
+        botId: String(s.botId),
+        visitorId: String(userId),
+        visitorName: s.visitorName,
+        reason,
+        handoverReason: extra.handoverReason,
+        mode: s.mode,
+      });
+    } catch (error) {
+      this.logger.warn(`Handover alert raise failed: ${error?.message}`);
+    }
+  }
 
   async setNextNode(nodeId: string, userId: string | any) {
     const node = await this.botsService.getBotNode(nodeId);
@@ -171,6 +520,9 @@ export class MessageHandlerService {
       return;
     }
     const { mode, conversationId, currentNode } = userData;
+    // R14.6: a closed conversation takes no more input (the gateway also
+    // refuses it; this covers every other caller).
+    if (userData.conversationEnded) return;
     if (!currentNode) {
       console.log(`>>> [handleMessage] EXIT early — currentNode is null/undefined for ${userId}`);
       return;
@@ -187,7 +539,11 @@ export class MessageHandlerService {
     // an unknown visitor never creates an entry.
     this.socketStateService.updateUserData(userId, {
       nodeHops: 0,
-      visitorName: user?.auth?.name,
+      // A name the visitor told us wins over the widget token's (usually
+      // "Anonymous") on every later message (crm-plugins-service-desk R4.3).
+      visitorName: userData.nameCaptured
+        ? userData.visitorName
+        : user?.auth?.name ?? userData.visitorName,
       language,
       // The channel context (how to reply) belongs to the conversation. Only
       // overwrite it when this turn actually carries one — the widget path
@@ -241,6 +597,43 @@ export class MessageHandlerService {
       return;
     }
 
+    // A pending problem question takes the reply before the flow does (R4),
+    // and before Agent_Intent, so "agent please" here is not a second alert.
+    if (type !== "goto" && (await this.consumeProblemAnswer(userId, message, type))) {
+      return;
+    }
+
+    // Identity question / details confirm (R16, R17). Answers are consumed;
+    // anything else continues into the flow as normal.
+    if (type !== "goto") {
+      const raw = typeof message === "string" ? message.trim() : "";
+      if (await this.consumeIdentityAnswer(userId, raw)) return;
+      if (await this.consumeConfirmAnswer(userId, raw)) return;
+      // Free text may carry "I'm Raj, raj@x.com" (R16.5). Off the hot path.
+      // Not while a question node is collecting an answer: those values are
+      // captured through their alias, and a secure answer (PIN, password)
+      // must never be read as a phone or email.
+      const collecting =
+        currentNode.nodeType === NodeTypeEnum.QUESTIONS ||
+        currentNode.nodeType === NodeTypeEnum.USER_INPUT;
+      if (raw && mode !== ModeEnum.preview && !collecting) {
+        this.eventEmitter.emit(VISITOR_TEXT, { userId: String(userId), text: raw });
+      }
+    }
+
+    // Visitor asked for a human in their own words (Agent_Intent). Only active
+    // when the bot has phrases configured; the flow continues unchanged — the
+    // alert is a side channel and is deduplicated per open request.
+    if (
+      type !== "goto" &&
+      matchesAgentIntent(
+        message,
+        this.socketStateService.getUserData(userId)?.botSettings?.agentIntents
+      )
+    ) {
+      await this.raiseHandover(userId, AlertReasonEnum.VISITOR_INTENT);
+    }
+
     if (type === "goto") {
       console.log(`>>> [handleMessage] GOTO branch — looking up node: "${message}"`);
       let step: BotFlowNode | null = null;
@@ -262,6 +655,11 @@ export class MessageHandlerService {
         );
       }
       console.log(`>>> [handleMessage] GOTO resolved to: ${step.nodeType} id=${step.id} next=[${(step.next||[]).join(",")}] responses=${(step.responses||[]).length}`);
+      // A goto button pressed while a Closure_Prompt waits is that prompt's
+      // first response (R14.1): the visitor navigated on, so drop the prompt.
+      if (this.socketStateService.getUserData(userId)?.awaitingClosure) {
+        this.settleClosure(userId);
+      }
       this.socketStateService.updateUserData(userId, {
         currentNode: step,
       });
@@ -279,6 +677,13 @@ export class MessageHandlerService {
     }
 
     message = (message ?? "").trim().toLowerCase();
+
+    // Closure_Prompt (R14): the first reply after it decides what happens.
+    // "Start again" falls through to the normal restart below (R14.4).
+    const closure = await this.consumeClosureAnswer(userId, message);
+    if (closure === "handled") return;
+    if (closure === "restart") message = "start";
+
     if (message === "start" || message === "reset" || message === "restart") {
       const { startNode, botSettings, role } =
         this.socketStateService.getUserData(userId);
@@ -298,6 +703,8 @@ export class MessageHandlerService {
           BotNodeState: {},
           questionNodeState: {},
           attributes: {},
+          awaitingProblem: undefined,
+          acceptedProblem: undefined,
         });
         return this.handleNode(startNode, message, userId);
       }
@@ -376,6 +783,7 @@ export class MessageHandlerService {
           currentNode,
         });
       }
+      this.persistFlowPosition(userId);
       this.logger.verbose(
         `current Node: ${currentNode.nodeType} ${currentNode.id}`
       );
@@ -460,6 +868,14 @@ export class MessageHandlerService {
     } catch (error) {
       this.logger.error(`Error in Handling Node : ${error.message}`);
 
+      // Never leave the visitor parked on the node that threw: every later
+      // message would hit the same error and get this same fallback, forever.
+      // Back to the start node so the next message is routed afresh.
+      const sn = this.socketStateService.getUserData(userId)?.startNode;
+      if (sn) {
+        this.socketStateService.updateUserData(userId, { currentNode: sn });
+      }
+
       return await this.sendBotMessage(userId, [
         {
           type: "text",
@@ -516,7 +932,11 @@ export class MessageHandlerService {
       !startMessagesList.includes(message) &&
       message?.split(" ").length > 1
     ) {
-      const response = await this.findAnswerFromQuestionBank(message, language);
+      const response = await this.findAnswerFromQuestionBank(
+        message,
+        language,
+        userId
+      );
 
       if (response) {
         return await this.sendBotMessage(userId, [
@@ -558,6 +978,17 @@ export class MessageHandlerService {
         (node.responses || []).length
       }`
     );
+    // "Terminal" toggle (R14.1): the answer, then the Closure_Prompt instead
+    // of the wired continuation. Not on a menu (several options): its
+    // buttons and the prompt's would compete.
+    if ((node.next?.length ?? 0) <= 1 && this.terminalHere(node, userId)) {
+      // Delivered once: the node stays current after the prompt.
+      if (this.socketStateService.getNodeState(userId, node.id) !== BotNodeStateEnum.VISITED) {
+        await this.sendBotMessage(userId, node.responses);
+        this.socketStateService.setNodeState(userId, node.id, BotNodeStateEnum.VISITED);
+      }
+      return this.sendClosurePrompt(userId, node);
+    }
     if (node.next.length === 1) {
       await this.sendBotMessage(userId, node.responses);
       const nextNode = await this.botsService.getBotNode(node.next[0]);
@@ -639,7 +1070,8 @@ export class MessageHandlerService {
 
         const response = await this.findAnswerFromQuestionBank(
           message,
-          this.socketStateService.getUserData(userId)?.language
+          this.socketStateService.getUserData(userId)?.language,
+          userId
         );
         if (response) {
           return await this.sendBotMessage(userId, [
@@ -752,12 +1184,14 @@ export class MessageHandlerService {
 
     const aiUrl = this.configService.get("ai.url");
     const timeout = this.configService.get("ai.timeout");
+    const visitorProfile = await this.visitorProfileFor(userId);
     const requestBody = {
       client_id: clientId,
       question: message,
       bot_id: botId,
       company_name: companyName,
       chat_history: chatHistory,
+      ...(visitorProfile ? { visitor_profile: visitorProfile } : {}),
     };
 
     banner(this.logger, "[BACKEND -> AI SERVICE]", {
@@ -774,6 +1208,9 @@ export class MessageHandlerService {
       tokens_used?: number;
       provider?: string;
       model?: string;
+      /** Structured AI_Handover_Signal; only a strict `true` escalates. */
+      handover?: unknown;
+      handover_reason?: unknown;
     } | null = null;
 
     const callStart = Date.now();
@@ -820,6 +1257,52 @@ export class MessageHandlerService {
         "error"
       );
       if (error?.stack) this.logger.error(error.stack);
+    }
+
+    // AI escalation: a structured `handover: true` (never the answer text).
+    // Raise the alert, show the AI's own wording if any, then hand over via the
+    // FAILURE child when the designer wired one, else transfer directly.
+    if (aiResult?.handover === true) {
+      const reason =
+        typeof aiResult.handover_reason === "string"
+          ? aiResult.handover_reason.slice(0, 200)
+          : undefined;
+      const sNow = this.socketStateService.getUserData(userId);
+      const incidentMode =
+        !!this.incidentService && isFeatureOn(sNow?.botSettings as any, "incidentHandover");
+      // With incidents on, an open incident means the request is already
+      // recorded (R4.8, R19.3): answer normally, don't hand over again.
+      if (incidentMode && sNow?.conversationId) {
+        const open = await this.incidentService
+          .findOpenByConversation(String(sNow.conversationId))
+          .catch(() => null);
+        if (open) {
+          const text = typeof aiResult.answer === "string" ? aiResult.answer.trim() : "";
+          if (text) await this.sendBotMessage(userId, [{ type: "text", value: text }]);
+          return;
+        }
+      }
+      // In incident mode the alert is raised by openForHandover itself.
+      if (!incidentMode) {
+        await this.raiseHandover(userId, AlertReasonEnum.AI_ESCALATION, {
+          handoverReason: reason,
+        });
+      }
+      const text =
+        typeof aiResult.answer === "string" ? aiResult.answer.trim() : "";
+      if (text) {
+        await this.sendBotMessage(userId, [{ type: "text", value: text }]);
+      }
+      this.trace(
+        "handleAiResponse:handover",
+        `node=${node.id} route=${failureNode ? "FAILURE" : "TransferToAgent"}`
+      );
+      if (failureNode) return this.handleNode(failureNode, message, userId);
+      return this.TransferToAgent(
+        message,
+        { ...node, nodeType: NodeTypeEnum.TRANSFER_TO_AGENT, payload: {} } as BotFlowNode,
+        userId
+      );
     }
 
     if (aiResult?.confident && aiResult.answer) {
@@ -1073,7 +1556,7 @@ export class MessageHandlerService {
     node: BotFlowNode,
     userId: string | any
   ): void {
-    const { alias, secure } = node.payload || {};
+    const { alias, secure, entity } = node.payload || {};
     if (secure) {
       // Mask THIS visitor's current chat row. Read per visitor: a singleton
       // field here masked whichever conversation last ran, leaving the actual
@@ -1083,13 +1566,129 @@ export class MessageHandlerService {
         this.socketStateService.getUserData(userId)?.currentChatId
       );
     }
-    if (!alias) return;
+    const value = this.captureValue(message, userId);
+    const typed = secure ? {} : this.typedContactAttributes(userId, entity, value, alias);
+    if (!alias && !Object.keys(typed).length) return;
     this.socketStateService.updateUserData(userId, {
       attributes: {
         ...this.socketStateService.getUserData(userId)?.attributes,
-        [alias]: this.captureValue(message, userId),
+        ...(alias ? { [alias]: value } : {}),
+        ...typed,
       },
     });
+    this.emitAttributeCaptured(userId, [...(alias ? [alias] : []), ...Object.keys(typed)]);
+  }
+
+  /**
+   * crm-plugins-service-desk R3.2: an answer validated as an email or phone
+   * IS the visitor's email or phone, whatever the question saved it as. Also
+   * store it under the bot's mapped email/phone alias when that is still
+   * empty, so the CRM and the "ask once" pre-fill both see it. Never called
+   * for secure answers (R3.4).
+   */
+  private typedContactAttributes(
+    userId: string,
+    entity: string | undefined,
+    value: unknown,
+    alias?: string
+  ): Record<string, unknown> {
+    const field =
+      entity === UserInputValidationEnum.EMAIL
+        ? "email"
+        : entity === UserInputValidationEnum.PHONE
+        ? "phone"
+        : null;
+    if (!field || typeof value !== "string" || !value.trim()) return {};
+    const s = this.socketStateService.getUserData(userId);
+    const target = effectiveMapping(s?.botSettings?.contactMapping)[field];
+    if (!target || target === alias || s?.attributes?.[target]) return {};
+    return { [target]: value };
+  }
+
+  /** Pending flowPosition writes per visitor (debounce, design §7). */
+  private readonly flowWriteTimers = new Map<string, NodeJS.Timeout>();
+
+  /**
+   * Persist where the flow is (Conversation.flowPosition) so a widget reload
+   * resumes at the same node (R9.3). Debounced 2 s per visitor and skipped
+   * when the node did not change, so a busy flow costs one write per pause.
+   * Never throws; preview and non-widget channels are skipped.
+   */
+  private persistFlowPosition(userId: string) {
+    const s = this.socketStateService.getUserData(userId);
+    const nodeId = s?.currentNode?.id;
+    if (!s?.conversationId || !nodeId || s.mode === ModeEnum.preview) return;
+    if (s.platform && s.platform !== PlatformEnum.WIDGET) return;
+    if (s.persistedNodeId === nodeId) return;
+    const prev = this.flowWriteTimers.get(userId);
+    if (prev) clearTimeout(prev);
+    const timer = setTimeout(() => {
+      this.flowWriteTimers.delete(userId);
+      const now = this.socketStateService.getUserData(userId);
+      const latest = now?.currentNode?.id;
+      if (!now?.conversationId || !latest || now.persistedNodeId === latest) return;
+      this.socketStateService.updateUserData(userId, { persistedNodeId: latest });
+      void this.conversationService.setFlowPosition?.(String(now.conversationId), String(latest));
+    }, FLOW_POSITION_DEBOUNCE_MS);
+    // Never keep the process alive for this.
+    (timer as any).unref?.();
+    this.flowWriteTimers.set(userId, timer);
+  }
+
+  /**
+   * crm-incident-handover R18.8: the contact's Visitor_Profile (facts and the
+   * 5 newest entries) for the AI answer prompt. Only with `profileSummaries`
+   * on, never in preview, and bounded so a slow CRM never delays an answer.
+   */
+  private async visitorProfileFor(userId: string): Promise<Record<string, unknown> | null> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!this.profileService || !s?.conversationId || s.mode === ModeEnum.preview) return null;
+    if (!isFeatureOn(s.botSettings as any, "profileSummaries")) return null;
+    let timer: NodeJS.Timeout;
+    return Promise.race([
+      this.profileService.contextForConversation(String(s.conversationId)).catch(() => null),
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), VISITOR_PROFILE_TIMEOUT_MS);
+        (timer as any).unref?.();
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  /**
+   * crm-incident-handover R2.1: attributes changed, so the CRM bridge may
+   * resolve the contact. Fire-and-forget: the visitor never waits on the CRM.
+   */
+  private emitAttributeCaptured(userId: string, keys: string[], source?: CaptureSource) {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s?.conversationId || !s.botId || s.mode === ModeEnum.preview || !keys.length) return;
+    this.eventEmitter.emit(ATTRIBUTE_CAPTURED, {
+      userId: String(userId),
+      conversationId: String(s.conversationId),
+      botId: String(s.botId),
+      keys,
+      ...(source ? { source } : {}),
+    });
+  }
+
+  /**
+   * crm-plugins-service-desk R4.4: a legacy active chat shows the visitor's
+   * name from the `new-visitor` payload; tell its agent the name changed.
+   * The omnichannel inbox is refreshed separately (thread republish).
+   */
+  @OnEvent(VISITOR_DETAILS_UPDATED, { async: true })
+  async onVisitorDetailsUpdated(p: VisitorDetailsUpdated) {
+    try {
+      if (!p?.name) return;
+      const s = this.socketStateService.getUserData(p.visitorId);
+      if (!s?.assignedAgentId || String(s.conversationId) !== String(p.conversationId)) return;
+      this.emitEventToUser(String(s.assignedAgentId), "visitor-updated", {
+        conversationId: p.conversationId,
+        visitorId: p.visitorId,
+        name: p.name,
+      });
+    } catch (error) {
+      this.logger.warn(`visitor-updated notice failed: ${error?.message}`);
+    }
   }
 
   checkIfUserInputMatching(
@@ -1106,7 +1705,8 @@ export class MessageHandlerService {
   async defaultFallback(message: any, node: BotFlowNode, userId: string | any) {
     const response = await this.findAnswerFromQuestionBank(
       message,
-      this.socketStateService.getUserData(userId)?.language
+      this.socketStateService.getUserData(userId)?.language,
+      userId
     );
 
     if (response) {
@@ -1195,11 +1795,29 @@ if (!webhookId) {
       metadata: metadata,
       // visitor: this.user,
     };
-    const response = await this.webhookService.callWebhook(
-      webhookId,
-      data,
-      this.socketStateService.getUserData(userId).botId
-    );
+    // callWebhook THROWS for a missing/unknown webhook (e.g. an imported flow
+    // still carrying a placeholder id). Uncaught, that escaped to handleNode's
+    // catch, which sent the generic fallback AND left the visitor parked on this
+    // node — so every later message re-ran the broken webhook and replied
+    // "Sorry, I did not understand that". Treat any error as a webhook failure.
+    let response: Awaited<ReturnType<WebhookService["callWebhook"]>>;
+    try {
+      response = await this.webhookService.callWebhook(
+        webhookId,
+        data,
+        this.socketStateService.getUserData(userId).botId
+      );
+    } catch (error) {
+      this.logger.warn(
+        `WEBHOOK node ${node.id} failed (${error?.message}); routing to failure/fallback.`
+      );
+      if (failureNode) return this.handleNode(failureNode, message, userId);
+      return this.defaultFallback(
+        message,
+        this.socketStateService.getUserData(userId)?.defaultFallback,
+        userId
+      );
+    }
     if (response.status === WebhookStatusEnum.SUCCESS) {
       if (Array.isArray(response.data)) {
         await this.sendBotMessage(userId, response.data);
@@ -1228,34 +1846,259 @@ if (!webhookId) {
     return this.handleNode(step, message, userId);
   }
 
+  /**
+   * TICKET node (crm-incident-handover R1).
+   *
+   * - Description: problem first, then the node's attribute lines (R1.1, R1.6).
+   * - An open incident that already has a Service_Request reuses it (R1.8);
+   *   one without gets this ticket linked (R1.2).
+   * - The visitor sees the `SR…` ref, never the record `_id` (R1.3).
+   * - On failure: one "could not record" message and the FAILURE branch
+   *   (R1.9). With no FAILURE branch the visitor rests here, never stuck.
+   */
   async handleCreateTicket(
     message: any,
     node: BotFlowNode,
     userId: string | any
   ) {
+    const userData = this.socketStateService.getUserData(userId);
+    if (!userData) return;
+    const { botId, conversationId, attributes, botSettings } = userData;
+
+    const nextNodes: BotFlowNode[] = (
+      await Promise.all(
+        (node.next || []).map((id: string) =>
+          this.botsService.getBotNode(id).catch(() => null)
+        )
+      )
+    ).filter(Boolean);
+    const failureNode = nextNodes.find((n) => n.nodeType === NodeTypeEnum.FAILURE);
+    const continueNode = nextNodes.find((n) => n.nodeType !== NodeTypeEnum.FAILURE);
+
+    let ticketRef: string | undefined;
     try {
-      const subject = node.payload.ticketSubject;
-      const userData = this.socketStateService.getUserData(userId);
+      const incident =
+        this.incidentService && conversationId
+          ? await this.incidentService
+              .findOpenByConversation(String(conversationId))
+              .catch(() => null)
+          : null;
 
-      const ticket = await this.ticketsService.create({
-        subject,
-        visitor: userId,
-        bot: userData.botId,
+      if (incident?.ticketRef) {
+        ticketRef = incident.ticketRef;
+      } else {
+        const alias = botSettings?.problemAlias || DEFAULT_PROBLEM_ALIAS;
+        const fromAlias = attributes?.[alias];
+        const problem =
+          incident?.problem && incident.problem !== NO_PROBLEM_TEXT
+            ? incident.problem
+            : typeof fromAlias === "string"
+            ? fromAlias.trim()
+            : "";
 
-        conversationId: userData.conversationId,
-      });
-      const nextNode = await this.botsService.getBotNode(node.next[0]);
+        const ticket: any = await this.ticketsService.create({
+          subject: node.payload?.ticketSubject?.trim() || DEFAULT_TICKET_SUBJECT,
+          description: buildTicketDescription(
+            problem,
+            attributes,
+            node.payload?.ticketAttributes
+          ),
+          visitor: userId,
+          bot: botId,
+          conversationId,
+          incident: incident ? String(incident._id) : undefined,
+          crmContactId: incident?.crmContactId,
+          source: "chat",
+        } as any);
+        ticketRef = ticket?.ticketId;
+
+        if (incident) {
+          // A concurrent writer may have linked first; quote its ref.
+          ticketRef = await this.incidentService
+            .linkTicketIfMissing(String(incident._id), ticket)
+            .catch(() => ticketRef);
+          if (!problem) await this.incidentService.flagNoProblem(String(incident._id));
+        }
+      }
+      if (!ticketRef) throw new Error("ticket created without a reference");
+    } catch (e) {
+      this.logger.error(`TICKET node ${node.id} failed: ${e?.message}`);
       await this.sendBotMessage(userId, [
         {
           type: "text",
-          value: `Service Request Raised Successfully. Please note down the ticket  : #${ticket.id} for future reference.`,
+          value:
+            "Sorry, we could not record your request right now. Please try again in a moment.",
+          info: "error",
         },
       ]);
-
-      return this.handleNode(nextNode, message, userId);
-    } catch (e) {
-      this.logger.error(e);
+      if (failureNode) return this.handleNode(failureNode, message, userId);
+      return this.restOnTerminalNode("", node, userId);
     }
+
+    await this.sendBotMessage(userId, [
+      {
+        type: "text",
+        value: `Your service request has been raised. Your reference is ${ticketRef}. Please keep it for future reference.`,
+      },
+    ]);
+    if (continueNode) return this.handleNode(continueNode, message, userId);
+    return this.restOnTerminalNode("", node, userId);
+  }
+
+  // --------------------------------------------- problem gate (R4)
+
+  /**
+   * Make sure the handover has a Problem_Description before an incident is
+   * opened (R4). Returns the problem when known, or null after asking the
+   * visitor (the handover node is resumed once the answer is accepted).
+   *
+   * Order: an accepted answer for this node, an already-open incident (never
+   * ask twice, R4.8), the problem alias (R4.3), else ask (R4.1).
+   */
+  async ensureProblemDescription(
+    userId: string,
+    node: BotFlowNode
+  ): Promise<{ problem: string; flags: string[] } | null> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s) return null;
+
+    if (s.acceptedProblem && s.acceptedProblem.nodeId === node.id) {
+      const { problem, flags } = s.acceptedProblem;
+      this.socketStateService.updateUserData(userId, { acceptedProblem: undefined });
+      return { problem, flags };
+    }
+
+    if (this.incidentService && s.conversationId) {
+      const open = await this.incidentService
+        .findOpenByConversation(String(s.conversationId))
+        .catch(() => null);
+      if (open) return { problem: open.problem, flags: open.problemFlags ?? [] };
+    }
+
+    const alias = s.botSettings?.problemAlias || DEFAULT_PROBLEM_ALIAS;
+    const fromAlias = s.attributes?.[alias];
+    if (typeof fromAlias === "string" && fromAlias.trim()) {
+      const verdict = evaluateProblemAnswer(fromAlias, 1);
+      if (verdict.kind === "accept") return { problem: verdict.problem, flags: verdict.flags };
+      // A too-short alias value counts as the first short answer (R4.3 + R4.4).
+      await this.askProblemQuestion(userId, node.id, 2);
+      return null;
+    }
+
+    await this.askProblemQuestion(userId, node.id, 1);
+    return null;
+  }
+
+  /**
+   * The problem as far as it is known, without asking (incident first).
+   * `fresh` = the visitor just answered the problem question for this node.
+   * An open incident's real description and a long-enough problem alias also
+   * count. Null = unknown: the handover opens the incident and asks after.
+   */
+  async knownProblem(
+    userId: string,
+    node: BotFlowNode
+  ): Promise<{ problem: string; flags: string[]; fresh?: boolean } | null> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s) return null;
+    if (s.acceptedProblem && s.acceptedProblem.nodeId === node.id) {
+      const { problem, flags } = s.acceptedProblem;
+      this.socketStateService.updateUserData(userId, { acceptedProblem: undefined });
+      return { problem, flags, fresh: true };
+    }
+    if (this.incidentService && s.conversationId) {
+      const open = await this.incidentService
+        .findOpenByConversation(String(s.conversationId))
+        .catch(() => null);
+      if (open && !(open.problemFlags ?? []).includes(ProblemFlagEnum.NONE)) {
+        return { problem: open.problem, flags: open.problemFlags ?? [] };
+      }
+    }
+    const alias = s.botSettings?.problemAlias || DEFAULT_PROBLEM_ALIAS;
+    const fromAlias = s.attributes?.[alias];
+    if (typeof fromAlias === "string" && fromAlias.trim()) {
+      const verdict = evaluateProblemAnswer(fromAlias, 1);
+      if (verdict.kind === "accept") return { problem: verdict.problem, flags: verdict.flags };
+    }
+    return null;
+  }
+
+  private async askProblemQuestion(userId: string, nodeId: string, attempt: number) {
+    const s = this.socketStateService.getUserData(userId);
+    const question = s?.botSettings?.problemQuestion?.trim() || DEFAULT_PROBLEM_QUESTION;
+    await this.sendBotMessage(userId, [
+      {
+        type: "text",
+        value: attempt > 1 ? `${question} ${PROBLEM_REASK_EXAMPLE}` : question,
+      },
+    ]);
+    const askedAt = Date.now();
+    this.socketStateService.updateUserData(userId, {
+      awaitingProblem: { attempt, askedAt, nodeId },
+      acceptedProblem: undefined,
+    });
+    if (s?.conversationId && s.mode !== ModeEnum.preview) {
+      await this.conversationService.setAwaitingProblem(String(s.conversationId), {
+        attempt,
+        askedAt: new Date(askedAt),
+      });
+    }
+  }
+
+  private async clearAwaitingProblem(userId: string) {
+    const s = this.socketStateService.getUserData(userId);
+    this.socketStateService.updateUserData(userId, { awaitingProblem: undefined });
+    if (s?.conversationId && s.mode !== ModeEnum.preview) {
+      await this.conversationService.setAwaitingProblem(String(s.conversationId), null);
+    }
+  }
+
+  /**
+   * Consume the visitor's reply to a pending problem question. Returns true
+   * when the message was handled here and must not reach the flow.
+   *
+   * Restart words, an expired question (R4.7) or the feature being switched
+   * off all drop the pending handover and let the message through normally.
+   */
+  private async consumeProblemAnswer(
+    userId: string,
+    message: any,
+    type: string
+  ): Promise<boolean> {
+    const s = this.socketStateService.getUserData(userId);
+    const pending = s?.awaitingProblem;
+    if (!pending) return false;
+
+    const raw = type === "text" && typeof message === "string" ? message.trim() : "";
+    if (
+      !isFeatureOn(s.botSettings as any, "incidentHandover") ||
+      isProblemQuestionExpired(pending.askedAt) ||
+      GATE_ESCAPE_WORDS.has(raw.toLowerCase())
+    ) {
+      await this.clearAwaitingProblem(userId);
+      return false;
+    }
+
+    // "I want an agent" again is a request, not a description.
+    const nonDescriptive = matchesAgentIntent(raw, s.botSettings?.agentIntents);
+    const verdict = evaluateProblemAnswer(raw, pending.attempt, nonDescriptive);
+    if (verdict.kind === "reask") {
+      await this.askProblemQuestion(userId, pending.nodeId, pending.attempt + 1);
+      return true;
+    }
+
+    await this.clearAwaitingProblem(userId);
+    this.socketStateService.updateUserData(userId, {
+      acceptedProblem: { problem: verdict.problem, flags: verdict.flags, nodeId: pending.nodeId },
+    });
+    const node = await this.botsService.getBotNode(pending.nodeId).catch(() => null);
+    if (!node) {
+      this.socketStateService.updateUserData(userId, { acceptedProblem: undefined });
+      return false;
+    }
+    this.socketStateService.updateUserData(userId, { currentNode: node });
+    await this.handleNode(node, "", userId);
+    return true;
   }
 
   /** Real calendar date check — rejects things like 32/01/2026 or month 15. */
@@ -1364,11 +2207,17 @@ if (!webhookId) {
     }
   }
 
+  /** Flow-builder "Terminal" toggle with the closure prompt on (R14.1). */
+  private terminalHere(node: BotFlowNode, userId: string): boolean {
+    return isMarkedTerminal(node) && closureApplies(this.socketStateService.getUserData(userId));
+  }
+
   async handleFailureNode(
     message: any,
     node: BotFlowNode,
     userId: string | any
   ) {
+    if (this.terminalHere(node, userId)) return this.sendClosurePrompt(userId, node);
     if (node.next?.length) {
       const nextNode = await this.botsService.getBotNode(node.next[0]);
       return this.handleNode(nextNode, message, userId);
@@ -1392,6 +2241,7 @@ if (!webhookId) {
     node: BotFlowNode,
     userId: string | any
   ) {
+    if (this.terminalHere(node, userId)) return this.sendClosurePrompt(userId, node);
     if (node.next?.length) {
       const nextNode = await this.botsService.getBotNode(node.next[0]);
       return this.handleNode(nextNode, message, userId);
@@ -1414,10 +2264,272 @@ if (!webhookId) {
     node: BotFlowNode,
     userId: string | any
   ) {
+    // Every caller is a Terminal_Outcome (a SUCCESS/FAILURE/TIMEOUT branch,
+    // a ticket or handover with nothing wired after it). With the closure
+    // prompt on, ask whether the query is resolved instead of parking on
+    // the AI (R14.1, design §12). Off: unchanged.
+    if (closureApplies(this.socketStateService.getUserData(userId))) {
+      return this.sendClosurePrompt(userId, node);
+    }
     this.socketStateService.updateUserData(userId, { currentNode: node });
     if (typeof message === "string" && message.trim()) {
       await this.answerWithAiAssistant(message, userId);
     }
+  }
+
+  // ------------------------------------------ closure prompt (R14)
+
+  /**
+   * Send the Closure_Prompt once and start its idle clock (R14.1, R14.5).
+   * The terminal node stays current so a later message has a resting place.
+   * Never while Agent_Owned (R14.11, checked by closureApplies).
+   */
+  private async sendClosurePrompt(userId: string, node: BotFlowNode) {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s) return;
+    this.socketStateService.updateUserData(userId, { currentNode: node });
+    // Exactly one prompt: a second terminal in the same wait is not re-asked.
+    if (s.awaitingClosure) return;
+    const sentAt = Date.now();
+    const idleMinutes = closureIdleMinutes(s.botSettings);
+    this.socketStateService.updateUserData(userId, {
+      awaitingClosure: { sentAt, idleMinutes },
+      closureAnsweredAt: undefined,
+    });
+    this.trace("closure:prompt", `node=${node?.id} idle=${idleMinutes}m`);
+    await this.sendBotMessage(userId, [closurePromptMessage(s.botSettings)]);
+    if (s.mode !== ModeEnum.preview && s.conversationId) {
+      await this.conversationService.setAwaitingClosure?.(String(s.conversationId), {
+        sentAt: new Date(sentAt),
+        idleMinutes,
+        closingMessage: closingMessageText(s.botSettings),
+      } as any);
+    }
+  }
+
+  /**
+   * Take the pending prompt off this conversation (memory first, so only the
+   * first reply acts on it, R14.1), then clear the persisted copy.
+   */
+  private settleClosure(userId: string, opts: { answered?: boolean } = { answered: true }) {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s?.awaitingClosure) return;
+    this.socketStateService.updateUserData(userId, {
+      awaitingClosure: undefined,
+      closureAnsweredAt: opts.answered === false ? s.closureAnsweredAt : Date.now(),
+    });
+    if (s.mode !== ModeEnum.preview && s.conversationId) {
+      void this.conversationService
+        .setAwaitingClosure?.(String(s.conversationId), null)
+        ?.catch?.(() => undefined);
+    }
+  }
+
+  /**
+   * The first visitor input after a Closure_Prompt (R14.2–R14.4, R14.10).
+   * Returns "handled" when nothing else should run, "restart" for the normal
+   * restart path, or false to let the message through untouched.
+   */
+  private async consumeClosureAnswer(
+    userId: string,
+    message: string
+  ): Promise<"handled" | "restart" | false> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s) return false;
+    const pending = s.awaitingClosure;
+    if (!pending) {
+      // A second click on an already-answered prompt is ignored (R14.1).
+      return s.closureAnsweredAt && isClosureLabel(message) ? "handled" : false;
+    }
+    // Flag switched off, or an agent owns the chat now: the prompt lapses.
+    if (!closureApplies(s)) {
+      this.settleClosure(userId, { answered: false });
+      return false;
+    }
+    const reply = parseClosureReply(message);
+    if (reply.kind === "none") return "handled";
+    // Claimed synchronously, before any await: a concurrent second reply sees
+    // no pending prompt and is ignored or routed normally.
+    this.settleClosure(userId);
+    this.trace("closure:reply", reply.kind);
+
+    if (reply.kind === "restart") return "restart";
+
+    if (reply.kind === "resolved") {
+      const conv = s.conversationId ? String(s.conversationId) : "";
+      if (this.incidentService && conv && s.mode !== ModeEnum.preview) {
+        await this.incidentService
+          .resolveByVisitor(conv)
+          .catch((e) => this.logger.warn(`Closure incident resolve failed: ${e?.message}`));
+      }
+      await this.closeConversation(userId, "closure_resolved");
+      return "handled";
+    }
+
+    if (reply.kind === "other") {
+      // R14.3: one question, then the next message is the first input at
+      // the start node. Attributes and the CRM link are kept.
+      await this.sendBotMessage(userId, [{ type: "text", value: SOMETHING_ELSE_TEXT }]);
+      await this.prepareStart(userId);
+      return "handled";
+    }
+
+    // R14.10: free text is "something else" with the text as the first input.
+    const at = await this.prepareStart(userId);
+    if (at) await this.handleNode(at, message, userId);
+    return "handled";
+  }
+
+  /**
+   * Position the conversation at the start node without sending anything,
+   * so the next input is read as the first input there. The start node's
+   * menu (when it is one) is marked as already shown, so the input is
+   * matched against its options instead of re-printing it (R14.3, R14.10).
+   * Attributes are kept; only node progress is reset.
+   */
+  private async prepareStart(userId: string): Promise<BotFlowNode | null> {
+    const s = this.socketStateService.getUserData(userId);
+    const start = s?.startNode;
+    if (!start) return null;
+    this.socketStateService.updateUserData(userId, {
+      BotNodeState: {},
+      questionNodeState: {},
+      awaitingProblem: undefined,
+      acceptedProblem: undefined,
+      currentNode: start,
+    });
+    const kids: BotFlowNode[] = (
+      await Promise.all(
+        (start.next || []).map((id: string) => this.botsService.getBotNode(id).catch(() => null))
+      )
+    ).filter(Boolean);
+    const fallback = kids.find((n) => n.nodeType === NodeTypeEnum.FALL_BACK);
+    const entry = kids.find((n) => n.nodeType !== NodeTypeEnum.FALL_BACK);
+    this.socketStateService.updateUserData(userId, { defaultFallback: fallback });
+    if (entry?.nodeType === NodeTypeEnum.BOT_RESPONSE && (entry.next?.length ?? 0) > 1) {
+      this.socketStateService.setNodeState(userId, entry.id, BotNodeStateEnum.AWAITING_USER_INPUT);
+      this.socketStateService.updateUserData(userId, { currentNode: entry });
+      return entry;
+    }
+    return start;
+  }
+
+  /**
+   * End the conversation with the closing message and put the widget in the
+   * Ended_State (R14.2, R14.5, CLOSE_CHAT R14 via 6.4). The state entry is
+   * kept (marked ended) so the closing message, which is sent on a delay,
+   * still reaches the socket, and so later input is refused, not processed.
+   */
+  private async closeConversation(
+    userId: string,
+    cause: ClosureEndCause | "close_chat",
+    text?: string
+  ) {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s || s.conversationEnded) return;
+    const conversationId = s.conversationId ? String(s.conversationId) : undefined;
+    this.socketStateService.updateUserData(userId, {
+      conversationEnded: true,
+      awaitingClosure: undefined,
+      awaitingProblem: undefined,
+      pendingIdentity: undefined,
+      pendingConfirm: undefined,
+    });
+    await this.sendBotMessage(userId, [
+      { type: "text", value: text ?? closingMessageText(s.botSettings) },
+    ]);
+    if (s.botSettings?.askForFeedback) {
+      this.emitEventToUser(userId, "ask-for-feedback", {});
+    }
+    // After the closing message: sendBotMessage staggers on this baseline.
+    const delay = this.socketStateService.getUserData(userId)?.messageDelay ?? 0;
+    const timer = setTimeout(
+      () =>
+        this.emitEventToUser(userId, CONVERSATION_ENDED_EVENT, {
+          conversationId,
+          notice: ENDED_NOTICE,
+        }),
+      delay
+    );
+    (timer as any).unref?.();
+    if (conversationId && s.mode !== ModeEnum.preview) {
+      await this.conversationService.endConversation(conversationId, undefined, cause);
+    }
+  }
+
+  private closureCronRunning = false;
+
+  /**
+   * Idle close (R14.5): a Closure_Prompt with no reply within the bot's idle
+   * minutes (default 10, 1–60) closes the conversation once. The claim on
+   * the persisted prompt makes one instance and one path win; a visitor
+   * reply already being handled here wins over the cron.
+   */
+  @Interval("closure-idle-close", 60_000)
+  async closeIdleClosures(now: Date = new Date()): Promise<number> {
+    if (this.closureCronRunning) return 0;
+    this.closureCronRunning = true;
+    let closed = 0;
+    try {
+      const candidates = (await this.conversationService.findClosureCandidates?.(now)) ?? [];
+      for (const c of candidates) {
+        try {
+          const local = this.socketStateService.getUserData(c.visitorId);
+          const mine = local && String(local.conversationId) === c.id ? local : null;
+          // R14.11: an agent owns it now; no countdown.
+          if (mine?.handledByAgent) {
+            this.settleClosure(c.visitorId, { answered: false });
+            await this.conversationService.claimClosure(c.id, c.sentAt);
+            continue;
+          }
+          const idle = mine?.awaitingClosure?.idleMinutes ?? c.idleMinutes ?? CLOSURE_IDLE_DEFAULT_MIN;
+          if (!isClosureIdle(c.sentAt, idle, now.getTime())) continue;
+          // The visitor already answered here (the persisted clear lost a race
+          // with the prompt's own write, or is still in flight): the marker
+          // is stale. Clear it so it is not re-scanned every minute.
+          if (mine && !mine.awaitingClosure) {
+            await this.conversationService.claimClosure(c.id, c.sentAt);
+            continue;
+          }
+          if (!(await this.conversationService.claimClosure(c.id, c.sentAt))) continue;
+          if (mine) {
+            this.socketStateService.updateUserData(c.visitorId, { awaitingClosure: undefined });
+            await this.closeConversation(c.visitorId, "idle");
+          } else {
+            // Visitor gone, or connected to another instance: end it here and
+            // let whichever instance holds the socket deliver the notice.
+            await this.conversationService.endConversation(c.id, undefined, "idle");
+            const value = (c as any).closingMessage || DEFAULT_CLOSING_MESSAGE;
+            this.redisPropagatorService.propagateEvent({
+              event: "chat-message-bot",
+              userId: c.visitorId,
+              data: {
+                message: {
+                  id: generateId("message", 10),
+                  type: ChatTypeEnum.TEXT,
+                  value,
+                  time: new Date(),
+                  senderRole: "bot",
+                },
+              },
+            } as any);
+            this.redisPropagatorService.propagateEvent({
+              event: CONVERSATION_ENDED_EVENT,
+              userId: c.visitorId,
+              data: { conversationId: c.id, notice: ENDED_NOTICE },
+            } as any);
+          }
+          closed++;
+        } catch (error) {
+          this.logger.warn(`Idle close of ${c.id} failed: ${error?.message}`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Idle close sweep failed: ${error?.message}`);
+    } finally {
+      this.closureCronRunning = false;
+    }
+    return closed;
   }
 
   async handleSuccessNode(
@@ -1444,6 +2556,7 @@ if (!webhookId) {
     }
     this.socketStateService.setNodeState(userId, node.id, BotNodeStateEnum.VISITED);
 
+    if (this.terminalHere(node, userId)) return this.sendClosurePrompt(userId, node);
     if (node.next?.length) {
       const nextNode = await this.botsService.getBotNode(node.next[0]);
       return this.handleNode(nextNode, message, userId);
@@ -1453,7 +2566,325 @@ if (!webhookId) {
     return this.restOnTerminalNode(message, node, userId);
   }
 
+  /**
+   * TRANSFER_TO_AGENT entry point. With `incidentHandover` on, every request
+   * for a human becomes an Incident + Service_Request and the visitor is
+   * never told about agent availability (R19, D2). With it off, the original
+   * behaviour below is kept unchanged.
+   */
   async TransferToAgent(message: any, node: BotFlowNode, userId: string | any) {
+    const s = this.socketStateService.getUserData(userId);
+    if (s && this.incidentService && isFeatureOn(s.botSettings as any, "incidentHandover")) {
+      return this.handoverWithIncident(message, node, userId);
+    }
+    return this.legacyTransferToAgent(message, node, userId);
+  }
+
+  /**
+   * R19 handover:
+   * 1. problem gate (asks and resumes this node when needed, R4)
+   * 2. incident + ticket in one operation (contact linked inside, R19.1/R20.1)
+   * 3. one handover message with the ticket ref (R19.2)
+   * 4. silent agent offer: alert already raised; assign only if someone is online
+   * 5. SUCCESS branch (or rest here so flow/AI keep answering, R19.3)
+   * FAILURE only when the incident or ticket could not be created (R19.5).
+   */
+  private async handoverWithIncident(message: any, node: BotFlowNode, userId: string) {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s) return;
+    const { botId, mode, conversationId, visitorName, botSettings, attributes } = s;
+
+    const nextNodes: BotFlowNode[] = (
+      await Promise.all((node.next || []).map((id: string) => this.botsService.getBotNode(id).catch(() => null)))
+    ).filter(Boolean);
+    const successNode = nextNodes.find((n) => n.nodeType === NodeTypeEnum.SUCCESS);
+    const failureNode = nextNodes.find((n) => n.nodeType === NodeTypeEnum.FAILURE);
+
+    // Already with an agent: nothing to hand over again. An answer to the
+    // problem question that arrives after the takeover is still recorded.
+    if (s.handledByAgent) {
+      if (s.acceptedProblem?.nodeId === node.id && conversationId && mode !== ModeEnum.preview) {
+        const fresh = await this.knownProblem(userId, node);
+        const open = await this.incidentService.findOpenByConversation(String(conversationId)).catch(() => null);
+        if (fresh?.fresh && open) {
+          await this.incidentService.recordProblem(String(open._id), {
+            problem: fresh.problem,
+            flags: fresh.flags,
+            description: buildTicketDescription(fresh.problem, attributes, node.payload?.ticketAttributes),
+          });
+        }
+      }
+      return;
+    }
+
+    // Incident first (owner decision): the request is recorded the moment the
+    // visitor asks for a person, before any question, so nothing is lost when
+    // no agent picks it up. A problem we do not know yet is asked afterwards
+    // and written onto the incident and its request.
+    const known = await this.knownProblem(userId, node);
+
+    let ticketRef: string | undefined;
+    let created = false;
+    let incident: any = null;
+    try {
+      const res = await this.incidentService.openForHandover({
+        conversationId: String(conversationId),
+        botId: String(botId),
+        visitorId: String(userId),
+        visitorName,
+        problem: known?.problem ?? NO_PROBLEM_TEXT,
+        flags: (known?.flags ?? [ProblemFlagEnum.NONE]) as any,
+        reason: node.payload?.emergency === true ? AlertReasonEnum.EMERGENCY : AlertReasonEnum.FLOW_TRANSFER,
+        emergency: node.payload?.emergency === true,
+        subject: node.payload?.ticketSubject,
+        attributes,
+        attributeNames: node.payload?.ticketAttributes,
+        mode,
+        botSettings,
+      });
+      // Preview persists nothing; show the message with a sample ref.
+      ticketRef = res ? res.ticketRef : "SR_PREVIEW";
+      created = res ? res.created : true;
+      incident = res?.incident ?? null;
+      // A brand-new incident without a ref is a real failure. An existing one
+      // whose ref a concurrent trigger is still writing is not: the request IS
+      // recorded, so never tell the visitor it failed.
+      if (!ticketRef && created) throw new Error("incident opened without a ticket reference");
+    } catch (error) {
+      this.logger.error(`Handover incident failed for ${conversationId}: ${error?.message}`);
+      await this.sendBotMessage(userId, [
+        {
+          type: "text",
+          value: "Sorry, we could not record your request right now. Please try again in a moment.",
+          info: "error",
+        },
+      ]);
+      if (failureNode) return this.handleNode(failureNode, message, userId);
+      return this.restOnTerminalNode("", node, userId);
+    }
+
+    // The visitor's answer to the problem question arrives on an incident
+    // that already exists: fill it in, whoever is handling the chat now.
+    const missingProblem =
+      !incident || (incident.problemFlags ?? []).includes(ProblemFlagEnum.NONE);
+    if (known?.fresh && incident && missingProblem && mode !== ModeEnum.preview) {
+      await this.incidentService.recordProblem(String(incident._id), {
+        problem: known.problem,
+        flags: known.flags,
+        description: buildTicketDescription(known.problem, attributes, node.payload?.ticketAttributes),
+      });
+    }
+
+    // An agent took over while we were recording: their "joined" notice
+    // already went out; don't follow it with "a specialist will connect".
+    if (this.socketStateService.getUserData(userId)?.handledByAgent) return;
+
+    // Exactly one "created" message per incident (R19.2): a repeat request on
+    // an open incident quotes the same ref. Sent as a highlighted status
+    // message (`info: success`) so the widget shows it as a ticket card.
+    const template = botSettings?.handoverMessage?.trim() || DEFAULT_HANDOVER_MESSAGE;
+    const ref = ticketRef ? ` ${ticketRef}` : "";
+    await this.sendBotMessage(userId, [
+      {
+        type: "text",
+        info: "success",
+        value: created
+          ? renderHandoverMessage(template, ticketRef)
+          : known?.fresh
+          ? `Thank you. I have added this to your incident ticket${ref}.`
+          : `Your incident ticket${ref} is already recorded.`,
+      },
+    ]);
+
+    // Live chat (owner decision): an online agent of this bot takes the chat
+    // now, so it lands in their Live Chat tab. The problem question is left
+    // to the agent; the wrap-up at close fills the ticket from the chat.
+    const agent =
+      mode === ModeEnum.preview ? null : await this.agentService.assignAgent(String(botId)).catch(() => null);
+    if (agent) {
+      await this.connectLiveAgent(userId, { id: String(agent.id), name: agent.name }, {
+        incidentId: incident?._id ? String(incident._id) : undefined,
+        successNode,
+      });
+      return;
+    }
+
+    // Nobody free: say so (no promise of a time) and keep the chat with the
+    // bot. The alert stays open; the first agent to accept it takes the chat.
+    const waitingFor = !this.socketStateService.getUserData(userId)?.awaitingProblem;
+    if (waitingFor && (created || !known?.fresh)) {
+      await this.sendBotMessage(userId, [
+        {
+          type: "text",
+          info: "info",
+          value: "All our specialists are busy right now. Please stay in this chat and one of them will join you as soon as they are free. If you leave, we will follow up on your ticket.",
+        },
+      ]);
+    }
+
+    // Still no description: ask now, so the ticket is useful even if nobody
+    // joins. The answer resumes this node and is added to the same ticket.
+    if (!known && missingProblem && waitingFor) {
+      await this.askProblemQuestion(userId, node.id, 1);
+      return;
+    }
+
+    if (successNode) return this.handleNode(successNode, "", userId);
+    return this.restOnTerminalNode("", node, userId);
+  }
+
+  /**
+   * Hand the visitor to an agent as a live chat (the Live Chat tab): the
+   * conversation becomes the agent's, the visitor is told who joined, the
+   * agent's dashboard gets the chat, the incident becomes agent_active (its
+   * service request is assigned and moved to In Progress) and the alert is
+   * cleared for everyone else. Used by the handover and by an agent who
+   * accepts a waiting alert. Idempotent per agent.
+   */
+  async connectLiveAgent(
+    userId: string,
+    agent: { id: string; name?: string },
+    opts: { incidentId?: string; successNode?: BotFlowNode | null } = {},
+  ): Promise<boolean> {
+    const s = this.socketStateService.getUserData(userId);
+    if (!s?.conversationId) return false;
+    const { botId, botName, conversationId, visitorName, mode } = s;
+    if (s.handledByAgent && String(s.assignedAgentId) === String(agent.id)) return true;
+    const name = (agent.name || "").trim() || "A specialist";
+
+    this.socketStateService.updateUserData(userId, {
+      handledByAgent: true,
+      assignedAgentId: agent.id,
+      // onAgentTookOver must not announce the same agent a second time.
+      announcedAgentId: agent.id,
+      awaitingProblem: undefined,
+      ...(opts.successNode ? { currentNode: opts.successNode } : {}),
+    });
+    if (s.awaitingClosure) this.settleClosure(userId, { answered: false });
+
+    if (mode !== ModeEnum.preview) {
+      this.eventEmitter.emit("conversation.created.agent", { agentId: agent.id, conversationId });
+      this.eventEmitter.emit("agent.added.visitor", { agentId: agent.id, visitorId: userId });
+      await this.conversationService.transferConversationToAgent(conversationId, agent.id).catch((e) =>
+        this.logger.warn(`Live chat transfer of ${conversationId} failed: ${e?.message}`)
+      );
+      if (this.handoverAlertService) {
+        await this.handoverAlertService.setAssigned(String(conversationId), agent.id).catch(() => undefined);
+        await this.handoverAlertService
+          .acknowledgeByConversation(String(conversationId), AlertResolutionEnum.TAKEN_OVER, agent.id)
+          .catch(() => undefined);
+      }
+      if (this.incidentService) {
+        const incidentId =
+          opts.incidentId ??
+          (await this.incidentService.findOpenByConversation(String(conversationId)).catch(() => null))?._id;
+        if (incidentId) await this.incidentService.accept(String(incidentId), agent.id).catch(() => undefined);
+      }
+    }
+
+    await this.sendBotMessage(userId, [
+      {
+        type: "text",
+        value: `${name} has joined the chat and will help you from here.`,
+        switchToAgent: true,
+        agentName: name,
+        info: "success",
+      },
+    ]);
+
+    // The agent's Live Chat tab (R9.2: ids, so the full history loads).
+    const threadId = await this.handoverAlertService
+      ?.threadIdForConversation?.(String(conversationId))
+      .catch(() => undefined);
+    // The Web Chat mirror shows the same owner, so nobody else "takes over" it.
+    if (threadId && mode !== ModeEnum.preview) {
+      this.eventEmitter.emit(LIVE_CHAT_CONNECTED, { threadId: String(threadId), agentId: agent.id });
+    }
+    this.emitEventToUser(agent.id, "new-visitor", {
+      _id: conversationId,
+      conversationId,
+      threadId: threadId ? String(threadId) : undefined,
+      visitor: { _id: userId, name: visitorName },
+      bot: { _id: botId, name: botName },
+      chats: [],
+    });
+    return true;
+  }
+
+  /**
+   * An agent accepted a waiting chat from the alert (Live Chat tab). Refuses
+   * when another agent already has it, so two agents never share one chat.
+   */
+  // Not `async: true`: the caller awaits the result through emitAsync.
+  @OnEvent(AGENT_ACCEPT_LIVE)
+  async onAgentAcceptLive(p: { visitorId: string; agentId: string; agentName?: string }): Promise<LiveAcceptResult> {
+    try {
+      const s = this.socketStateService.getUserData(String(p.visitorId));
+      // The visitor's chat is not live on this server any more (left, or ended).
+      if (!s?.conversationId) return "offline";
+      if (s.handledByAgent && String(s.assignedAgentId) !== String(p.agentId)) return "taken";
+      let name = p.agentName;
+      if (!name) {
+        const a: any = await this.agentService.findOne(String(p.agentId)).catch(() => null);
+        name = a?.name;
+      }
+      return (await this.connectLiveAgent(String(p.visitorId), { id: String(p.agentId), name })) ? "connected" : "offline";
+    } catch (error) {
+      this.logger.warn(`Live accept failed: ${error?.message}`);
+      return "offline";
+    }
+  }
+
+  /**
+   * An agent took over the conversation (inbox takeover or incident accept):
+   * tell the visitor who they are talking to (R19.4) and mark the incident
+   * agent_active (R10). Idempotent per agent.
+   */
+  @OnEvent(AGENT_TOOK_OVER, { async: true })
+  async onAgentTookOver(p: { visitorId: string; conversationId?: string; agentId: string; agentName?: string }) {
+    try {
+      const s = this.socketStateService.getUserData(p.visitorId);
+      if (!s || s.mode === ModeEnum.preview) return;
+      const conversationId = p.conversationId ?? s.conversationId;
+      // R14.11: Agent_Owned means no Closure_Prompt and no idle countdown.
+      if (s.awaitingClosure) this.settleClosure(p.visitorId, { answered: false });
+      if (s.announcedAgentId === String(p.agentId)) return;
+      this.socketStateService.updateUserData(p.visitorId, { announcedAgentId: String(p.agentId) });
+
+      if (this.incidentService && conversationId) {
+        const open = await this.incidentService.findOpenByConversation(String(conversationId)).catch(() => null);
+        if (open) await this.incidentService.accept(String(open._id), String(p.agentId)).catch(() => undefined);
+      }
+      const name = (p.agentName || "").trim() || "A specialist";
+      await this.sendBotMessage(p.visitorId, [
+        {
+          type: "text",
+          value: `${name} has joined the chat and will help you from here.`,
+          switchToAgent: true,
+          agentName: name,
+          info: "success",
+        },
+      ]);
+    } catch (error) {
+      this.logger.warn(`Agent takeover notice failed: ${error?.message}`);
+    }
+  }
+
+  /** Agent handed the chat back to the bot (R10.2): incident stays open. */
+  @OnEvent(AGENT_RELEASED, { async: true })
+  async onAgentReleased(p: { conversationId: string; agentId?: string; visitorId?: string }) {
+    try {
+      if (p.visitorId && this.socketStateService.getUserData(p.visitorId)) {
+        this.socketStateService.updateUserData(p.visitorId, { announcedAgentId: undefined });
+      }
+      await this.incidentService?.recordRelease(String(p.conversationId), p.agentId);
+    } catch (error) {
+      this.logger.warn(`Agent release record failed: ${error?.message}`);
+    }
+  }
+
+  /** The pre-incident behaviour, kept for bots without `incidentHandover`. */
+  private async legacyTransferToAgent(message: any, node: BotFlowNode, userId: string | any) {
     const { botId, mode, conversationId, botName, visitorName } =
       this.socketStateService.getUserData(userId);
 
@@ -1474,6 +2905,16 @@ if (!webhookId) {
     const failureNode = nextNodes.find((ele: BotFlowNode) => {
       return ele.nodeType === NodeTypeEnum.FAILURE;
     });
+
+    // Raise the agent alert BEFORE assignment, so a request made while no
+    // agent is online still reaches the bot's agents and org admins. An
+    // emergency node is marked explicitly on the node, never inferred from text.
+    await this.raiseHandover(
+      userId,
+      node.payload?.emergency === true
+        ? AlertReasonEnum.EMERGENCY
+        : AlertReasonEnum.FLOW_TRANSFER
+    );
 
     const agent = await this.agentService.assignAgent(botId);
 
@@ -1502,14 +2943,27 @@ if (!webhookId) {
     });
     const assignedAgentId = agent.id;
 
+    if (this.handoverAlertService && conversationId && mode !== ModeEnum.preview) {
+      await this.handoverAlertService
+        .setAssigned(String(conversationId), String(assignedAgentId))
+        .catch(() => undefined);
+    }
+
     if (mode !== ModeEnum.preview) {
       await this.conversationService.transferConversationToAgent(
         conversationId,
         assignedAgentId
       );
     }
+    // crm-incident-handover R9.2: ids so the dashboard loads the full history
+    // from the server instead of trusting this (empty) chats array.
+    const threadId = await this.handoverAlertService
+      ?.threadIdForConversation?.(String(conversationId))
+      .catch(() => undefined);
     const conversation = {
       _id: conversationId,
+      conversationId,
+      threadId: threadId ? String(threadId) : undefined,
       visitor: {
         _id: userId,
         // Per visitor: a singleton field here showed the agent whichever
@@ -1557,6 +3011,7 @@ if (!webhookId) {
           [node.payload.alias]: this.captureValue(message, userId),
         },
       });
+      this.emitAttributeCaptured(userId, [node.payload.alias]);
     }
 
     return this.handleNode(nextNode, message, userId);
@@ -1596,6 +3051,25 @@ if (!webhookId) {
     }
 
     if (currentQuestion === -1) {
+      // Ask once (R16): skip or pre-fill known contact details, unless the
+      // visitor just chose "Update details" for this node.
+      if (this.socketStateService.getUserData(userId)?.skipPrefillFor === node.id) {
+        this.socketStateService.updateUserData(userId, { skipPrefillFor: undefined });
+      } else if (await this.prefillKnownDetails(userId, node)) {
+        this.socketStateService.setQuestionNodeState(userId, node.id, undefined as any);
+        return;
+      }
+      // Skip leading questions whose answers are already known.
+      const first = this.nextToAsk(userId, elements, 0);
+      if (first >= elements.length) {
+        this.socketStateService.setQuestionNodeState(userId, node.id, undefined as any);
+        return this.handleNode(successNode, "", userId);
+      }
+      if (first > 0) {
+        await this.sendBotMessage(userId, [{ type: "text", value: elements[first].prompt }]);
+        this.socketStateService.setQuestionNodeState(userId, node.id, { currentQuestion: first, lifespan: 0 });
+        return;
+      }
       const element = elements[0];
       const { prompt } = element;
       await this.sendBotMessage(userId, [
@@ -1631,7 +3105,10 @@ if (!webhookId) {
           currentQuestion: currentQuestion + 1,
           lifespan: 0,
         });
-        if (alias) {
+        const answer = this.captureValue(message, userId);
+        // Secure answers are never contact details (R3.4).
+        const typed = secure ? {} : this.typedContactAttributes(userId, entity, answer, alias);
+        if (alias || Object.keys(typed).length) {
           // Merge, never replace. updateUserData is only a shallow top-level
           // merge, so passing a bare { [alias]: message } here would discard
           // every attribute captured so far — including the earlier answers of
@@ -1640,9 +3117,14 @@ if (!webhookId) {
           this.socketStateService.updateUserData(userId, {
             attributes: {
               ...this.socketStateService.getUserData(userId)?.attributes,
-              [alias]: this.captureValue(message, userId),
+              ...(alias ? { [alias]: answer } : {}),
+              ...typed,
             },
           });
+          // Secure answers are never contact details; don't route them anywhere.
+          if (!secure) {
+            this.emitAttributeCaptured(userId, [...(alias ? [alias] : []), ...Object.keys(typed)]);
+          }
         }
 
         if (secure) {
@@ -1653,10 +3135,17 @@ if (!webhookId) {
           );
         }
 
-        if (currentQuestion + 1 >= elements.length) {
+        // Skip later contact questions already answered (pre-chat form, an
+        // earlier node, or this very answer typed as an email/phone).
+        const nextIndex = this.nextToAsk(userId, elements, currentQuestion + 1);
+        if (nextIndex >= elements.length) {
           return this.handleNode(successNode, message, userId);
         }
-        const nextElement = elements[currentQuestion + 1];
+        this.socketStateService.setQuestionNodeState(userId, node.id, {
+          currentQuestion: nextIndex,
+          lifespan: 0,
+        });
+        const nextElement = elements[nextIndex];
         await this.sendBotMessage(userId, [
           {
             type: "text",
@@ -1743,13 +3232,39 @@ if (!webhookId) {
             ...mewAttributes,
           },
         });
+        this.emitAttributeCaptured(userId, Object.keys(mewAttributes));
       }
     }
 
     return this.handleNode(nextNode, message, userId);
   }
 
+  /**
+   * CLOSE_CHAT node.
+   *
+   * - Closure prompt on (widget): CLOSE_CHAT is a Terminal_Outcome, so the
+   *   visitor is asked first; "Yes, resolved" or the idle time closes (R14.1).
+   * - Widget, prompt off: close now with the thank-you and the Ended_State
+   *   (task 6.4). The old 'To start again type "start"' line is gone: the
+   *   state was deleted right after it, so typing start never worked.
+   * - Other channels: unchanged (R15.7); the next inbound message rebuilds
+   *   the conversation, so "start" does work there.
+   */
   async handleCloseChat(message: any, node: BotFlowNode, userId: string | any) {
+    const s0 = this.socketStateService.getUserData(userId);
+    if (!s0) return;
+    if (closureApplies(s0)) return this.sendClosurePrompt(userId, node);
+    if (!s0.platform || s0.platform === PlatformEnum.WIDGET) {
+      return this.closeConversation(
+        userId,
+        "close_chat",
+        s0.botSettings?.thankyoumsg || "Thank you for contacting us."
+      );
+    }
+    return this.legacyCloseChat(userId);
+  }
+
+  private async legacyCloseChat(userId: string) {
     const { startNode, botSettings, conversationId } =
       this.socketStateService.getUserData(userId);
     this.socketStateService.updateUserData(userId, {
@@ -1804,7 +3319,11 @@ if (!webhookId) {
     // come back not-confident, and staying quiet on those reads as broken.
     let reply: string | null = null;
     try {
-      const qbAnswer = await this.findAnswerFromQuestionBank(message);
+      const qbAnswer = await this.findAnswerFromQuestionBank(
+        message,
+        undefined,
+        userId
+      );
       if (qbAnswer) {
         await this.sendBotMessage(userId, [{ type: "text", value: qbAnswer }]);
         return;
@@ -1863,12 +3382,14 @@ if (!webhookId) {
       message
     );
     const requestId = newRequestId();
+    const visitorProfile = await this.visitorProfileFor(userId);
     const body = {
       client_id: botId,
       question: message,
       bot_id: botId,
       company_name: botName,
       chat_history: chatHistory,
+      ...(visitorProfile ? { visitor_profile: visitorProfile } : {}),
     };
 
     const res = await firstValueFrom(
@@ -2193,6 +3714,7 @@ if (!webhookId) {
       this.socketStateService.updateUserData(userId, {
         attributes: { ...existing, ...mergeData },
       });
+      this.emitAttributeCaptured(userId, Object.keys(mergeData), "template");
     }
 
     // On a successful submit, confirm the action in chat with an AI-written
@@ -2420,8 +3942,39 @@ if (!webhookId) {
     return this.sendBotMessage(userId, [{ type: "text", value }]);
   }
 
-  async findAnswerFromQuestionBank(message: string, language = "english") {
-    const response = await this.questionsService.findAnswer(message, language);
+  /**
+   * Question-bank lookup for a live conversation. Answers come ONLY from the
+   * organization that owns the conversation's bot: without this, one tenant's
+   * approved Q&A would answer another tenant's visitors. If the org cannot be
+   * resolved the lookup returns nothing (fail closed).
+   */
+  async findAnswerFromQuestionBank(
+    message: string,
+    language = "english",
+    userId?: string
+  ) {
+    const botId = userId
+      ? this.socketStateService.getUserData(userId)?.botId
+      : undefined;
+    const organizationId = botId
+      ? await this.tenantScope.orgIdForBot(botId).catch(() => null)
+      : null;
+    if (!organizationId) return null;
+    // Plan gate: an org without the question-bank feature gets no QB answers.
+    if (
+      this.entitlementService &&
+      !(await this.entitlementService
+        .isFeatureEnabled(organizationId, "question-bank")
+        .catch(() => false))
+    ) {
+      return null;
+    }
+    const response = await this.questionsService.findAnswer(
+      message,
+      language,
+      undefined,
+      organizationId
+    );
     if (response) {
       return response;
     }
@@ -2504,6 +4057,7 @@ if (!webhookId) {
         info: ele.info,
         handledByAgent: handledByAgent || false,
         template: ele.template,
+        senderRole: "bot",
       };
 
       if (mode !== ModeEnum.preview) {
@@ -2559,13 +4113,15 @@ if (!webhookId) {
         conversationId,
       });
     }
-    const messageResponse: MessageResponseDto = {
+    const messageResponse: MessageResponseDto & { senderRole: "visitor" } = {
       id: generateId("message", 10),
       sender: message.from,
       type: message.type,
       value: message.value,
       time: new Date(),
       delay: 2000,
+      // Always the visitor on this path; lets the dashboard notify by role.
+      senderRole: "visitor",
     };
 
     return this.redisPropagatorService.propagateEvent({
@@ -2942,6 +4498,8 @@ if (!webhookId) {
           currentNode: nextNodes[0],
           handledByAgent: false,
           assignedAgentId: null,
+          // A later takeover (even by the same agent) is announced again.
+          announcedAgentId: undefined,
         });
 
         this.sendBotMessage(data.userId, [

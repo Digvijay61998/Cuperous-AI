@@ -1,6 +1,8 @@
 import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Model } from "mongoose";
+import mongoose, { Model } from "mongoose";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
+import { TenantContext } from "src/common/tenant/tenant-context";
 import { firstValueFrom } from "rxjs";
 import { HttpService } from "@nestjs/axios";
 import { TRAINING_DATA_PROVIDER } from "./constants";
@@ -15,8 +17,34 @@ export class TrainingDataService {
     @Inject(TRAINING_DATA_PROVIDER)
     private readonly trainingDataModel: Model<TrainingDataDocument>,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly tenantScope: TenantScopeService
   ) {}
+
+  /** Canonical bot _id (string) after asserting it is in the caller's org. */
+  private async ownedBotId(user: TenantContext | undefined, botId: string) {
+    const bot = await this.tenantScope.assertBotInOrg(user, botId);
+    return String(bot._id);
+  }
+
+  /** Loads a training doc and asserts its bot is in the caller's org (404). */
+  private async requireDoc(id: string, user?: TenantContext) {
+    const doc = mongoose.isValidObjectId(id)
+      ? await this.trainingDataModel.findById(id)
+      : null;
+    if (!doc) throw new HttpException("Training data not found", 404);
+    if (user && !(await this.tenantScope.isBotInOrg(user, doc.botId))) {
+      throw new HttpException("Training data not found", 404);
+    }
+    return doc;
+  }
+
+  /** Escapes user input for use inside a RegExp (prevents ReDoS/regex injection). */
+  private escapeRegex(input: string) {
+    return String(input ?? "")
+      .slice(0, 200)
+      .replace(/[.*+?^${}()|[\]\\]/g, (ch) => `\\${ch}`);
+  }
 
   private get aiUrl(): string {
     return this.configService.get("ai.url");
@@ -29,8 +57,10 @@ export class TrainingDataService {
   async uploadFiles(
     botId: string,
     userId: string,
-    files: Express.Multer.File[]
+    files: Express.Multer.File[],
+    user?: TenantContext
   ) {
+    if (user) botId = await this.ownedBotId(user, botId);
     const results: TrainingDataDocument[] = [];
 
     for (const file of files) {
@@ -97,7 +127,8 @@ export class TrainingDataService {
    * List all training-data files for a bot. Excludes `content` to keep the
    * payload small; use view() to fetch a single document's text.
    */
-  async getByBotId(botId: string) {
+  async getByBotId(botId: string, user?: TenantContext) {
+    if (user) botId = await this.ownedBotId(user, botId);
     return this.trainingDataModel
       .find({ botId })
       .select("-content")
@@ -109,11 +140,8 @@ export class TrainingDataService {
    * Fetch a single training-data record including its extracted text (for the
    * "view" action in the UI).
    */
-  async view(id: string) {
-    const doc = await this.trainingDataModel.findById(id);
-    if (!doc) {
-      throw new HttpException("Training data not found", 404);
-    }
+  async view(id: string, user?: TenantContext) {
+    const doc = await this.requireDoc(id, user);
     return {
       _id: doc._id,
       filename: doc.filename,
@@ -127,9 +155,12 @@ export class TrainingDataService {
   /**
    * List training-data files currently assigned to an AI node.
    */
-  async getByNodeId(nodeId: string) {
+  async getByNodeId(nodeId: string, user?: TenantContext) {
+    const scope = user
+      ? await this.tenantScope.orgBotMatch(user, "botId", true)
+      : {};
     return this.trainingDataModel
-      .find({ nodeIds: nodeId })
+      .find({ ...scope, nodeIds: nodeId })
       .select("-content")
       .exec();
   }
@@ -137,8 +168,9 @@ export class TrainingDataService {
   /**
    * Search training-data files for a bot by filename.
    */
-  async search(botId: string, search: string) {
-    const regex = new RegExp(search, "i");
+  async search(botId: string, search: string, user?: TenantContext) {
+    if (user) botId = await this.ownedBotId(user, botId);
+    const regex = new RegExp(this.escapeRegex(search), "i");
     return this.trainingDataModel
       .find({ botId, filename: regex })
       .select("-content")
@@ -149,9 +181,20 @@ export class TrainingDataService {
   /**
    * Assign files to a node (for the AI node modal file picker).
    */
-  async assignToNode(fileIds: string[], nodeId: string) {
+  async assignToNode(
+    fileIds: string[],
+    nodeId: string,
+    user?: TenantContext
+  ) {
+    if (!nodeId || !Array.isArray(fileIds)) {
+      throw new HttpException("fileIds and nodeId are required", 400);
+    }
+    const scope = user
+      ? await this.tenantScope.orgBotMatch(user, "botId", true)
+      : {};
+    const ids = fileIds.filter((f) => mongoose.isValidObjectId(f));
     await this.trainingDataModel.updateMany(
-      { _id: { $in: fileIds } },
+      { ...scope, _id: { $in: ids } },
       { $addToSet: { nodeIds: nodeId } }
     );
     return { success: true };
@@ -160,11 +203,8 @@ export class TrainingDataService {
   /**
    * Remove a training-data file and its vectors from the knowledge base.
    */
-  async remove(id: string) {
-    const doc = await this.trainingDataModel.findById(id);
-    if (!doc) {
-      throw new HttpException("Training data not found", 404);
-    }
+  async remove(id: string, user?: TenantContext) {
+    const doc = await this.requireDoc(id, user);
 
     try {
       await firstValueFrom(

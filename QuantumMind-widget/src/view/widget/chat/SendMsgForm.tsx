@@ -39,6 +39,8 @@ const Form = styled("form")(({ theme }) => ({
 const SendMsgForm = (props: any) => {
   // ** Props
   const { socket, botStyles, visitorId, setIsCameraOpen } = props;
+  /** Ended_State (R14.6): nothing can be typed or sent. */
+  const disabled: boolean = props.disabled === true;
   const { accessToken, languages } = useSelector(
     (state: RootState) => state.bot
   );
@@ -56,10 +58,12 @@ const SendMsgForm = (props: any) => {
   };
   const handleSendMsg = (e: SyntheticEvent) => {
     e.preventDefault();
+    if (disabled || !msg.trim()) return;
     const message = {
       value: msg,
       type: "text",
       senderId: visitorId,
+      senderRole: "visitor",
       time: new Date().toISOString(),
       id: new Date().getTime(),
     };
@@ -78,6 +82,7 @@ const SendMsgForm = (props: any) => {
       value: true,
       type: "camera",
       senderId: visitorId,
+      senderRole: "visitor",
       time: new Date().toISOString(),
       id: new Date().getTime(),
     };
@@ -119,9 +124,16 @@ const SendMsgForm = (props: any) => {
           Authorization: "Bearer " + accessToken,
         },
       });
+      // The endpoint returns { url } on success, or { error } on failure. Guard
+      // against a missing url so we never emit `${baseUrl}/apiundefined` as an
+      // image src (which the browser then GETs → 404 /apiundefined).
+      if (!res.data?.url) {
+        toast.error(res.data?.error || "Upload failed");
+        return;
+      }
       return `${window.baseUrl}/api${res.data.url}`;
     } catch (error: any) {
-      toast.error(error.response.data.message || error.message || "Failed...");
+      toast.error(error.response?.data?.message || error.message || "Failed...");
       return;
     }
   };
@@ -147,10 +159,10 @@ const SendMsgForm = (props: any) => {
   return (
     <Form
       onSubmit={handleSendMsg}
-      sx={{ bottom: 2, position: "absolute", width: "95%" }}
+      sx={{ flexShrink: 0, width: "100%", pt: 1 }}
     >
       <ChatFormWrapper>
-      {msg === '' && <Box sx={{ display: "flex", alignItems: "center" }}>
+      {msg === '' && !disabled && <Box sx={{ display: "flex", alignItems: "center" }}>
           {/* <Tooltip placement="top" title="camera" arrow>
             <IconButton
               size="small"
@@ -198,7 +210,8 @@ const SendMsgForm = (props: any) => {
               }
             }}
             required
-            placeholder="Type your message here…"
+            disabled={disabled}
+            placeholder={disabled ? "This chat has ended" : "Type your message here…"}
             onChange={(e) => setMsg(e.target.value)}
             sx={{
               "& .Mui-focused": { boxShadow: 0 },
@@ -282,7 +295,7 @@ const SendMsgForm = (props: any) => {
               </MenuItem>
             ))}
           </Menu>
-          <IconButton type="submit">
+          <IconButton type="submit" disabled={disabled} aria-label="Send message">
             <Icon
               icon="material-symbols:send"
               color={botStyles?.primaryColor || "blue"}

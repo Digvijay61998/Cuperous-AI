@@ -32,16 +32,34 @@ import SidebarLeft from 'src/views/apps/active-chat/SidebarLeft';
 import { Grid } from '@mui/material';
 import {
   addActiveMessage,
-  clearActiveMessage, handleSoundToggle, selectChat, updateActiveConversation
+  clearActiveMessage, selectChat, updateActiveConversation
 } from 'src/store/apps/conversation';
-import { LIVE_CHAT_TAB } from 'src/store/apps/inbox';
+import { saveSoundPrefs } from 'src/store/apps/alerts';
+import { currentAlertClient } from 'src/services/alerts/alertClient';
+import {
+  LIVE_CHAT_TAB,
+  markInboxThreadRead,
+  selectInboxThread,
+  setInboxTab,
+} from 'src/store/apps/inbox';
+import { useRouter } from 'next/router';
 import { getActiveConversationStats } from 'src/store/apps/states';
 import ChannelInbox from 'src/views/apps/inbox/ChannelInbox';
 import ChannelTabs from 'src/views/apps/inbox/ChannelTabs';
+import Axios from 'src/helper/Axios';
+import { toast } from 'react-hot-toast';
+import {
+  AGENT_VIEW_CONVERSATION_PARAM,
+  isConversationId,
+  resolveAgentViewTarget,
+} from 'src/views/crm/contactLinks';
 
 const AppChat = ({props}: any) => {
   const store = useSelector((state: RootState) => state.conversations);
-  const {chatContext, enableSound} = useSelector((state: RootState) => state.conversations);
+  const { chatContext } = useSelector((state: RootState) => state.conversations);
+  const router = useRouter();
+  const soundPrefs = useSelector((state: RootState) => state.alerts.prefs);
+  const enableSound = soundPrefs.handoverSound || soundPrefs.messageSound;
   const { activeTab } = useSelector((state: RootState) => state.inbox);
 
 
@@ -61,6 +79,60 @@ const AppChat = ({props}: any) => {
   const { settings } = useSettings();
   const dispatch = useDispatch<AppDispatch>();
   const hidden = useMediaQuery(theme.breakpoints.down('lg'));
+
+  // Deep link from a handover alert: /apps/chat/active?channel=widget&thread=<id>
+  useEffect(() => {
+    const channel = typeof router.query.channel === 'string' ? router.query.channel : '';
+    const thread = typeof router.query.thread === 'string' ? router.query.thread : '';
+    if (!channel || !thread) return;
+    dispatch(setInboxTab(channel));
+    dispatch(selectInboxThread(thread));
+    dispatch(markInboxThreadRead(thread));
+    void router.replace('/apps/chat/active', undefined, { shallow: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query.channel, router.query.thread]);
+
+  // Deep link from a CRM contact: /apps/chat/active?conversation=<conversationId>.
+  // Only the conversation record knows its inbox thread, so resolve it here.
+  useEffect(() => {
+    const raw = router.query[AGENT_VIEW_CONVERSATION_PARAM];
+    const conversationId = typeof raw === 'string' ? raw : '';
+    if (!isConversationId(conversationId)) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data } = await Axios.get(`/conversation/${conversationId}`);
+        if (cancelled) return;
+        const target = resolveAgentViewTarget(data);
+        if (target.kind === 'thread') {
+          const { data: thread } = await Axios.get(
+            `/inbox/threads/${encodeURIComponent(target.threadId)}`,
+          );
+          if (cancelled || !thread?.channel) return;
+          dispatch(setInboxTab(thread.channel));
+          dispatch(selectInboxThread(target.threadId));
+          dispatch(markInboxThreadRead(target.threadId));
+        } else if (target.kind === 'live') {
+          dispatch(setInboxTab(LIVE_CHAT_TAB));
+          dispatch(addActiveMessage({ id: target.conversationId, visitorId: target.visitorId }));
+        } else if (target.kind === 'visitor') {
+          void router.replace(`/visitors/view/${encodeURIComponent(target.visitorId)}`);
+          return;
+        } else {
+          toast.error('This conversation is no longer available.');
+        }
+      } catch {
+        if (!cancelled) toast.error('Could not open this conversation.');
+      }
+      if (!cancelled) void router.replace('/apps/chat/active', undefined, { shallow: true });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query[AGENT_VIEW_CONVERSATION_PARAM]]);
 
   // ** Vars
   const {mode, skin } = settings;
@@ -128,8 +200,14 @@ const AppChat = ({props}: any) => {
       setActiveStatsData(mapArr);
     }
   }, [activeStats]);
+// The legacy Mute button now drives the persisted per-user sound prefs
+// (both the handover alert and the soft message notification).
 const handleToggleSound = () => {
-    dispatch(handleSoundToggle())
+    const next = !enableSound;
+    const value = { handoverSound: next, messageSound: next };
+    dispatch(saveSoundPrefs({ next: value, previous: soundPrefs })).then((r: any) => {
+      if (saveSoundPrefs.fulfilled.match(r)) currentAlertClient()?.broadcastPrefs(r.payload);
+    });
 }
 console.log(activeStatsData,"activestats")
   return (

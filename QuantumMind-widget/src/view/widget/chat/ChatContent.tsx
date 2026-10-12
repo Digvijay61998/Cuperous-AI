@@ -9,6 +9,7 @@ import IconButton from "@mui/material/IconButton";
 import { styled } from "@mui/material/styles";
 import Typography from "@mui/material/Typography";
 import { fetchVisitor } from "../../../store/bot/bot";
+import { readSession } from "../../../store/bot/session";
 import CircularProgress from "@mui/material/CircularProgress";
 // ** Icon Imports
 import { Icon } from "@iconify/react";
@@ -33,6 +34,7 @@ import Alert from "/sound/alert.mp3";
 
 import SendTranscriptDialog from "./components/SendTranscript";
 import ChatbotImage from "./components/ChatbotImage";
+import EndedPanel from "./components/EndedPanel";
 // ** Styled Components
 
 const ChatContent = (props: any) => {
@@ -264,7 +266,35 @@ const ChatContent = (props: any) => {
   const handleRestartChat = (e: any) => {
     setIsBotOpen(false);
   };
-  const { visitorId } = useSelector((state: RootState) => state.bot);
+  const { visitorId, ended, endedNotice } = useSelector((state: RootState) => state.bot);
+
+  // "Start new chat" from the Ended_State (R14.9): same visitor, a new
+  // conversation that begins at the start node. The ended one stays ended.
+  const [startingNew, setStartingNew] = useState(false);
+  const handleStartNewChat = async () => {
+    if (startingNew) return;
+    setStartingNew(true);
+    try {
+      let stored: any = {};
+      try {
+        const raw = localStorage.getItem("visitorData");
+        stored = raw && raw !== "undefined" ? JSON.parse(raw) : {};
+      } catch {
+        stored = {};
+      }
+      const res: any = await dispatch(
+        fetchVisitor({ token: widgetToken, data: stored, startNew: true, visitorId })
+      );
+      if (res?.payload?.accessToken) {
+        props.resetMessages?.();
+        dispatch(clearMessages());
+      } else {
+        toast.error("Could not start a new chat. Please try again.");
+      }
+    } finally {
+      setStartingNew(false);
+    }
+  };
 
   const [isLoading, setIsLoading] = useState(false);
   const handleStartChat = async () => {
@@ -278,6 +308,10 @@ const ChatContent = (props: any) => {
       if (!accessToken) {
         if (botId && dispatch) {
           let visitorData: string | null = localStorage.getItem("visitorData");
+          // A stored session alone is enough to resume (R9.3).
+          if ((!visitorData || visitorData === "undefined") && readSession(localStorage, String(botId))) {
+            visitorData = "{}";
+          }
           if (visitorData && visitorData !== "undefined") {
             setLoadingBot(true);
             const parseVisitorData = JSON.parse(visitorData);
@@ -334,6 +368,10 @@ const ChatContent = (props: any) => {
       if (!accessToken) {
         if (botId && dispatch) {
           let visitorData: string | null = localStorage.getItem("visitorData");
+          // A stored session alone is enough to resume (R9.3).
+          if ((!visitorData || visitorData === "undefined") && readSession(localStorage, String(botId))) {
+            visitorData = "{}";
+          }
           if (visitorData && visitorData !== "undefined") {
             setLoadingBot(true);
             const parseVisitorData = JSON.parse(visitorData);
@@ -381,6 +419,11 @@ const ChatContent = (props: any) => {
   if (visitorData && visitorData !== "undefined") {
     isVisitorStored = true;
   }
+  // A stored session for this bot (R9.3) counts as a known visitor too, so a
+  // reload resumes instead of showing the start form again.
+  if (!isVisitorStored && botId && readSession(localStorage, String(botId))) {
+    isVisitorStored = true;
+  }
   const [openSendTranscriptDialog, setOpenSendTranscriptDialog] =
     useState<boolean>(false);
   const handleOpenSendTranscriptDialog = () => {
@@ -419,6 +462,8 @@ const ChatContent = (props: any) => {
           margin: "0 auto",
           // overflow: isShow.isShowAds ? "auto" : "hidden",
           overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
           // Anchors the template panel, which covers the conversation while a
           // template is open.
           position: "relative",
@@ -739,24 +784,43 @@ const ChatContent = (props: any) => {
           />
         )}
         {isShow.isShowChats && !isShow.isShowForm && (
-          <>
+          // Column: message list takes the remaining height, input sits below
+          // it instead of overlaying the last messages.
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <ChatLog
               hidden={hidden}
               botStyles={botStyles}
               updatemyMessages={updatemyMessages}
               socket={socket}
               {...props}
+              ended={ended}
               onOpenTemplate={handleOpenTemplate}
             />
 
+            {ended && (
+              <EndedPanel
+                notice={endedNotice}
+                botStyles={botStyles}
+                starting={startingNew}
+                onStartNew={handleStartNewChat}
+              />
+            )}
             <SendMsgForm
               updatemyMessages={updatemyMessages}
               visitorAccessToken={visitorAccessToken}
               socket={socket}
               botStyles={botStyles}
               {...props}
+              disabled={ended}
             />
-          </>
+          </Box>
         )}
         {isShow.isShowAds && (
           <footer

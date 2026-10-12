@@ -5,7 +5,7 @@ import Widget from "../view/widget";
 
 import { useDispatch, useSelector } from "react-redux";
 import io from "socket.io-client";
-import { getBotMetadata } from "../store/bot/bot";
+import { getBotMetadata, handleConversationEnded } from "../store/bot/bot";
 import pushNotification from "../utils/notification";
 import Alert from "/sound/alert.mp3";
 
@@ -66,6 +66,26 @@ export default function App(props: any) {
   }, [offersArr, adsArr]);
   const [newMessages, setNewMessages] = useState<any>([]);
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
+  /** When the agent last signalled typing; null = not typing. */
+  const [agentTypingAt, setAgentTypingAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (agentTypingAt == null) return;
+    const t = setTimeout(() => setAgentTypingAt(null), 5000);
+    return () => clearTimeout(t);
+  }, [agentTypingAt]);
+  /**
+   * The visitor just sent something to the bot: show "…" until the reply
+   * arrives (or 20 s, so a lost reply never leaves the dots spinning). Not
+   * while a person handles the chat: then only their real typing signal
+   * shows the dots.
+   */
+  const [botTypingAt, setBotTypingAt] = useState<number | null>(null);
+  const withAgentRef = useRef(false);
+  useEffect(() => {
+    if (botTypingAt == null) return;
+    const t = setTimeout(() => setBotTypingAt(null), 20000);
+    return () => clearTimeout(t);
+  }, [botTypingAt]);
   useEffect(() => {
     async function handleConnectSocket() {
       const serviceIP: any = window.baseUrl;
@@ -116,7 +136,20 @@ export default function App(props: any) {
         );
       });
 
+      // The agent handling the chat is typing (crm-incident-handover R8.8).
+      // Only sent when the bot's typingIndicator setting is on. Cleared 5 s
+      // after the last signal, or when their message arrives.
+      socket.on("typing", (payload: any) => {
+        if (!payload?.typing) return;
+        setAgentTypingAt(Date.now());
+      });
+
       socket.on("chat-message-bot", (response: any) => {
+        setAgentTypingAt(null);
+        setBotTypingAt(null);
+        const m = response?.message;
+        if (m?.switchToAgent || m?.senderRole === "agent") withAgentRef.current = true;
+        else if (m?.handledByAgent === false && m?.senderRole === "bot") withAgentRef.current = false;
         newArrivedMessage(response.message);
         setIsShow({ ...isShow, isShowChats: true });
         // if switchToAgent is true then show agent in notification
@@ -139,6 +172,13 @@ export default function App(props: any) {
             response.message.type
           );
         }
+      });
+      // The conversation was closed (crm-incident-handover R14.2, R14.5):
+      // switch to the Ended_State and remember it for reloads (R14.7).
+      socket.on("conversation-ended", (payload: any) => {
+        setAgentTypingAt(null);
+        setBotTypingAt(null);
+        dispatch(handleConversationEnded(payload));
       });
       socket.on("disconnect", () => {
         console.log("Disconnected");
@@ -170,6 +210,15 @@ export default function App(props: any) {
   const updateMyMessages = (message: any) => {
     // dispatch(addMessage(message));
     setNewMessages((prevMessages: any) => [...prevMessages, message]);
+    // Something the visitor sent (text, button, quick reply): the bot is on it.
+    const fromVisitor = message?.senderRole === "visitor" && message?.type !== "camera";
+    if (fromVisitor && !withAgentRef.current) setBotTypingAt(Date.now());
+  };
+  /** "Start new chat" (R14.9): the new conversation starts with an empty log. */
+  const resetMessages = () => {
+    setNewMessages([]);
+    setBotTypingAt(null);
+    withAgentRef.current = false;
   };
   // check if browser is safari or not
   const isSafari = () => {
@@ -253,7 +302,10 @@ const [customStyle, setCustomStyle] = useState<any>(isMobile ? mobileStyle : des
     isCameraOpen,
     setIsCameraOpen,
     soundAlert,
-    isLocation
+    isLocation,
+    agentTyping: agentTypingAt != null,
+    botTyping: botTypingAt != null && agentTypingAt == null,
+    resetMessages,
   };
 
   return (

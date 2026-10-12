@@ -1,88 +1,89 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-} from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
-import { Public } from 'src/auth/Public/public.decorator';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import { ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from 'src/util/current-user.decorator';
+import { TenantContext } from 'src/common/tenant/tenant-context';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { RequiresFeature } from 'src/common/decorators/requires-feature.decorator';
+import { ORG_STAFF } from 'src/common/enums/role.enum';
+import { WhatsappWebService } from './whatsapp-web.service';
 import { CreateWhatsappWebSessionDto } from './dto/create-session.dto';
 import { RequestPairingCodeDto } from './dto/request-pairing-code.dto';
-import { WhatsappWebService } from './whatsapp-web.service';
 
 /**
- * WhatsApp Web session endpoints, mirroring OpenWA's `/sessions` surface.
- * Marked @Public to match the existing Social/WhatsApp controllers in this
- * codebase (which are all public). NOTE: like the rest of the social module,
- * these endpoints are currently unauthenticated — worth tightening later.
+ * WhatsApp Web (OpenWA/baileys) session management.
+ *
+ * Previously every route here was `@Public()`, which let anyone create, read
+ * the QR of (i.e. hijack), stop, or delete any tenant's WhatsApp session. All
+ * routes now require an ORG_ADMIN / ORG_MANAGER token, are org-scoped, and are
+ * gated by the `channel.whatsapp_openwa` feature. Creating a session consumes
+ * a `maxPlatforms` slot.
  */
 @Controller('whatsapp-web/sessions')
 @ApiTags('WhatsApp Web')
+@ApiSecurity('bearer')
+@Roles(...ORG_STAFF)
+@RequiresFeature('channel.whatsapp_openwa')
 export class WhatsappWebController {
   constructor(private readonly whatsappWebService: WhatsappWebService) {}
 
   @Post()
-  @Public()
-  create(@Body() dto: CreateWhatsappWebSessionDto) {
-    return this.whatsappWebService.create(dto);
+  create(
+    @Body() dto: CreateWhatsappWebSessionDto,
+    @CurrentUser() user: TenantContext,
+  ) {
+    return this.whatsappWebService.create(dto, user);
   }
 
   @Get()
-  @Public()
-  findAll() {
-    return this.whatsappWebService.findAll();
+  findAll(@CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.findAll(user);
   }
 
   @Get(':id')
-  @Public()
-  findOne(@Param('id') id: string) {
-    return this.whatsappWebService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.findOne(id, user);
   }
 
   @Post(':id/start')
-  @Public()
-  start(@Param('id') id: string) {
-    return this.whatsappWebService.start(id);
+  start(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.start(id, user);
   }
 
   @Post(':id/stop')
-  @Public()
-  stop(@Param('id') id: string) {
-    return this.whatsappWebService.stop(id);
+  stop(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.stop(id, user);
   }
 
   @Post(':id/logout')
-  @Public()
-  logout(@Param('id') id: string) {
-    return this.whatsappWebService.logout(id);
+  logout(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.logout(id, user);
   }
 
   @Post(':id/force-kill')
-  @Public()
-  forceKill(@Param('id') id: string) {
-    return this.whatsappWebService.forceKill(id);
+  forceKill(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.forceKill(id, user);
   }
 
   @Delete(':id')
-  @Public()
-  remove(@Param('id') id: string) {
-    return this.whatsappWebService.delete(id);
+  remove(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.delete(id, user);
   }
 
   @Get(':id/qr')
-  @Public()
-  getQr(@Param('id') id: string) {
-    return this.whatsappWebService.getQr(id);
+  getQr(@Param('id') id: string, @CurrentUser() user: TenantContext) {
+    return this.whatsappWebService.getQr(id, user);
   }
 
   @Post(':id/pairing-code')
-  @Public()
   requestPairingCode(
     @Param('id') id: string,
     @Body() dto: RequestPairingCodeDto,
+    @CurrentUser() user: TenantContext,
   ) {
-    return this.whatsappWebService.requestPairingCode(id, dto.phoneNumber);
+    return this.whatsappWebService.requestPairingCode(
+      id,
+      dto.phoneNumber,
+      user,
+    );
   }
 }

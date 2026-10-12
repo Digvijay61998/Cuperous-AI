@@ -10,14 +10,19 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
+import { UseGuards } from "@nestjs/common";
 import { CurrentUser } from "src/util/current-user.decorator";
 import { OrgId } from "../common/org-id.decorator";
+import { CrmPluginGuard } from "../plugins/crm-plugin.guard";
+import { pluginForActivity, RequiresCrmPlugin } from "../plugins/requires-crm-plugin.decorator";
 import { ActivitiesService } from "./activities.service";
 import { CreateActivityDto } from "./dto/create-activity.dto";
 import { ListActivitiesDto } from "./dto/list-activities.dto";
 import { UpdateActivityDto } from "./dto/update-activity.dto";
 
 @Controller("crm/activities")
+@UseGuards(CrmPluginGuard)
+@RequiresCrmPlugin(pluginForActivity)
 @ApiTags("CRM Activities")
 @ApiSecurity("bearer")
 export class ActivitiesController {

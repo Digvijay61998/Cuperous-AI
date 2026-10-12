@@ -70,6 +70,15 @@ export class ListContactsDto {
   @IsArray()
   source?: string[] = [];
 
+  @ApiPropertyOptional({
+    description:
+      "Filter by capture channel(s): widget_form, widget_chat, template, whatsapp, whatsapp_web, telegram, facebook, agent. 'unassigned' for contacts not captured from chat.",
+  })
+  @IsOptional()
+  @Transform(({ value }) => toArray(value))
+  @IsArray()
+  channel?: string[] = [];
+
   @ApiPropertyOptional({ default: false, description: "Show archived instead of active." })
   @IsOptional()
   @Transform(({ value }) => toBool(value))

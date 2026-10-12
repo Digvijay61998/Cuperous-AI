@@ -3,78 +3,105 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
-  Patch,
   Post,
   Query,
 } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
-import { Public } from "src/auth/Public/public.decorator";
 import { CreateScrapeDto } from "./dto/create-scraper.dto";
 import { SearchParamDto } from "./dto/search-param.dto";
 import { ScraperService } from "./scraper.service";
-import { UpdateScrapeDto } from "./dto/UpdateScraperDto.dto";
+import { CurrentUser } from "src/util/current-user.decorator";
+import { TenantContext } from "src/common/tenant/tenant-context";
+import { TenantScopeService } from "src/common/tenant/tenant-scope.service";
+import { Roles } from "src/common/decorators/roles.decorator";
+import { ORG_STAFF } from "src/common/enums/role.enum";
+
+/**
+ * Website scraping into a bot's knowledge base. Previously public (anyone could
+ * scrape into, or read, any tenant's knowledge base). Now ORG_ADMIN /
+ * ORG_MANAGER only; `botId`/`clientId` must be a bot of the caller's org and
+ * reads are limited to scrapes of the org's bots.
+ */
 @Controller("scraper")
 @ApiTags("Scraper")
-// @ApiSecurity('bearer')
+@ApiSecurity("bearer")
+@Roles(...ORG_STAFF)
 export class ScraperController {
-  constructor(private readonly ScraperService: ScraperService) {}
+  constructor(
+    private readonly ScraperService: ScraperService,
+    private readonly tenantScope: TenantScopeService
+  ) {}
+
+  /** Forces clientId/botId to a bot the caller owns (canonical _id). */
+  private async ownedBot(user: TenantContext, body: any) {
+    const ref = body?.botId || body?.clientId;
+    const bot = await this.tenantScope.assertBotInOrg(user, ref);
+    const id = String(bot._id);
+    return { botId: id, clientId: id };
+  }
+
+  private async assertScrapeOwned(id: string, user: TenantContext) {
+    const scrape: any = await this.ScraperService.findOne(id);
+    const ref = scrape?.botId || scrape?.clientId;
+    if (!scrape || !ref || !(await this.tenantScope.isBotInOrg(user, ref))) {
+      throw new NotFoundException("Scrape not found");
+    }
+    return scrape;
+  }
 
   @Post()
-  @Public()
-  async create(@Body() CreateScrapeDto: CreateScrapeDto) {
-    return await this.ScraperService.create(CreateScrapeDto);
+  async create(
+    @Body() dto: CreateScrapeDto,
+    @CurrentUser() user: TenantContext
+  ) {
+    return await this.ScraperService.create({
+      ...dto,
+      ...(await this.ownedBot(user, dto)),
+    } as any);
   }
 
   @Get()
-  @Public()
-  async findAll(@Query() query: SearchParamDto) {
-    return await this.ScraperService.findAll(query);
+  async findAll(
+    @Query() query: SearchParamDto,
+    @CurrentUser() user: TenantContext
+  ) {
+    const ids = await this.tenantScope.orgBotIdStrings(user);
+    return await this.ScraperService.findAll(query, ids);
   }
 
   @Get("params")
-  // @Public()
   getParams() {
     return this.ScraperService.getParams();
   }
 
-  // @Patch(':id')
-  // @Public()
-  // async update(
-  //   @Param('id') id: string,
-  //   @Body() updateScrapeDto: UpdateScrapeDto,
-  // ) {
-  //   return await this.ScraperService.update(id, updateScrapeDto);
-  // }
-
-  // @Patch('/scrape/:id')
-  // @Public()
-  // async updateScrape(
-  //   @Param('id') id: string,
-  //   @Body() CreateScrapeDto: CreateScrapeDto,
-  // ) {
-  //   return await this.ScraperService.updateScrape(id, CreateScrapeDto);
-  // }
-
-  @Get(':id')
-  @Public()
-  async findOne(@Param('id') id: string) {
-    return await this.ScraperService.findOne(id);
+  @Get(":id")
+  async findOne(@Param("id") id: string, @CurrentUser() user: TenantContext) {
+    return await this.assertScrapeOwned(id, user);
   }
 
-  // Push a scraped record's content into the AI knowledge base.
+  /** Push a scraped record's content into the AI knowledge base. */
   @Post(":id/ingest")
-  @Public()
   async ingest(
     @Param("id") id: string,
-    @Body()
-    body: { clientId?: string; botId?: string; companyName?: string }
+    @Body() body: { clientId?: string; botId?: string; companyName?: string },
+    @CurrentUser() user: TenantContext
   ) {
-    return await this.ScraperService.ingestToKnowledgeBase(id, body || {});
+    const scrape = await this.assertScrapeOwned(id, user);
+    const target =
+      body?.botId || body?.clientId
+        ? await this.ownedBot(user, body)
+        : { botId: scrape.botId, clientId: scrape.clientId };
+    return await this.ScraperService.ingestToKnowledgeBase(id, {
+      companyName: body?.companyName,
+      ...target,
+    });
   }
 
   @Delete(":id")
-  remove(@Param("id") id: string) {
+  async remove(@Param("id") id: string, @CurrentUser() user: TenantContext) {
+    await this.assertScrapeOwned(id, user);
     return this.ScraperService.remove(id);
   }
 }

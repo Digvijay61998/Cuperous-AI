@@ -1,0 +1,482 @@
+<!doctype html>
+<!--
+  myKONE Assistant · 2-minute product demo.
+  Deterministic timeline: window.seek(t) renders the frame at t seconds, so the
+  recorder (record.mjs) can capture every frame exactly. Open in a browser and
+  press Space to preview in real time.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>myKONE Assistant · Demo</title>
+<style>
+  :root {
+    --bg: #050914; --navy: #0b1530; --blue: #1450f5; --cyan: #22d3ee; --violet: #8b5cf6;
+    --text: #e8eeff; --muted: #8a9bc7; --green: #34d399; --amber: #fbbf24; --red: #f87171;
+    --glass: rgba(20, 34, 72, 0.55); --line: rgba(120, 160, 255, 0.22);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg);
+    font-family: "Noto Sans", "DejaVu Sans", sans-serif; color: var(--text); }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  canvas#bg { position: absolute; inset: 0; }
+  .grid { position: absolute; left: -50%; right: -50%; bottom: -10%; height: 60%;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px),
+                      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 80px 80px; transform: perspective(600px) rotateX(62deg);
+    mask-image: linear-gradient(to top, rgba(0,0,0,.9), transparent 85%); opacity: .55; }
+  .glow { position: absolute; border-radius: 50%; filter: blur(120px); opacity: .45; }
+  .scene { position: absolute; inset: 0; opacity: 0; }
+  .center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  h1 { font-size: 108px; font-weight: 800; letter-spacing: -2px; line-height: 1.05; }
+  h2 { font-size: 64px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
+  .grad { background: linear-gradient(90deg, #fff 0%, var(--cyan) 45%, var(--violet) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { font-size: 34px; color: var(--muted); margin-top: 28px; }
+  .kicker { font-size: 22px; letter-spacing: 8px; text-transform: uppercase; color: var(--cyan); margin-bottom: 24px; }
+  .glass { background: var(--glass); border: 1px solid var(--line); border-radius: 28px;
+    backdrop-filter: blur(18px); box-shadow: 0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06); }
+
+  /* ---------- orb (the assistant) ---------- */
+  .orb { position: relative; width: 260px; height: 260px; }
+  .orb .core { position: absolute; inset: 50px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff 0%, #9be8ff 14%, var(--cyan) 32%, var(--blue) 62%, #0a1440 100%);
+    box-shadow: 0 0 80px var(--cyan), 0 0 160px rgba(20,80,245,.7); }
+  .orb .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(34,211,238,.55); }
+  .orb .ring.r2 { inset: 18px; border-color: rgba(139,92,246,.55); border-style: dashed; }
+  .orb .ring.r3 { inset: -26px; border-color: rgba(34,211,238,.18); }
+
+  /* ---------- problem cards ---------- */
+  .cards { display: flex; gap: 36px; margin-top: 70px; }
+  .card { width: 470px; padding: 40px; text-align: left; }
+  .card .ic { font-size: 54px; }
+  .card h3 { font-size: 34px; margin: 18px 0 12px; }
+  .card p { font-size: 24px; color: var(--muted); line-height: 1.45; }
+
+  /* ---------- chat scene ---------- */
+  .portal { position: absolute; left: 90px; top: 110px; width: 1020px; height: 860px; padding: 0; overflow: hidden; }
+  .portal .bar { height: 76px; display: flex; align-items: center; gap: 34px; padding: 0 34px;
+    background: rgba(5,12,32,.75); border-bottom: 1px solid var(--line); font-size: 22px; color: var(--muted); }
+  .portal .bar b { color: #fff; font-size: 28px; letter-spacing: 3px; margin-right: 20px; }
+  .portal .bar .on { color: #fff; border-bottom: 3px solid var(--cyan); padding-bottom: 6px; }
+  .portal .body { padding: 36px; }
+  .portal .title { font-size: 30px; font-weight: 700; margin-bottom: 26px; }
+  .tl { display: flex; flex-direction: column; gap: 14px; }
+  .ms { display: flex; align-items: center; gap: 20px; font-size: 23px; color: var(--muted); }
+  .ms .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); flex: none; }
+  .ms.done .dot { background: var(--green); border-color: var(--green); box-shadow: 0 0 14px var(--green); }
+  .ms.done { color: var(--text); }
+  .ms.active .dot { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 22px var(--cyan); }
+  .ms.active { color: #fff; font-weight: 700; }
+  .ms .date { margin-left: auto; font-size: 20px; color: var(--muted); font-weight: 400; }
+  .rows { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; align-items: center; gap: 18px; padding: 20px 24px; border-radius: 16px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--line); font-size: 23px; }
+  .row .name { flex: 1; }
+  .pill { padding: 8px 18px; border-radius: 999px; font-size: 18px; font-weight: 700; color: #06101f; }
+  .pill.g { background: var(--green); } .pill.a { background: var(--amber); }
+  .pill.r { background: var(--red); } .pill.c { background: var(--cyan); }
+
+  .chat { position: absolute; right: 90px; top: 80px; width: 640px; height: 920px; display: flex; flex-direction: column; overflow: hidden; }
+  .chat .head { display: flex; align-items: center; gap: 18px; padding: 24px 28px;
+    background: linear-gradient(90deg, rgba(20,80,245,.55), rgba(139,92,246,.35)); border-bottom: 1px solid var(--line); }
+  .chat .head .mini { width: 56px; height: 56px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff, var(--cyan) 35%, var(--blue) 75%); box-shadow: 0 0 26px var(--cyan); }
+  .chat .head h4 { font-size: 26px; } .chat .head span { font-size: 17px; color: #bfe9ff; }
+  .chat .msgs { flex: 1; padding: 26px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; justify-content: flex-end; }
+  .msg { max-width: 86%; padding: 18px 22px; border-radius: 22px; font-size: 21px; line-height: 1.45; white-space: pre-line;
+    transform-origin: bottom left; }
+  .msg.bot { align-self: flex-start; background: rgba(255,255,255,.07); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+  .msg.user { align-self: flex-end; background: linear-gradient(135deg, var(--blue), var(--violet)); border-bottom-right-radius: 6px; transform-origin: bottom right; }
+  .msg .tag { display: inline-block; font-size: 15px; font-weight: 800; letter-spacing: 2px; color: var(--cyan); margin-right: 6px; }
+  .msg .btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .msg .btns span { padding: 9px 16px; border-radius: 999px; border: 1px solid var(--cyan); color: var(--cyan); font-size: 17px; }
+  .typing { align-self: flex-start; padding: 18px 22px; border-radius: 22px; background: rgba(255,255,255,.07); border: 1px solid var(--line); display: flex; gap: 8px; }
+  .typing i { width: 11px; height: 11px; border-radius: 50%; background: var(--cyan); display: block; }
+  .chat .input { margin: 0 22px 22px; padding: 18px 22px; border-radius: 999px; border: 1px solid var(--line);
+    background: rgba(0,0,0,.25); font-size: 20px; color: var(--muted); display: flex; justify-content: space-between; }
+  .chat .input b { color: var(--cyan); }
+  .caption { position: absolute; left: 90px; bottom: 40px; font-size: 22px; letter-spacing: 6px; text-transform: uppercase; color: var(--cyan); }
+  .caption em { color: var(--muted); font-style: normal; letter-spacing: 2px; text-transform: none; margin-left: 18px; font-size: 22px; }
+
+  /* ---------- pattern / architecture ---------- */
+  .steps { display: flex; gap: 26px; margin-top: 70px; }
+  .step { width: 360px; padding: 40px 30px; }
+  .step .k { font-size: 40px; font-weight: 800; letter-spacing: 4px; }
+  .step .q { font-size: 25px; color: var(--muted); margin-top: 14px; }
+  .arch { position: relative; width: 1600px; height: 640px; margin-top: 40px; }
+  .node { position: absolute; padding: 26px 30px; font-size: 25px; text-align: center; width: 330px; }
+  .node small { display: block; color: var(--muted); font-size: 18px; margin-top: 8px; }
+  svg.wires { position: absolute; inset: 0; overflow: visible; }
+
+  /* ---------- impact ---------- */
+  .stats { display: flex; gap: 40px; margin-top: 70px; }
+  .stat { width: 380px; padding: 44px 30px; }
+  .stat .n { font-size: 92px; font-weight: 800; }
+  .stat .l { font-size: 25px; color: var(--muted); margin-top: 6px; }
+  .phases { display: flex; gap: 22px; margin-top: 60px; }
+  .phase { width: 300px; padding: 22px; font-size: 22px; }
+  .phase b { display: block; color: var(--cyan); font-size: 18px; letter-spacing: 3px; margin-bottom: 6px; }
+
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.65) 100%); }
+  .scan { position: absolute; inset: 0; pointer-events: none; opacity: .05;
+    background: repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 4px); }
+  #flash { position: absolute; inset: 0; background: #bfefff; opacity: 0; pointer-events: none; }
+  .progress { position: absolute; left: 0; bottom: 0; height: 4px; background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="bg" width="1920" height="1080"></canvas>
+  <div class="glow" id="g1" style="width:900px;height:900px;background:#1450f5;left:-200px;top:-300px"></div>
+  <div class="glow" id="g2" style="width:800px;height:800px;background:#8b5cf6;right:-200px;bottom:-300px"></div>
+  <div class="grid" id="grid"></div>
+
+  <!-- 1 · Intro -->
+  <section class="scene center" id="s-intro">
+    <div class="orb" id="orb1"><div class="ring r3"></div><div class="ring"></div><div class="ring r2"></div><div class="core"></div></div>
+    <div class="kicker" style="margin-top:60px" id="intro-k">KONE × JarCube</div>
+    <h1 class="grad" id="intro-t">myKONE Assistant</h1>
+    <div class="sub" id="intro-s">Know · Track · Act · Hand over, in one conversation.</div>
+  </section>
+
+  <!-- 2 · Problem -->
+  <section class="scene center" id="s-problem">
+    <div class="kicker">Today</div>
+    <h2>The information exists.<br><span class="grad">Getting to it takes effort.</span></h2>
+    <div class="cards">
+      <div class="card glass" id="pc1"><div class="ic">🧭</div><h3>Hard to find</h3><p>Customers don't always know where things are in myKONE or how to use them.</p></div>
+      <div class="card glass" id="pc2"><div class="ic">🧩</div><h3>Scattered status</h3><p>Sales orders, screens and long milestone texts. Customer tasks get missed.</p></div>
+      <div class="card glass" id="pc3"><div class="ic">⏳</div><h3>Slow help</h3><p>Calls, emails and tickets that take hours to days, in office hours only.</p></div>
+    </div>
+  </section>
+
+  <!-- 3 · Meet -->
+  <section class="scene center" id="s-meet">
+    <div class="orb" id="orb2" style="transform:scale(1.25)"><div class="ring r3"></div><div class="ring"></div><div class="ring r2"></div><div class="core"></div></div>
+    <h2 style="margin-top:80px">One assistant. <span class="grad">Every myKONE page.</span></h2>
+    <div class="sub">It knows the portal and the customer's own data, and it knows when to call a person.</div>
+  </section>
+
+  <!-- 4 · Chat demo (shared shell, content swaps per beat) -->
+  <section class="scene" id="s-chat">
+    <div class="portal glass" id="portal">
+      <div class="bar"><b>KONE</b><span data-tab="Home">Home</span><span data-tab="Equipment">Equipment</span><span data-tab="Delivery">Delivery</span><span data-tab="Tenders">Tenders</span><span data-tab="Reports">Reports</span><span data-tab="Invoices">Invoices</span></div>
+      <div class="body" id="portal-body"></div>
+    </div>
+    <div class="chat glass">
+      <div class="head"><div class="mini" id="mini"></div><div><h4>myKONE Assistant</h4><span>● Online · powered by JarCube</span></div></div>
+      <div class="msgs" id="msgs"></div>
+      <div class="input"><span id="typed">Ask about your projects, equipment, tenders…</span><b>➤</b></div>
+    </div>
+    <div class="caption" id="caption"></div>
+  </section>
+
+  <!-- 5 · Pattern -->
+  <section class="scene center" id="s-pattern">
+    <div class="kicker">One answer pattern</div>
+    <h2>Not just <span class="grad">where it is.</span> What to do next.</h2>
+    <div class="steps">
+      <div class="step glass" id="st1"><div class="k" style="color:var(--cyan)">STATUS</div><div class="q">Where is it now?</div></div>
+      <div class="step glass" id="st2"><div class="k" style="color:#7aa2ff">NEXT</div><div class="q">What happens next?</div></div>
+      <div class="step glass" id="st3"><div class="k" style="color:var(--violet)">ACTION</div><div class="q">What do I need to do?</div></div>
+      <div class="step glass" id="st4"><div class="k" style="color:var(--amber)">IMPACT</div><div class="q">What if I don't?</div></div>
+    </div>
+    <div class="sub" style="margin-top:50px">Delivery · Equipment · Tenders · Reports · Invoices</div>
+  </section>
+
+  <!-- 6 · Architecture / trust -->
+  <section class="scene center" id="s-arch">
+    <div class="kicker">Safe by design</div>
+    <h2>KONE stays in control of its data</h2>
+    <div class="arch">
+      <svg class="wires" id="wires" viewBox="0 0 1600 640"></svg>
+      <div class="node glass" style="left:0;top:250px">👤 Signed-in user<small>myKONE portal</small></div>
+      <div class="node glass" style="left:440px;top:250px;border-color:var(--cyan)">🤖 JarCube Assistant<small>understands &amp; routes</small></div>
+      <div class="node glass" style="left:1000px;top:40px">📚 Knowledge base<small>approved guides &amp; FAQs</small></div>
+      <div class="node glass" style="left:1000px;top:250px;border-color:var(--green)">🔐 myKONE connector<small>user's own rights · runs at KONE</small></div>
+      <div class="node glass" style="left:1000px;top:460px;border-color:var(--amber)">🙋 KONE specialists<small>live takeover &amp; tickets</small></div>
+    </div>
+  </section>
+
+  <!-- 7 · Impact -->
+  <section class="scene center" id="s-impact">
+    <div class="kicker">Impact</div>
+    <h2>From a ticket queue <span class="grad">to an instant answer</span></h2>
+    <div class="stats">
+      <div class="stat glass"><div class="n grad" id="n1">24×7</div><div class="l">always available</div></div>
+      <div class="stat glass"><div class="n grad" id="n2">0 s</div><div class="l">to the first answer</div></div>
+      <div class="stat glass"><div class="n grad" id="n3">0 h</div><div class="l">saved / month*</div></div>
+    </div>
+    <div class="phases">
+      <div class="phase glass"><b>PHASE 1</b>Know</div><div class="phase glass"><b>PHASE 2</b>Track &amp; Act</div>
+      <div class="phase glass"><b>PHASE 3</b>Full portal</div><div class="phase glass"><b>PHASE 4</b>Scale</div>
+    </div>
+    <div class="sub" style="font-size:20px;margin-top:30px">*200 queries × 10 min, example estimate</div>
+  </section>
+
+  <!-- 8 · Outro -->
+  <section class="scene center" id="s-outro">
+    <div class="orb" id="orb3"><div class="ring r3"></div><div class="ring"></div><div class="ring r2"></div><div class="core"></div></div>
+    <h1 class="grad" style="margin-top:60px;font-size:92px">Ask once. Know what's next.</h1>
+    <div class="sub">myKONE Assistant · powered by JarCube · Pilot ready</div>
+  </section>
+
+  <div class="vignette"></div><div class="scan"></div><div id="flash"></div>
+  <div class="progress" id="progress"></div>
+</div>
+
+<script>
+const DURATION = 120;
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const outBack = (t) => { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+
+// ------------------------------------------------------------------ scenes
+const SCENES = [
+  ["s-intro", 0, 9], ["s-problem", 9, 21], ["s-meet", 21, 28],
+  ["s-chat", 28, 92], ["s-pattern", 92, 101], ["s-arch", 101, 109],
+  ["s-impact", 109, 116], ["s-outro", 116, 120],
+];
+
+// ------------------------------------------------------------------ chat beats
+// Each beat: time window, portal tab + body, caption, and messages with times.
+const DELIVERY_BODY = `
+  <div class="title">Riverside Offices · Elevator 41234561</div>
+  <div class="tl">
+    ${[["Order confirmed","12 Jun","done"],["Drawings approved","24 Sep","done"],["Production started","est. 10 Oct","active"],
+       ["Equipment shipped","est. 4 Nov",""],["Delivered to site","est. 8 Nov",""],["Installation started","est. 12 Nov",""],
+       ["Installation completed","",""],["Final inspection","",""],["Handed over","",""]]
+      .map(([n,d,c]) => `<div class="ms ${c}"><div class="dot"></div>${n}<span class="date">${d}</span></div>`).join("")}
+  </div>`;
+const TENDER_BODY = `
+  <div class="title">Active tenders</div>
+  <div class="rows">
+    <div class="row"><span class="name">Door operator repair · Tower A</span><span class="pill a">Pending approval</span></div>
+    <div class="row"><span class="name">Escalator step chain · City Mall</span><span class="pill r">Waiting for PO number</span></div>
+    <div class="row"><span class="name">Car lighting upgrade · Tower B</span><span class="pill c">Change requested</span></div>
+    <div class="row"><span class="name">Rope replacement · Harbor Towers</span><span class="pill g">Approved</span></div>
+  </div>`;
+const EQUIP_BODY = `
+  <div class="title">Elevator 41230018 · Tower A, main lobby</div>
+  <div class="rows">
+    <div class="row"><span class="name">Status</span><span class="pill r">Out of service</span></div>
+    <div class="row"><span class="name">Open work order</span><span class="pill a">Callout</span></div>
+    <div class="row"><span class="name">Technician</span><span class="pill c">On the way</span></div>
+    <div class="row"><span class="name">Last maintenance visit</span><span>29 Sep</span></div>
+  </div>`;
+const HOWTO_BODY = `
+  <div class="title">Team</div>
+  <div class="rows">
+    <div class="row"><span class="name">Anna Virtanen · Admin</span><span class="pill g">Active</span></div>
+    <div class="row"><span class="name">Mark Jensen · Business user</span><span class="pill g">Active</span></div>
+    <div class="row"><span class="name">+ Invite user</span><span style="color:var(--cyan)">→</span></div>
+  </div>`;
+const HANDOVER_BODY = `
+  <div class="title">Inspection report · Elevator 41230018</div>
+  <div class="rows">
+    <div class="row"><span class="name">Car door safety contact worn</span><span class="pill r">Safety issue</span></div>
+    <div class="row"><span class="name">Pit lighting below required level</span><span class="pill a">Active</span></div>
+    <div class="row"><span class="name">Machine room labelling missing</span><span class="pill c">Active</span></div>
+  </div>`;
+
+const T = (s) => `<span class="tag">${s}</span>`;
+const BEATS = [
+  { from: 28, to: 41, tab: "Delivery", body: DELIVERY_BODY, cap: ["Track", "Delivery status in one answer"], msgs: [
+    [29.0, "user", "Where is my elevator 41234561?"],
+    [31.2, "bot", `${T("STATUS")} Production started. Drawings were approved 24 Sep.\n${T("NEXT")} Equipment shipped, est. 4 Nov.\nOn schedule ✅`],
+    [34.6, "user", "Do I need to do anything?"],
+    [36.6, "bot", `${T("ACTION")} 2 tasks before shipment:\n1. Confirm installation & handover dates\n2. Prepare the shaft to KONE's layout\n${T("IMPACT")} Unconfirmed dates can delay your installation slot.`, ["Open project", "Remind me", "Project Manager"]],
+  ]},
+  { from: 41, to: 53, tab: "Tenders", body: TENDER_BODY, cap: ["Act", "What's waiting for you, one click to finish"], msgs: [
+    [42.0, "user", "Do any tenders need something from me?"],
+    [44.2, "bot", "Yes, 2 tenders:\n• Door operator repair, Tower A: Pending approval\n• Escalator step chain, City Mall: Waiting for PO number"],
+    [47.4, "user", "What happens if I don't add the PO?"],
+    [49.2, "bot", "KONE can't schedule the repair until the PO number is added. It takes about a minute.", ["Add PO number", "Review tender"]],
+  ]},
+  { from: 53, to: 66, tab: "Equipment", body: EQUIP_BODY, cap: ["Track + Safety", "Live equipment status, emergencies go to people"], msgs: [
+    [54.0, "user", "Why is this elevator not working?"],
+    [56.0, "bot", "Elevator 41230018 has been out of service since 10:12. A callout is open and the technician is on the way."],
+    [59.4, "user", "Someone is stuck in the lift!"],
+    [61.2, "bot", "🚨 Call KONE's 24/7 service line now. If you're inside the car, press the alarm button.\nI'm alerting a KONE specialist as well. Urgent ticket created."],
+  ]},
+  { from: 66, to: 78, tab: "Home", body: HOWTO_BODY, cap: ["Know", "Answers from approved myKONE content only"], msgs: [
+    [67.0, "user", "How do I add a new user to my company account?"],
+    [69.2, "bot", "Admins can invite users under Team → Invite user. Pick a role (admin, business or basic user) and the sites they may see. The invite arrives by email."],
+    [72.6, "user", "What does 'Waiting for PO number' mean?"],
+    [74.4, "bot", "You approved the tender. KONE now needs your purchase order number to plan the work."],
+  ]},
+  { from: 78, to: 92, tab: "Reports", body: HANDOVER_BODY, cap: ["Hand over", "A specialist joins with the full context"], msgs: [
+    [79.0, "user", "Can KONE fix all three findings?"],
+    [81.0, "bot", "I'll pass this to your KONE contact with the report attached. Ticket #SR-1182 created."],
+    [83.6, "bot", "Connecting you with a KONE specialist…"],
+    [85.6, "agent", "Hi, I'm Laura from KONE. I've got your report. I'll send one repair tender for all three findings today."],
+  ]},
+];
+
+// ------------------------------------------------------------------ background particles
+const cv = $("#bg"), cx = cv.getContext("2d");
+let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+const P = Array.from({ length: 140 }, () => ({ x: rnd() * 1920, y: rnd() * 1080, z: 0.3 + rnd() * 1.2, p: rnd() * 6.28 }));
+function drawBg(t) {
+  cx.clearRect(0, 0, 1920, 1080);
+  const pts = P.map((q) => ({ x: (q.x + t * 14 * q.z) % 1960 - 20, y: q.y + Math.sin(t * 0.4 + q.p) * 22 * q.z, z: q.z }));
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y, d = dx * dx + dy * dy;
+    if (d < 16000) { cx.strokeStyle = `rgba(90,150,255,${(1 - d / 16000) * 0.16})`; cx.lineWidth = 1;
+      cx.beginPath(); cx.moveTo(pts[i].x, pts[i].y); cx.lineTo(pts[j].x, pts[j].y); cx.stroke(); }
+  }
+  for (const q of pts) { cx.fillStyle = `rgba(160,220,255,${0.25 + q.z * 0.35})`; cx.beginPath(); cx.arc(q.x, q.y, q.z * 1.8, 0, 6.28); cx.fill(); }
+}
+
+// ------------------------------------------------------------------ helpers
+function sceneAlpha(t, a, b, fade = 0.8) { return clamp(Math.min((t - a) / fade, (b - t) / fade)); }
+function orb(el, t, k = 1) {
+  const rings = el.querySelectorAll(".ring");
+  rings[0].style.transform = `rotate(${t * 20}deg) scale(${1 + 0.04 * Math.sin(t * 2)})`;
+  rings[1].style.transform = `rotate(${t * 40}deg)`;
+  rings[2].style.transform = `rotate(${-t * 60}deg)`;
+  el.querySelector(".core").style.transform = `scale(${(1 + 0.05 * Math.sin(t * 3.2)) * k})`;
+}
+function rise(el, p, dist = 40) {
+  const e = ease(clamp(p)); el.style.opacity = e; el.style.transform = `translateY(${(1 - e) * dist}px)`;
+}
+
+let lastBeat = -1;
+function renderChat(t) {
+  const bi = BEATS.findIndex((b) => t >= b.from && t < b.to);
+  const beat = BEATS[bi === -1 ? (t < BEATS[0].from ? 0 : BEATS.length - 1) : bi];
+  if (bi !== lastBeat) {
+    lastBeat = bi;
+    $("#portal-body").innerHTML = beat.body;
+    document.querySelectorAll(".bar span").forEach((s) => s.classList.toggle("on", s.dataset.tab === beat.tab));
+    $("#caption").innerHTML = `${beat.cap[0]}<em>${beat.cap[1]}</em>`;
+  }
+  // portal body + caption entrance per beat
+  const bp = prog(t, beat.from, beat.from + 0.9);
+  rise($("#portal-body"), bp, 30);
+  rise($("#caption"), prog(t, beat.from + 0.3, beat.from + 1.1), 20);
+  // highlight sweep on milestones / rows
+  document.querySelectorAll("#portal-body .ms, #portal-body .row").forEach((el, i) => {
+    const e = ease(prog(t, beat.from + 0.2 + i * 0.12, beat.from + 0.7 + i * 0.12));
+    el.style.opacity = e; el.style.transform = `translateX(${(1 - e) * -30}px)`;
+  });
+
+  // messages
+  const box = $("#msgs"); let html = "";
+  const typedEl = $("#typed");
+  typedEl.textContent = "Ask about your projects, equipment, tenders…"; typedEl.style.color = "";
+  for (let k = 0; k < beat.msgs.length; k++) {
+    const [at, who, txt, btns] = beat.msgs[k];
+    if (who === "user") {
+      // typing in the input box shortly before the user message is sent
+      const typeStart = at - 1.6;
+      if (t >= typeStart && t < at) {
+        const n = Math.floor(txt.length * prog(t, typeStart, at - 0.15));
+        typedEl.textContent = txt.slice(0, n) + (Math.floor(t * 4) % 2 ? "|" : " ");
+        typedEl.style.color = "#fff";
+      }
+    } else if (t >= at - 1.3 && t < at) {
+      html += `<div class="typing" style="opacity:${ease(prog(t, at - 1.3, at - 1.0))}">${[0,1,2].map(i =>
+        `<i style="transform:translateY(${-6 * Math.max(0, Math.sin((t * 9) - i))}px)"></i>`).join("")}</div>`;
+    }
+    if (t >= at) {
+      const p = outBack(clamp((t - at) / 0.45));
+      const cls = who === "agent" ? "bot" : who;
+      const extra = who === "agent" ? ' style="border-color:var(--amber)"' : "";
+      const label = who === "agent" ? `<div style="font-size:15px;color:var(--amber);font-weight:800;letter-spacing:2px;margin-bottom:6px">KONE SPECIALIST · LIVE</div>` : "";
+      // reveal bot text progressively (streaming feel)
+      const shown = who === "user" ? txt : revealHTML(txt, prog(t, at, at + 1.4));
+      const b = btns && t > at + 1.4 ? `<div class="btns">${btns.map((x) => `<span>${x}</span>`).join("")}</div>` : "";
+      html += `<div class="msg ${cls}"${extra} data-p="${p}">${label}${shown}${b}</div>`;
+    }
+  }
+  box.innerHTML = html;
+  box.querySelectorAll(".msg").forEach((m) => {
+    const p = parseFloat(m.dataset.p); m.style.opacity = clamp(p * 1.4); m.style.transform = `scale(${0.85 + 0.15 * p})`;
+  });
+  const mini = $("#mini");
+  const thinking = beat.msgs.some(([at, who]) => who !== "user" && t >= at - 1.3 && t < at + 1.4);
+  mini.style.boxShadow = `0 0 ${26 + (thinking ? 22 * (1 + Math.sin(t * 10)) : 0)}px var(--cyan)`;
+}
+// Reveal text by characters while keeping <span> tags intact.
+function revealHTML(html, p) {
+  if (p >= 1) return html;
+  const parts = html.split(/(<[^>]+>)/); const total = parts.reduce((n, s) => n + (s.startsWith("<") ? 0 : s.length), 0);
+  let budget = Math.floor(total * p), out = "";
+  for (const s of parts) {
+    if (s.startsWith("<")) { out += s; continue; }
+    if (budget <= 0) continue;
+    out += s.slice(0, budget); budget -= s.length;
+  }
+  return out + "▍";
+}
+
+function drawWires(p) {
+  const W = [[330, 320, 440, 320], [770, 300, 1000, 110], [770, 320, 1000, 320], [770, 340, 1000, 530]];
+  const cols = ["#22d3ee", "#7aa2ff", "#34d399", "#fbbf24"];
+  $("#wires").innerHTML = W.map(([x1, y1, x2, y2], i) => {
+    const e = ease(clamp(p * 1.6 - i * 0.18)); const xe = x1 + (x2 - x1) * e, ye = y1 + (y2 - y1) * e;
+    const pulse = (p * 3 + i * 0.3) % 1; const px = x1 + (x2 - x1) * pulse, py = y1 + (y2 - y1) * pulse;
+    return `<line x1="${x1}" y1="${y1}" x2="${xe}" y2="${ye}" stroke="${cols[i]}" stroke-width="3" opacity=".8"/>` +
+      (e >= 1 ? `<circle cx="${px}" cy="${py}" r="8" fill="${cols[i]}" style="filter:drop-shadow(0 0 10px ${cols[i]})"/>` : "");
+  }).join("");
+}
+
+// ------------------------------------------------------------------ master render
+function seek(t) {
+  drawBg(t);
+  $("#g1").style.transform = `translate(${Math.sin(t * 0.2) * 120}px, ${Math.cos(t * 0.15) * 80}px)`;
+  $("#g2").style.transform = `translate(${Math.cos(t * 0.18) * 120}px, ${Math.sin(t * 0.22) * 80}px)`;
+  $("#grid").style.backgroundPosition = `0 ${t * 40}px`;
+  $("#progress").style.width = `${(t / DURATION) * 100}%`;
+
+  for (const [id, a, b] of SCENES) {
+    const el = document.getElementById(id), al = sceneAlpha(t, a, b);
+    el.style.opacity = al; el.style.display = al > 0 ? "" : "none";
+    el.style.transform = `scale(${1 + 0.03 * (1 - al)})`;
+  }
+  // flash on major transitions
+  const cuts = [9, 21, 28, 92, 116];
+  $("#flash").style.opacity = Math.max(...cuts.map((c) => clamp(1 - Math.abs(t - c) / 0.25) * 0.18));
+
+  if (t < 9) {
+    orb($("#orb1"), t, ease(prog(t, 0, 1.6)));
+    rise($("#orb1"), prog(t, 0, 1.4), 0);
+    rise($("#intro-k"), prog(t, 1.2, 2.2)); rise($("#intro-t"), prog(t, 1.8, 3.0), 60); rise($("#intro-s"), prog(t, 2.8, 3.8));
+  } else if (t < 21) {
+    ["#pc1", "#pc2", "#pc3"].forEach((s, i) => rise($(s), prog(t, 10.5 + i * 1.6, 11.6 + i * 1.6), 70));
+  } else if (t < 28) {
+    orb($("#orb2"), t, 1.25);
+  } else if (t < 92) {
+    rise($("#portal"), prog(t, 28, 29), 50);
+    renderChat(t);
+  } else if (t < 101) {
+    ["#st1", "#st2", "#st3", "#st4"].forEach((s, i) => rise($(s), prog(t, 93 + i * 0.9, 93.8 + i * 0.9), 60));
+  } else if (t < 109) {
+    drawWires(prog(t, 101.6, 106));
+  } else if (t < 116) {
+    $("#n2").textContent = `${Math.max(1, Math.round(5 - 4 * ease(prog(t, 110, 112))))} s`;
+    $("#n3").textContent = `${Math.round(33 * ease(prog(t, 110, 113)))} h`;
+  } else {
+    orb($("#orb3"), t, 1);
+  }
+}
+window.seek = seek; window.DURATION = DURATION;
+
+// Real-time preview: open the file in a browser and press Space.
+let playing = false, t0 = 0, start = 0;
+seek(0);
+addEventListener("keydown", (e) => {
+  if (e.code !== "Space") return;
+  playing = !playing; start = performance.now() - t0 * 1000;
+  const loop = () => { if (!playing) return; t0 = (performance.now() - start) / 1000; if (t0 > DURATION) t0 = 0, start = performance.now();
+    seek(t0); requestAnimationFrame(loop); };
+  loop();
+});
+</script>
+</body>
+</html>

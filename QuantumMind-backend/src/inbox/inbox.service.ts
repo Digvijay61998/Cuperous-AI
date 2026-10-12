@@ -6,8 +6,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { AgentService } from 'src/agent/agent.service';
+import { LIVE_CHAT_CONNECTED } from 'src/incident/constants';
 import { JwtPayload } from 'src/auth/strategy/jwt.strategy';
 import { Role } from 'src/common/enums/role.enum';
 import { ChannelThreadService } from 'src/channel-thread/channel-thread.service';
@@ -19,6 +20,7 @@ import { ConversationStatusEnum } from 'src/conversation/enums/conversation-stat
 import { ConversationTypeEnum } from 'src/conversation/enums/conversation-type.enum';
 import { pendingExternalId } from 'src/conversation/entities/chat.entity';
 import { SocketStateService } from 'src/socket/socket-state.service';
+import { TenantScopeService } from 'src/common/tenant/tenant-scope.service';
 import { generateId } from 'src/util';
 import { BotControlDto } from './dto/bot-control.dto';
 import { SendInboxMessageDto } from './dto/send-message.dto';
@@ -43,6 +45,19 @@ import {
   toMessageView,
   toThreadView,
 } from './inbox.mapper';
+
+/** 409 for a takeover/release blocked by another owner (R7.1, R7.6). */
+function ownedByOther(owner: { id: string; name: string } | null) {
+  return new HttpException(
+    {
+      message: owner ? `${owner.name} is handling this chat` : 'This thread is assigned to another agent',
+      reason: 'thread_owned_by_other_agent',
+      ownerName: owner?.name,
+      ownerId: owner?.id,
+    },
+    HttpStatus.CONFLICT,
+  );
+}
 
 /**
  * Outer bound on one agent reply's HTTP request.
@@ -94,6 +109,7 @@ export class InboxService {
     private readonly eventEmitter: EventEmitter2,
     private readonly inboxEventsService: InboxEventsService,
     private readonly socketStateService: SocketStateService,
+    private readonly tenantScope: TenantScopeService,
   ) {}
 
   /**
@@ -110,12 +126,26 @@ export class InboxService {
    * doing double duty.
    */
   private async scopeFilter(user: JwtPayload): Promise<string[] | null> {
-    if (user?.role === Role.ORG_ADMIN) return null;
-
     try {
-      const agent = await this.agentService.findOne(user._id);
+      // Org staff see every bot of THEIR organization — never `null`
+      // (unscoped), which would expose every tenant's threads.
+      if (user?.role === Role.ORG_ADMIN || user?.role === Role.ORG_MANAGER) {
+        return (await this.tenantScope.orgBotIdStrings(user as any)) ?? [];
+      }
+
+      if (user?.role !== Role.AGENT) return [];
+
+      // Agents see only their assigned bots, intersected with their org's bots
+      // so a stale assignment to a foreign bot cannot widen the scope.
+      const [agent, orgBots] = await Promise.all([
+        this.agentService.findOne(user._id),
+        this.tenantScope.orgBotIdStrings(user as any),
+      ]);
+      const allowed = new Set(orgBots ?? []);
       const bots = (agent?.assignedBots || []) as any[];
-      return bots.map((b) => (b?._id ? b._id.toString() : b.toString()));
+      return bots
+        .map((b) => (b?._id ? b._id.toString() : b.toString()))
+        .filter((id) => allowed.has(id));
     } catch (error) {
       // Fail CLOSED. A lookup failure must not silently widen the scope to
       // every tenant's threads.
@@ -267,6 +297,8 @@ export class InboxService {
     const rows = await this.conversationService.getThreadMessages(threadId, {
       limit: limit + 1,
       before: query.before ? new Date(query.before) : undefined,
+      // Widget threads are keyed by their conversation id (R9.1).
+      conversationId: thread.channel === 'widget' && thread.chatId ? String(thread.chatId) : undefined,
     });
 
     // getThreadMessages returns oldest-first, so the extra probe row for
@@ -279,7 +311,12 @@ export class InboxService {
       hasMore && oldest?.time ? oldest.time.toISOString() : null;
 
     return {
-      messages: messages.map(toMessageView),
+      messages: messages.map((m) =>
+        toMessageView(m, {
+          botId: this.threadBotId(thread),
+          visitorId: (thread as any).visitor?._id ?? (thread as any).visitor,
+        }),
+      ),
       nextCursor,
       hasMore,
       historyExhausted: thread.historyExhausted === true,
@@ -313,6 +350,24 @@ export class InboxService {
     status: string;
   }> {
     const thread = await this.requireThread(user, threadId);
+
+    // Owner-only replies (R7.2): on an agent-owned thread nobody else may
+    // write, including a previous owner after an override. Nothing is
+    // persisted or delivered on rejection.
+    const ownerId = thread.assignedAgent?._id
+      ? thread.assignedAgent._id.toString()
+      : thread.assignedAgent?.toString();
+    if (thread.handledByAgent && ownerId && ownerId !== String(user._id)) {
+      const a: any = thread.assignedAgent;
+      throw new HttpException(
+        {
+          message: 'Another agent is handling this chat',
+          reason: 'not_thread_owner',
+          ownerName: (a?.name || '').trim() || a?.email || 'another agent',
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
 
     const text = dto.message?.trim();
     if (!text && !dto.mediaUrl) {
@@ -575,6 +630,28 @@ export class InboxService {
     return conversation.id;
   }
 
+  /**
+   * A widget chat became a live chat (Live Chat tab): its Web Chat thread is
+   * owned by the same agent, so the Web Chat view shows who handles it and
+   * another agent's "Take over" is refused instead of splitting the chat.
+   * Never throws; a thread someone else owns is left alone.
+   */
+  @OnEvent(LIVE_CHAT_CONNECTED, { async: true })
+  async onLiveChatConnected(p: { threadId: string; agentId: string }) {
+    try {
+      if (!p?.threadId || !p.agentId) return;
+      const res = await this.channelThreadService.claim(p.threadId, p.agentId);
+      if (res.ok === false || !res.changed) return;
+      const fresh = await this.channelThreadService.findByIdPopulated(p.threadId);
+      if (!fresh) return;
+      await this.inboxEventsService
+        .publishThreadUpdated({ botId: this.threadBotId(fresh), channel: fresh.channel, thread: toThreadView(fresh) })
+        .catch(() => undefined);
+    } catch {
+      // Best effort: the live chat itself is already connected.
+    }
+  }
+
   /** Bot id from a thread whose `bot` may or may not be populated. */
   private threadBotId(thread: any): string | undefined {
     if (!thread?.bot) return undefined;
@@ -611,31 +688,38 @@ export class InboxService {
       });
     }
 
+    let changed = true;
     if (hasAction) {
-      const currentOwner = thread.assignedAgent?._id
-        ? thread.assignedAgent._id.toString()
-        : thread.assignedAgent?.toString();
-
-      // A plain agent must not seize a thread a colleague is handling; an admin
-      // must be able to, or a thread held by someone who went offline is stuck.
-      if (
-        currentOwner &&
-        currentOwner !== user._id &&
-        user.role !== Role.ORG_ADMIN
-      ) {
-        throw new HttpException(
-          {
-            message: 'This thread is assigned to another agent',
-            reason: 'thread_owned_by_other_agent',
-          },
-          HttpStatus.CONFLICT,
-        );
-      }
-
+      // Takeover and release are single conditional writes (R7.1, R7.6).
+      // Admins get no bypass here (R7.4): stealing a chat is the explicit
+      // override action instead.
       if (dto.action === 'takeover') {
-        await this.channelThreadService.assignToAgent(threadId, user._id);
+        const res = await this.channelThreadService.claim(threadId, user._id);
+        if (res.ok === false) throw ownedByOther(res.owner);
+        changed = res.changed;
+        // Clears the open Handover_Alert (if any) for every recipient.
+        this.eventEmitter.emit('inbox.thread.acknowledged', {
+          threadId,
+          userId: user._id,
+          resolution: 'taken_over',
+        });
       } else {
-        await this.channelThreadService.releaseToBot(threadId);
+        const res = await this.channelThreadService.releaseIfOwner(threadId, user._id);
+        if (res.ok === false) throw ownedByOther(res.owner);
+        changed = res.changed;
+      }
+      if (dto.action === 'release' && changed) {
+        // crm-incident-handover R10.2: the incident stays open; the release is
+        // recorded and a later takeover is announced to the visitor again.
+        if (thread.channel === 'widget' && thread.chatId) {
+          this.eventEmitter.emit('agent.released', {
+            conversationId: String(thread.chatId),
+            agentId: String(user._id),
+            visitorId: thread.visitor?._id
+              ? thread.visitor._id.toString()
+              : thread.visitor?.toString(),
+          });
+        }
       }
     } else {
       await this.channelThreadService.setBotEnabled(threadId, dto.botEnabled);
@@ -649,14 +733,120 @@ export class InboxService {
     // disagreeing would route the next inbound message by stale ownership.
     this.syncSocketStateOwnership(fresh);
 
-    await this.inboxEventsService
-      .publishThreadUpdated({
-        botId: this.threadBotId(fresh),
-        channel: fresh.channel,
-        thread: toThreadView(fresh),
-      })
-      .catch(() => undefined);
+    // crm-incident-handover R19.4: a widget visitor is told the agent's name,
+    // and the open incident becomes agent_active. Widget threads key the
+    // conversation id as chatId.
+    if (dto.action === 'takeover' && changed && fresh.channel === 'widget') {
+      const visitorId = fresh.visitor?._id
+        ? fresh.visitor._id.toString()
+        : fresh.visitor?.toString();
+      if (visitorId) {
+        this.eventEmitter.emit('agent.took.over', {
+          visitorId,
+          conversationId: fresh.chatId ? String(fresh.chatId) : undefined,
+          agentId: String(user._id),
+          agentName: (fresh.assignedAgent as any)?.name,
+        });
+      }
+    }
 
+    // Exactly one event per real change, none for a no-op (R7.5).
+    if (changed) {
+      await this.inboxEventsService
+        .publishThreadUpdated({
+          botId: this.threadBotId(fresh),
+          channel: fresh.channel,
+          thread: toThreadView(fresh),
+        })
+        .catch(() => undefined);
+    }
+
+    return toThreadView(fresh);
+  }
+
+  /**
+   * Admin override (R7.3, R7.7): an org admin takes the chat, or gives it to
+   * an agent assigned to the bot, even when someone else owns it. Separate
+   * from takeover, recorded on the incident (or conversation), and the
+   * previous owner is told who did it.
+   */
+  async overrideOwner(
+    user: JwtPayload,
+    threadId: string,
+    targetAgentId?: string,
+  ): Promise<InboxThreadView> {
+    if (user?.role !== Role.ORG_ADMIN) {
+      throw new HttpException(
+        { message: 'Only an org admin can override ownership', reason: 'override_not_admin' },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    const thread = await this.requireThread(user, threadId);
+    const botId = this.threadBotId(thread);
+    const toId = String(targetAgentId || user._id);
+
+    if (toId !== String(user._id)) {
+      const target: any = await this.agentService.findOne(toId).catch(() => null);
+      const assigned = (target?.assignedBots || []).some(
+        (b: any) => String(b?._id ?? b) === String(botId),
+      );
+      const sameOrg = String(target?.organizationId ?? '') === String((user as any).organizationId ?? '');
+      if (!target || !sameOrg || !assigned || target.active === false) {
+        throw new BadRequestException({
+          message: 'That agent is not active or not assigned to this bot',
+          reason: 'override_invalid_target',
+        });
+      }
+    }
+
+    const prev = await this.channelThreadService.ownerOf(threadId);
+    const res = await this.channelThreadService.overrideOwner(threadId, prev?.id ?? null, toId);
+    if (res.ok === false) {
+      // Ownership moved while the admin was confirming; let them look again.
+      throw new HttpException(
+        {
+          message: 'Ownership changed, review and try again',
+          reason: 'ownership_changed',
+          ownerName: res.owner?.name,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const fresh = (await this.channelThreadService.findByIdPopulated(threadId)) ?? thread;
+    this.syncSocketStateOwnership(fresh);
+    if (!res.changed) return toThreadView(fresh);
+
+    const at = new Date();
+    this.eventEmitter.emit('inbox.ownership.overridden', {
+      threadId,
+      conversationId: fresh.channel === 'widget' && fresh.chatId ? String(fresh.chatId) : undefined,
+      from: prev?.id ?? null,
+      to: toId,
+      actor: String(user._id),
+      at,
+    });
+    if (prev?.id && prev.id !== toId) {
+      this.inboxEventsService.emitToUsers(
+        [prev.id],
+        'inbox:ownership-overridden',
+        { threadId, actorId: String(user._id), actorName: (user as any).name || (user as any).email, at },
+      );
+    }
+    if (fresh.channel === 'widget') {
+      const visitorId = fresh.visitor?._id ? fresh.visitor._id.toString() : fresh.visitor?.toString();
+      if (visitorId) {
+        this.eventEmitter.emit('agent.took.over', {
+          visitorId,
+          conversationId: fresh.chatId ? String(fresh.chatId) : undefined,
+          agentId: toId,
+          agentName: (fresh.assignedAgent as any)?.name,
+        });
+      }
+    }
+    await this.inboxEventsService
+      .publishThreadUpdated({ botId, channel: fresh.channel, thread: toThreadView(fresh) })
+      .catch(() => undefined);
     return toThreadView(fresh);
   }
 
@@ -704,6 +894,14 @@ export class InboxService {
     const thread = await this.requireThread(user, threadId);
 
     await this.channelThreadService.markRead(threadId);
+
+    // Selecting a thread in the inbox calls this endpoint, so it doubles as
+    // "an alert recipient opened the handover" (Req 7.3).
+    this.eventEmitter.emit('inbox.thread.acknowledged', {
+      threadId,
+      userId: user._id,
+      resolution: 'opened',
+    });
 
     // Only inbound messages can be unread by us, and only ones the channel gave
     // an id to can be acknowledged back. Bounded to the recent window so a

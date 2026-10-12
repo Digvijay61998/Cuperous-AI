@@ -24,6 +24,7 @@ import CustomAvatar from 'src/@core/components/mui/avatar';
 
 // ** Utils
 import { formatCurrency } from 'src/views/crm/utils';
+import useCrmPlugins from 'src/views/crm/plugins/useCrmPlugins';
 
 interface StatDef {
   key: string;
@@ -31,18 +32,21 @@ interface StatDef {
   icon: string;
   color: 'primary' | 'success' | 'warning' | 'info' | 'error' | 'secondary';
   isCurrency?: boolean;
+  /** Shown only while this CRM plugin is on (crm-plugins-service-desk R8.1). */
+  plugin?: string;
 }
 
 const STATS: StatDef[] = [
   { key: 'contacts', title: 'Contacts', icon: 'bx:user', color: 'primary' },
-  { key: 'companies', title: 'Companies', icon: 'bx:buildings', color: 'info' },
-  { key: 'openDeals', title: 'Open Deals', icon: 'bx:trending-up', color: 'warning' },
+  { key: 'companies', title: 'Companies', icon: 'bx:buildings', color: 'info', plugin: 'companies' },
+  { key: 'openDeals', title: 'Open Deals', icon: 'bx:trending-up', color: 'warning', plugin: 'deals' },
   {
     key: 'pipelineValue',
     title: 'Pipeline Value',
     icon: 'bx:dollar-circle',
     color: 'success',
     isCurrency: true,
+    plugin: 'deals',
   },
 ];
 
@@ -52,6 +56,7 @@ interface QuickLink {
   icon: string;
   href: string;
   color: 'primary' | 'success' | 'warning' | 'info';
+  plugin: string;
 }
 
 const QUICK_LINKS: QuickLink[] = [
@@ -60,6 +65,7 @@ const QUICK_LINKS: QuickLink[] = [
     description: 'People you do business with. Owners, leads and their details.',
     icon: 'bx:user',
     href: '/crm/contacts',
+ plugin: 'contacts',
     color: 'primary',
   },
   {
@@ -67,6 +73,7 @@ const QUICK_LINKS: QuickLink[] = [
     description: 'Accounts and organisations, with branding and primary contacts.',
     icon: 'bx:buildings',
     href: '/crm/companies',
+ plugin: 'companies',
     color: 'info',
   },
   {
@@ -74,6 +81,7 @@ const QUICK_LINKS: QuickLink[] = [
     description: 'Your sales pipeline across stages, amounts and expected close.',
     icon: 'bx:trending-up',
     href: '/crm/deals',
+ plugin: 'deals',
     color: 'warning',
   },
 ];
@@ -82,9 +90,21 @@ const CrmOverview = () => {
   const dispatch = useDispatch<AppDispatch>();
   const stats = useSelector((state: RootState) => state.crm.stats);
 
+  const { plugins, isOn } = useCrmPlugins();
+
   useEffect(() => {
     dispatch(fetchCrmStats());
-  }, [dispatch]);
+    // Refetch when a plugin is toggled: off plugins report null figures.
+  }, [dispatch, plugins]);
+
+  // A card shows while its plugin is on and the API sent a figure for it.
+  const stats_ = STATS.filter((d) => (!d.plugin || isOn(d.plugin)) && stats?.[d.key] !== null);
+  const links = QUICK_LINKS.filter((l) => isOn(l.plugin)).sort(
+    (a, b) =>
+      (plugins?.find((p) => p.key === a.plugin)?.position ?? 0) -
+      (plugins?.find((p) => p.key === b.plugin)?.position ?? 0),
+  );
+  const subtitle = `Manage ${links.map((l) => l.title.toLowerCase()).join(', ').replace(/, ([^,]*)$/, ' and $1')} in one place.`;
 
   const statValue = (def: StatDef) => {
     const raw = stats?.[def.key] ?? 0;
@@ -99,12 +119,12 @@ const CrmOverview = () => {
           CRM
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Manage contacts, companies and deals in one place.
+          {subtitle}
         </Typography>
       </Grid>
 
       {/* Stat cards */}
-      {STATS.map((def) => (
+      {stats_.map((def) => (
         <Grid item xs={12} sm={6} md={3} key={def.key}>
           <Card
             sx={{
@@ -141,7 +161,7 @@ const CrmOverview = () => {
       ))}
 
       {/* Quick links */}
-      {QUICK_LINKS.map((link) => (
+      {links.map((link) => (
         <Grid item xs={12} md={4} key={link.href}>
           <Link href={link.href} passHref>
             <Card

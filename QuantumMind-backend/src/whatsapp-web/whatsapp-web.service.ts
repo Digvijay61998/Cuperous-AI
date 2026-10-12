@@ -7,7 +7,14 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
+import {
+  assertOwnership,
+  scopedFilter,
+  TenantContext,
+} from 'src/common/tenant/tenant-context';
+import { EntitlementService } from 'src/billing/entitlement.service';
+import { SocialPlatformEnum } from 'src/social/enums/social-platform.enum';
 import {
   InboxChannelState,
   InboxChannelStatusAccount,
@@ -36,6 +43,7 @@ export class WhatsappWebService implements OnApplicationBootstrap {
     private readonly sessionModel: Model<WhatsappWebSessionDocument>,
     private readonly engine: BaileysEngineService,
     private readonly socialService: SocialService,
+    private readonly entitlementService: EntitlementService,
   ) {}
 
   /** Re-launch previously-linked sessions so connected numbers survive a restart. */
@@ -66,29 +74,54 @@ export class WhatsappWebService implements OnApplicationBootstrap {
     const obj: any = session.toObject ? session.toObject() : session;
     return {
       ...obj,
+      id: String(session._id),
       // Live runtime state the DB row does not carry.
       engineLoaded: this.engine.isActive(session.name),
       liveStatus: this.engine.getStatus(session.name),
     };
   }
 
-  async create(dto: CreateWhatsappWebSessionDto) {
+  /**
+   * Creates a session for a bot in the caller's org. The feature gate and bot
+   * ownership are checked by SocialService.resolveConnectionOrg; one
+   * `maxPlatforms` slot is reserved and released again on any failure.
+   */
+  async create(dto: CreateWhatsappWebSessionDto, user?: TenantContext) {
+    const organizationId = user
+      ? await this.socialService.resolveConnectionOrg(
+          user,
+          SocialPlatformEnum.WHATSAPP_WEB,
+          dto.jarcubeBot,
+        )
+      : null;
+
     const existing = await this.sessionModel.findOne({ name: dto.name });
     if (existing) {
+      // Session names are the global on-disk key; do not reveal which tenant
+      // owns a colliding name.
       throw new ConflictException(
         `A WhatsApp Web session named "${dto.name}" already exists`,
       );
     }
 
-    const social = await this.socialService.createWhatsappWebSocial({
-      name: dto.name,
-      jarcubeBot: dto.jarcubeBot,
-    });
+    await this.entitlementService.reserveQuota(organizationId, 'platform');
+    let social: any;
+    try {
+      social = await this.socialService.createWhatsappWebSocial({
+        name: dto.name,
+        jarcubeBot: dto.jarcubeBot,
+        organizationId,
+      });
+    } catch (error) {
+      await this.entitlementService.releaseQuota(organizationId, 'platform');
+      throw error;
+    }
 
     try {
       const session = await this.sessionModel.create({
         name: dto.name,
         jarcubeBot: dto.jarcubeBot,
+        organizationId,
         social: social._id,
         status: WhatsappWebSessionStatus.CREATED,
       });
@@ -103,30 +136,52 @@ export class WhatsappWebService implements OnApplicationBootstrap {
       );
       return this.toView(session);
     } catch (error) {
-      // Roll back the orphaned Social row if the session insert failed.
+      // Roll back the orphaned Social row (and its quota) if the insert failed.
       await this.socialService.deleteById((social._id as any).toString());
+      await this.entitlementService.releaseQuota(organizationId, 'platform');
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          `A WhatsApp Web session named "${dto.name}" already exists`,
+        );
+      }
       throw error;
     }
   }
 
-  async findAll() {
+  async findAll(user?: TenantContext) {
     const sessions = await this.sessionModel
-      .find()
+      .find(scopedFilter(user, {}))
       .sort({ createdAt: -1 })
       .populate('jarcubeBot', 'name');
     return sessions.map((s) => this.toView(s));
   }
 
-  private async requireSession(id: string): Promise<WhatsappWebSessionDocument> {
-    const session = await this.sessionModel.findById(id);
+  /**
+   * Loads a session and, with a `user`, asserts the caller's org owns it.
+   * Missing and foreign sessions are indistinguishable (404).
+   */
+  private async requireSession(
+    id: string,
+    user?: TenantContext,
+  ): Promise<WhatsappWebSessionDocument> {
+    const session = mongoose.isValidObjectId(id)
+      ? await this.sessionModel.findById(id)
+      : null;
     if (!session) {
       throw new NotFoundException(`WhatsApp Web session "${id}" not found`);
+    }
+    if (user) {
+      try {
+        assertOwnership(user, session as any);
+      } catch {
+        throw new NotFoundException(`WhatsApp Web session "${id}" not found`);
+      }
     }
     return session;
   }
 
-  async findOne(id: string) {
-    const session = await this.requireSession(id);
+  async findOne(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     return this.toView(session);
   }
 
@@ -142,44 +197,51 @@ export class WhatsappWebService implements OnApplicationBootstrap {
     };
   }
 
-  async start(id: string) {
-    const session = await this.requireSession(id);
+  async start(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     await this.engine.start(session.name);
     session.status = WhatsappWebSessionStatus.INITIALIZING;
     await session.save();
     return this.toView(session);
   }
 
-  async stop(id: string) {
-    const session = await this.requireSession(id);
+  async stop(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     await this.engine.stop(session.name);
     return this.toView(session);
   }
 
-  async logout(id: string) {
-    const session = await this.requireSession(id);
+  async logout(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     await this.engine.logout(session.name);
     return this.toView(session);
   }
 
-  async forceKill(id: string) {
-    const session = await this.requireSession(id);
+  async forceKill(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     await this.engine.forceKill(session.name);
     return this.toView(session);
   }
 
-  async delete(id: string) {
-    const session = await this.requireSession(id);
+  async delete(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     await this.engine.destroy(session.name);
     if (session.social) {
       await this.socialService.deleteById(session.social.toString());
     }
-    await this.sessionModel.findByIdAndDelete(id);
+    const removed = await this.sessionModel.findByIdAndDelete(session._id);
+    // Only the call that actually removed the row releases the slot.
+    if (removed) {
+      await this.entitlementService.releaseQuota(
+        removed.organizationId ? String(removed.organizationId) : null,
+        'platform',
+      );
+    }
     return { success: true };
   }
 
-  async getQr(id: string) {
-    const session = await this.requireSession(id);
+  async getQr(id: string, user?: TenantContext) {
+    const session = await this.requireSession(id, user);
     const qrCode = this.engine.getQr(session.name);
     const status = this.engine.getStatus(session.name);
     if (!qrCode) {
@@ -193,8 +255,12 @@ export class WhatsappWebService implements OnApplicationBootstrap {
     return { qrCode, status };
   }
 
-  async requestPairingCode(id: string, phoneNumber: string) {
-    const session = await this.requireSession(id);
+  async requestPairingCode(
+    id: string,
+    phoneNumber: string,
+    user?: TenantContext,
+  ) {
+    const session = await this.requireSession(id, user);
     const status = this.engine.getStatus(session.name);
     if (status === WhatsappWebSessionStatus.READY) {
       throw new BadRequestException(

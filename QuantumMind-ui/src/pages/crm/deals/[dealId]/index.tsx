@@ -1,3 +1,5 @@
+import withCrmPlugin from 'src/views/crm/plugins/withCrmPlugin';
+
 // ** React Imports
 import { useEffect, useState } from 'react';
 
@@ -207,4 +209,4 @@ const DealDetail = () => {
   );
 };
 
-export default DealDetail;
+export default withCrmPlugin(DealDetail, 'deals', 'Deals', 'bx:trending-up');

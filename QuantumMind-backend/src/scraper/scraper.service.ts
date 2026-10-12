@@ -1,6 +1,6 @@
 import { HttpException, Inject, Injectable, Logger } from "@nestjs/common";
 import axios from "axios";
-import { Model } from "mongoose";
+import { isValidObjectId, Model } from "mongoose";
 import { SCRAPER_PROVIDER } from "./constant";
 import { CreateScrapeDto } from "./dto/create-scraper.dto";
 import { SearchParamDto } from "./dto/search-param.dto";
@@ -41,10 +41,20 @@ export class ScraperService {
     }
   }
 
-  async findAll(query: SearchParamDto) {
+  /**
+   * @param botIds tenant scope: only scrapes of these bots (null = all, for
+   * SUPER_ADMIN/internal use).
+   */
+  async findAll(query: SearchParamDto, botIds: string[] | null = null) {
     try {
       const { skip, limit, status, tags } = query;
-      const queryObj = {};
+      const queryObj: Record<string, any> = {};
+      if (botIds !== null) {
+        queryObj["$or"] = [
+          { botId: { $in: botIds } },
+          { clientId: { $in: botIds } },
+        ];
+      }
       if (status) {
         queryObj["status"] = status;
       }
@@ -72,6 +82,7 @@ export class ScraperService {
 
   async findOne(scrapeId: string) {
     try {
+      if (!isValidObjectId(scrapeId)) return null;
       const scrape = await this.scraperModel.findById(scrapeId);
       // console.log('scrape', scrape);
 

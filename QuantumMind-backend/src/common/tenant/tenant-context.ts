@@ -9,6 +9,8 @@ export interface TenantContext {
   _id: string;
   role: Role;
   organizationId: string | null;
+  /** Present only on impersonation tokens: the acting SUPER_ADMIN's id. */
+  impersonatedBy?: string;
 }
 
 /**
