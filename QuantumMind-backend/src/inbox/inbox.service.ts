@@ -573,6 +573,7 @@ export class InboxService {
         return HttpStatus.CONFLICT;
       case 'invalid_send_request':
       case 'unsupported_media':
+      case 'outside_service_window':
         return HttpStatus.UNPROCESSABLE_ENTITY;
       case 'rate_limited':
         return HttpStatus.TOO_MANY_REQUESTS;

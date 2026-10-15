@@ -4143,10 +4143,8 @@ if (!webhookId) {
     await this.sendFacebookMessage(data.message, data.ctx);
   }
 
-  @OnEvent("send-whatsapp-message", { async: true })
-  async onSendWhatsappMessage(data: { message: any; ctx: any }) {
-    await this.sendWhatsappMessage(data.message, data.ctx);
-  }
+  // "send-whatsapp-message" (Cloud API) is handled by WhatsappService.onSend,
+  // which persists the delivery onto the inbox thread and survives restarts.
 
   async sendMessageToTelegram(
     messageResponse: MessageResponseDto | any,
@@ -4438,46 +4436,6 @@ if (!webhookId) {
     } catch (error) {
       const errorMessages = error.response?.data?.error?.message;
       this.logger.error(`Unable to send message. ${errorMessages}`);
-    }
-  }
-
-  async sendWhatsappMessage(messageResponse: any, ctx?: any) {
-    try {
-      if (!ctx || !ctx.recipient) return;
-      if (!messageResponse) return;
-
-      // Every recipientPhone below comes from the ctx passed in. These used to
-      // read `this.ctx.recipient` on the singleton — validated against the
-      // caller's ctx but SENT to whichever conversation last touched the
-      // service, so under concurrency one tenant's reply could be delivered to
-      // another tenant's customer.
-      if (messageResponse.type === ChatTypeEnum.TEXT) {
-        await ctx.Whatsapp.sendText({
-          recipientPhone: ctx.recipient,
-          message: messageResponse.value,
-        });
-      }
-      if (messageResponse.type === ChatTypeEnum.IMAGE) {
-        await ctx.Whatsapp.sendImage({
-          recipientPhone: ctx.recipient,
-          url: messageResponse.value,
-        });
-      }
-      if (messageResponse.type === ChatTypeEnum.BUTTONS) {
-        await ctx.Whatsapp.sendSimpleButtons({
-          recipientPhone: ctx.recipient,
-          text: messageResponse.value,
-          buttons: messageResponse.buttons.map((ele: any) => {
-            return {
-              type: "postback",
-              title: ele.title,
-              payload: ele.value,
-            };
-          }),
-        });
-      }
-    } catch (error) {
-      this.logger.error(`Unable to send message. ${error.message}`);
     }
   }
 

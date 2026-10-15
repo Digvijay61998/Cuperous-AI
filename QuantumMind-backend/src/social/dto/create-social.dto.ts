@@ -22,4 +22,12 @@ export class CreateSocialDto {
   @IsString()
   @IsOptional()
   jarcubeBot: string;
+
+  /**
+   * WhatsApp Cloud API sending phone number id. Not @IsString: the dashboard
+   * form posts it from a numeric input, so it can arrive as a number. The
+   * service normalises it to a string.
+   */
+  @IsOptional()
+  phoneNumberId?: string | number;
 }

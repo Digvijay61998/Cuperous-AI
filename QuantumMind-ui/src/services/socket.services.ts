@@ -115,6 +115,8 @@ export interface InboxThread {
   visitor?: { id: string; name?: string; email?: string; phone?: string } | null;
   historyExhausted: boolean;
   oldestMessageAt?: string | null;
+  /** The thread's current conversation (CRM contact, ticket, profile). */
+  conversationId?: string;
 }
 
 export interface InboxMessageEvent {

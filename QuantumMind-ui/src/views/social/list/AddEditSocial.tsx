@@ -25,6 +25,7 @@ import { AppDispatch, RootState } from 'src/store';
 import toast from 'react-hot-toast';
 import { addNewSocial, fetchSocialList, updateSocial } from 'src/store/apps/social';
 import WhatsappWebConnect from './WhatsappWebConnect';
+import returnPlatformIcon, { platformLabel } from 'src/components/PlatforomIcons';
 
 /**
  * Bots that may be newly attached to a messenger.
@@ -297,8 +298,10 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
                   key={index}
                   value={item}
                   disabled={!platformAllowed(item)}
+                  sx={{ gap: 2 }}
                 >
-                  {item}
+                  {returnPlatformIcon(item)}
+                  {platformLabel(item)}
                   {!platformAllowed(item) ? ' — not in your plan' : ''}
                 </MenuItem>
               ))}
@@ -416,9 +419,9 @@ const SidebarAddNewSocial = (props: SidebarAddNewSocialType) => {
                 required
                 size="small"
                 value={botId}
-                label="Business Account"
+                label="WhatsApp Business Account ID"
                 onChange={(e: any) => setBotId(e.target.value)}
-                placeholder="Enter Business Account"
+                placeholder="From Meta: WhatsApp Manager > Account settings"
               />
             </FormControl>
           )}

@@ -123,7 +123,7 @@ const BotList = () => {
   // ** State
 
   const [role, setRole] = useState<string>('');
-  const { canCreate } = useEntitlements();
+  const { canCreate, refetch: refetchEntitlements } = useEntitlements();
   const botQuotaReached = !canCreate('bots');
   const [plan, setPlan] = useState<string>('');
   const [value, setValue] = useState<string>('');
@@ -140,6 +140,11 @@ const BotList = () => {
   const { botStates } = useSelector((state: RootState) => state.states);
   const [botListDataFiltered, setBotListDataFiltered] = useState<any>([]);
   const [cardStates, setCardStates] = useState<any>([]);
+  // The list is re-fetched after every create/import/delete; refresh usage too
+  // so the Create button re-enables as soon as a bot frees a quota slot.
+  useEffect(() => {
+    refetchEntitlements();
+  }, [list, refetchEntitlements]);
   useEffect(() => {
     if (userData && userData?.role) {
       setRole(userData.role);

@@ -72,9 +72,13 @@ export class RedisPropagatorService {
     const ctx = userData?.ctx;
 
     if (platform === PlatformEnum.WHATSAPP) {
+      // Delivered by the WhatsApp Cloud API hub (WhatsappService.onSend).
+      // `userId` lets it recover the reply address from the durable
+      // ChannelThread when `ctx` is gone (restart / idle eviction).
       this.eventEmitter.emit("send-whatsapp-message", {
         ctx,
         message: data.message,
+        userId,
       });
     } else if (platform === PlatformEnum.WHATSAPP_WEB) {
       // Delivered by WhatsappWebInboundService via the local baileys engine.

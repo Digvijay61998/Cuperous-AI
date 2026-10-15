@@ -126,6 +126,8 @@ export interface InboxThreadView {
   /** True once the channel reports there is nothing older left to fetch. */
   historyExhausted: boolean;
   oldestMessageAt?: Date | null;
+  /** The thread's current conversation (CRM contact, ticket, visitor profile). */
+  conversationId?: string;
 }
 
 /** Types whose media we record the existence of without storing the bytes. */
@@ -306,5 +308,8 @@ export function toThreadView(
     visitor: visitor as any,
     historyExhausted: thread.historyExhausted === true,
     oldestMessageAt: thread.oldestMessageAt || null,
+    conversationId: thread.conversation
+      ? ((thread.conversation as any)._id ?? thread.conversation).toString()
+      : undefined,
   };
 }

@@ -149,7 +149,9 @@ export const startImpersonation = (
   // The impersonation session must NOT be refreshable as the org owner.
   ls.removeItem('refreshToken');
   ls.setItem(IMPERSONATING, JSON.stringify(org));
-  ls.removeItem('userData');
+  // Keep `userData` until the reload: AuthContext re-fetches `/me` with the new
+  // token and overwrites it. Clearing it here makes AuthGuard/GuestGuard see "no
+  // session" during the `/me` round-trip and bounce to /login (stuck spinner).
   window.location.href = '/';
 };
 
@@ -169,9 +171,16 @@ export const endImpersonation = () => {
   ls.removeItem(IMPERSONATING);
   ls.removeItem(STASH_ACCESS);
   ls.removeItem(STASH_REFRESH);
-  ls.removeItem('userData');
-  if (access) ls.setItem('accessToken', access);
-  else ls.removeItem('accessToken');
+  if (access) {
+    ls.setItem('accessToken', access);
+    // Keep `userData` until the reload so the guards still see a session while
+    // AuthContext re-fetches `/me` for the restored super-admin token; it is
+    // overwritten on load. Clearing it early bounced the page to /login.
+  } else {
+    // No stashed session to return to: a genuine logout, clear everything.
+    ls.removeItem('accessToken');
+    ls.removeItem('userData');
+  }
   if (refresh) ls.setItem('refreshToken', refresh);
   window.location.href = access ? '/super-admin' : '/login';
 };

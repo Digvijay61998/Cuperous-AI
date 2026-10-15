@@ -71,7 +71,9 @@ export type InboxSendFailureReason =
   | 'channel_send_failed'
   | 'channel_send_timeout'
   | 'rate_limited'
-  | 'unsupported_media';
+  | 'unsupported_media'
+  /** WhatsApp Cloud API: >24h since the customer's last message (template only). */
+  | 'outside_service_window';
 
 /** Payload for {@link INBOX_MARK_READ_EVENT}. */
 export interface InboxMarkReadEvent {

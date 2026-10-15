@@ -216,6 +216,8 @@ export const sendInboxMessage = createAsyncThunk(
       toast.error(
         reason === 'session_not_connected'
           ? 'WhatsApp is not connected — the message was not sent'
+          : reason === 'outside_service_window'
+          ? 'Not sent: more than 24 hours since the customer last wrote. WhatsApp only allows approved template messages until they reply.'
           : error?.response?.data?.message ||
               error?.message ||
               'Message could not be sent',

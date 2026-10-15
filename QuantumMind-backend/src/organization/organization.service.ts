@@ -3,6 +3,8 @@ import mongoose, { Model } from 'mongoose';
 import { ORGANIZATION_PROVIDER } from 'src/constants';
 import { OrganizationStatus } from './enums/organization-status.enum';
 import { OrganizationDocument } from './entities/organization.entity';
+import { BotStatusEnum } from 'src/bots/enums/bot-status.enum';
+import { Role } from 'src/common/enums/role.enum';
 import {
   defaultZoneForCountry,
   resolveOrgTimeZone,
@@ -14,6 +16,39 @@ export type CounterField =
   | 'agentCount'
   | 'templateCount'
   | 'platformCount';
+
+/** Source collection + filter that defines the real usage of each counter. */
+const USAGE_SOURCES: Partial<
+  Record<
+    CounterField,
+    {
+      model: string;
+      filter: (orgId: mongoose.Types.ObjectId) => Record<string, any>;
+    }
+  >
+> = {
+  // Bot deletion is a soft delete (status flip), so deleted rows stay in the
+  // collection and must be excluded.
+  botCount: {
+    model: 'Bot',
+    filter: (organizationId) => ({
+      organizationId,
+      status: { $ne: BotStatusEnum.DELETED },
+    }),
+  },
+  agentCount: {
+    model: 'Agent',
+    filter: (organizationId) => ({
+      organizationId,
+      role: { $in: [Role.ORG_MANAGER, Role.AGENT] },
+    }),
+  },
+  // Social deletion is a hard delete; every remaining row is a live connection.
+  platformCount: {
+    model: 'Social',
+    filter: (organizationId) => ({ organizationId }),
+  },
+};
 
 @Injectable()
 export class OrganizationService {
@@ -223,33 +258,108 @@ export class OrganizationService {
   }
 
   /**
+   * Real usage for a counter, counted from its source collection. This is the
+   * single definition of "what counts against the quota":
+   *  - bots:      every bot that is not soft-deleted
+   *  - agents:    org managers + agents (the org owner never consumes quota)
+   *  - platforms: every social connection row (WhatsApp Web sessions included)
+   * Returns null when the counter has no source (templates) or the count fails,
+   * so callers never mistake an error for "zero usage".
+   */
+  async countActual(
+    organizationId: string,
+    field: CounterField,
+  ): Promise<number | null> {
+    const source = USAGE_SOURCES[field];
+    if (!source || !mongoose.isValidObjectId(organizationId)) return null;
+    const oid = new mongoose.Types.ObjectId(String(organizationId));
+    try {
+      return await mongoose
+        .model(source.model)
+        .countDocuments(source.filter(oid));
+    } catch (error) {
+      this.logger.error(
+        `Failed to count ${field} for org ${organizationId}: ${error.message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Resets one counter to the real usage. Returns the previous and new values,
+   * or null when the real usage could not be determined (counter untouched).
+   */
+  async recountCounter(
+    organizationId: string,
+    field: CounterField,
+  ): Promise<{ before: number; after: number } | null> {
+    const actual = await this.countActual(organizationId, field);
+    if (actual === null) return null;
+    const previous = await this.organizationModel
+      .findOneAndUpdate(
+        { _id: organizationId },
+        { $set: { [field]: actual } },
+        { new: false },
+      )
+      .select(field)
+      .lean();
+    if (!previous) return null;
+    return { before: Number((previous as any)[field] ?? 0), after: actual };
+  }
+
+  /**
+   * Current usage for display. Uses the real counts so the UI never gates on a
+   * drifted counter; falls back to the stored counter if a count fails.
+   */
+  async getUsage(organizationId: string): Promise<{
+    bots: number;
+    agents: number;
+    templates: number;
+    platforms: number;
+  } | null> {
+    const org = await this.findById(organizationId);
+    if (!org) return null;
+    const [bots, agents, platforms] = await Promise.all([
+      this.countActual(organizationId, 'botCount'),
+      this.countActual(organizationId, 'agentCount'),
+      this.countActual(organizationId, 'platformCount'),
+    ]);
+    return {
+      bots: bots ?? org.botCount ?? 0,
+      agents: agents ?? org.agentCount ?? 0,
+      templates: org.templateCount ?? 0,
+      platforms: platforms ?? (org as any).platformCount ?? 0,
+    };
+  }
+
+  /**
    * Recomputes the usage counters from the source collections. Used by the
    * super-admin console to repair drift (e.g. a crash between the counter
-   * increment and the insert).
+   * increment and the insert). A counter whose source cannot be counted is
+   * left as-is rather than being reset to 0.
    */
   async reconcileCounters(organizationId: string) {
     const oid = new mongoose.Types.ObjectId(String(organizationId));
-    const model = (name: string) => mongoose.model(name);
-    const safeCount = async (name: string, filter: Record<string, any>) => {
-      try {
-        return await model(name).countDocuments(filter);
-      } catch {
-        return 0;
-      }
-    };
-    const [botCount, agentCount, platformCount] = await Promise.all([
-      safeCount('Bot', { organizationId: oid, status: { $ne: 'deleted' } }),
-      safeCount('Agent', {
-        organizationId: oid,
-        role: { $in: ['org_manager', 'agent'] },
-      }),
-      safeCount('Social', { organizationId: oid }),
-    ]);
-    await this.organizationModel.updateOne(
-      { _id: oid },
-      { botCount, agentCount, platformCount },
+    const fields: CounterField[] = ['botCount', 'agentCount', 'platformCount'];
+    const counts = await Promise.all(
+      fields.map((f) => this.countActual(String(oid), f)),
     );
-    return { botCount, agentCount, platformCount };
+    const $set: Partial<Record<CounterField, number>> = {};
+    fields.forEach((f, i) => {
+      if (counts[i] !== null) $set[f] = counts[i] as number;
+    });
+    if (Object.keys($set).length) {
+      await this.organizationModel.updateOne({ _id: oid }, { $set });
+    }
+    const org = await this.organizationModel
+      .findById(oid)
+      .select('botCount agentCount platformCount')
+      .lean();
+    return {
+      botCount: (org as any)?.botCount ?? 0,
+      agentCount: (org as any)?.agentCount ?? 0,
+      platformCount: (org as any)?.platformCount ?? 0,
+    };
   }
 
   async assertActive(id: string): Promise<void> {

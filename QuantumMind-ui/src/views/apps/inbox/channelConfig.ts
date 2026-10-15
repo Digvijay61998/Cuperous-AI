@@ -57,7 +57,7 @@ export const CHANNEL_CAPABILITIES: Record<string, ChannelCapabilities> = {
     history: false,
   },
   whatsapp_web: {
-    label: 'WhatsApp',
+    label: 'WhatsApp Web',
     deliveryTicks: true,
     media: true,
     quotedReply: true,

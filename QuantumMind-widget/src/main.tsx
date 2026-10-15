@@ -47,8 +47,8 @@ export default chatbot;
 // page's botId and render into the host's own #root (e.g. a React app).
 if (import.meta.env.DEV) {
   window.botId = "6aca92373a422dd81a27a673";
-  // window.baseUrl = "https://jacube.engage.com";
-  window.baseUrl = "http://localhost:4000";
+  window.baseUrl = "https://jacube.engage.com";
+  // window.baseUrl = "http://localhost:4000";
   window.isOpenChat = true;
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <>

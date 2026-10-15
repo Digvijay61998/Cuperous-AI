@@ -65,6 +65,7 @@ import { ChatProvider } from 'src/context/SocketContext';
 import 'react-slideshow-image/dist/styles.css';
 import BlankLayout from 'src/@core/layouts/BlankLayout';
 import 'src/iconify-bundle/icons-bundle-react';
+import 'src/components/icons/customIcons';
 import NotAuthorized from 'src/pages/401';
 // ** Global css styles
 import { useSelector } from 'react-redux';

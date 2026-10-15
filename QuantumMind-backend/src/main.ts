@@ -104,7 +104,17 @@ async function bootstrap() {
     if (req.path?.startsWith(TEMPLATE_ASSET_PATH)) return next();
     return helmetMiddleware(req, res, next);
   });
-  app.use(express.json({ limit: "50mb" }));
+  app.use(
+    express.json({
+      limit: "50mb",
+      // Keep the exact bytes for webhook signature checks (Meta signs the raw
+      // body; re-serialised JSON would not match). Only stored for webhook
+      // routes so ordinary requests do not carry a second copy of their body.
+      verify: (req: any, _res, buf) => {
+        if (req.originalUrl?.includes("/webhook")) req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   const options = new DocumentBuilder()
     .setTitle("JarCube")

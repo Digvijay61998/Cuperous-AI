@@ -177,11 +177,29 @@ export class EntitlementService {
     const { counter, limit } = RESOURCE_META[resource];
     const max = effective?.limits?.[limit] ?? 0;
 
-    const ok = await this.organizationService.reserveCounter(
-      String(organizationId),
-      counter,
-      max,
-    );
+    const orgId = String(organizationId);
+    let ok = await this.organizationService.reserveCounter(orgId, counter, max);
+
+    // The counter is denormalized and can drift above real usage (a delete that
+    // never released its slot, rows removed outside the API, data from before
+    // quota tracking, a crash between steps). Before refusing, recount from the
+    // source collection and retry once, so deleted resources never keep holding
+    // quota. The common path stays a single atomic increment.
+    if (!ok && max > 0) {
+      const recount = await this.organizationService.recountCounter(
+        orgId,
+        counter,
+      );
+      if (recount && recount.after < max) {
+        if (recount.before !== recount.after) {
+          this.logger.warn(
+            `Repaired ${counter} drift for org ${orgId}: ${recount.before} -> ${recount.after}`,
+          );
+        }
+        ok = await this.organizationService.reserveCounter(orgId, counter, max);
+      }
+    }
+
     if (!ok) {
       throw new ForbiddenException(
         `Your plan's ${resource} limit (${max}) has been reached. Upgrade to add more.`,

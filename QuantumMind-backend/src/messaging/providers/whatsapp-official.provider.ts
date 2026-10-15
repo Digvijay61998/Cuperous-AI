@@ -22,8 +22,15 @@ export class WhatsappOfficialProvider implements MessagingProvider {
 
   private readonly logger = new Logger(WhatsappOfficialProvider.name);
 
+  /**
+   * `cta_url` is deliberately not claimed. The Cloud API hub
+   * (WhatsappService) sends a TEMPLATE bot message as a native cta_url button
+   * itself, and that path also stores the row on the inbox thread and survives
+   * a restart. Claiming it here would route template links through this
+   * provider, which needs the in-memory client the hub no longer puts in ctx.
+   */
   supportsFeature(feature: ProviderFeature): boolean {
-    return ['text', 'media', 'buttons', 'cta_url'].includes(feature);
+    return ['text', 'media', 'buttons'].includes(feature);
   }
 
   async sendMessage(

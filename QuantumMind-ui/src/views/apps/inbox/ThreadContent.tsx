@@ -30,7 +30,7 @@ import CustomAvatar from 'src/@core/components/mui/avatar';
 import { getInitials } from 'src/@core/utils/get-initials';
 import returnPlatformIcon from 'src/components/PlatforomIcons';
 import { InboxMessage } from 'src/services/socket.services';
-import { capabilitiesFor } from './channelConfig';
+import { capabilitiesFor, channelLabel } from './channelConfig';
 import { contactInitialsSource, contactSubtitle } from './contactDisplay';
 import ThreadComposer from './ThreadComposer';
 import ThreadLog from './ThreadLog';
@@ -72,6 +72,11 @@ const ThreadContent = ({ channel }: Props) => {
   const capabilities = capabilitiesFor(channel);
   const threads = threadsByChannel[channel] || [];
   const thread = threads.find((t) => t.id === selectedThreadId);
+  // The conversation the CRM contact, ticket and visitor profile hang off.
+  // Widget threads are keyed by it (chatId); channel threads (WhatsApp Web,
+  // WhatsApp Cloud API, ...) carry their current one separately.
+  const contactConversationId =
+    channel === WIDGET_CHANNEL ? thread?.chatId : thread?.conversationId;
 
   // Ownership matrix (R8.1–R8.3). Recomputed on every thread-updated event.
   const userRole = useSelector((state: RootState) => (state.user as any)?.userData?.role);
@@ -264,16 +269,15 @@ const ThreadContent = ({ channel }: Props) => {
               <Typography sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
                 {thread.name}
               </Typography>
-              <Tooltip title={channel} placement="top" arrow>
+              <Tooltip title={channelLabel(channel)} placement="top" arrow>
                 <Box sx={{ ml: 2, display: 'flex', alignItems: 'center' }}>
                   {returnPlatformIcon(channel)}
                 </Box>
               </Tooltip>
-              {/* Widget threads are keyed by the conversation id (chatId); other
-                  channels key by the customer's address, so there is no single
-                  conversation to look up and nothing is shown. */}
-              {channel === WIDGET_CHANNEL && (
-                <ConversationContactBadge conversationId={thread.chatId} />
+              {/* CRM contact for every channel: WhatsApp contacts are captured
+                  into the CRM on their first message, like widget visitors. */}
+              {contactConversationId && (
+                <ConversationContactBadge conversationId={contactConversationId} />
               )}
             </Box>
             <Typography variant="caption" sx={{ color: 'text.disabled' }}>
@@ -328,7 +332,7 @@ const ThreadContent = ({ channel }: Props) => {
         open={ticketOpen}
         mode="save"
         threadId={thread.id}
-        conversationId={channel === WIDGET_CHANNEL ? thread.chatId : undefined}
+        conversationId={contactConversationId}
         onCancel={() => setTicketOpen(false)}
         onSaved={() => setTicketOpen(false)}
       />
@@ -348,10 +352,11 @@ const ThreadContent = ({ channel }: Props) => {
         </Alert>
       )}
       {/* R18.8: the profile replaces earlier transcripts. Widget threads only:
-          they are keyed by one conversation id. */}
-      {channel === WIDGET_CHANNEL && (
+          they are keyed by one conversation id; channel threads use their
+          current conversation. */}
+      {contactConversationId && (
         <Box sx={{ mx: 5, mt: 3 }}>
-          <VisitorProfilePanel conversationId={thread.chatId} />
+          <VisitorProfilePanel conversationId={contactConversationId} />
         </Box>
       )}
 

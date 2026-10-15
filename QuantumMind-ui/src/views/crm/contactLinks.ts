@@ -79,9 +79,9 @@ export const formatDateTime = (value?: string | Date | null): string => {
 
 const CHANNEL_LABELS: Record<string, string> = {
   widget: 'Web Chat',
-  whatsapp: 'WhatsApp',
-  'whatsapp-web': 'WhatsApp',
-  whatsapp_web: 'WhatsApp',
+  whatsapp: 'WhatsApp Business',
+  'whatsapp-web': 'WhatsApp Web',
+  whatsapp_web: 'WhatsApp Web',
   'whatsapp-business': 'WhatsApp Business',
   telegram: 'Telegram',
   instagram: 'Instagram',

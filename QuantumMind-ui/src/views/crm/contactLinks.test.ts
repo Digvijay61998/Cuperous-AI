@@ -55,7 +55,8 @@ describe('pagination merge', () => {
 describe('labels', () => {
   it('formats channels and statuses', () => {
     expect(channelLabel('widget')).toBe('Web Chat');
-    expect(channelLabel('whatsapp_web')).toBe('WhatsApp');
+    expect(channelLabel('whatsapp_web')).toBe('WhatsApp Web');
+    expect(channelLabel('whatsapp')).toBe('WhatsApp Business');
     expect(channelLabel('new_channel')).toBe('New Channel');
     expect(channelLabel(undefined)).toBe('-');
     expect(statusLabel('IN_PROGRESS')).toBe('In Progress');

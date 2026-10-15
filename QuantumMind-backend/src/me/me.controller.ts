@@ -51,15 +51,9 @@ export class MeController {
       limits = effective?.limits ?? null;
       features = effective?.features ?? null;
 
-      const org = await this.organizationService.findById(organizationId);
-      usage = org
-        ? {
-            bots: org.botCount,
-            agents: org.agentCount,
-            templates: org.templateCount,
-            platforms: (org as any).platformCount ?? 0,
-          }
-        : null;
+      // Real counts (not the denormalized counters) so a drifted counter can
+      // never disable the create buttons after resources were deleted.
+      usage = await this.organizationService.getUsage(organizationId);
     }
 
     return {

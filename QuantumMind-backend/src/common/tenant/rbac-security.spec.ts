@@ -283,7 +283,13 @@ describe('AgentService delegated administration', () => {
 // ---------------------------------------------------------------------------
 // EntitlementService: merge, fail-closed, race-safe quota
 // ---------------------------------------------------------------------------
-function makeEntitlements(sub: any, plan: any, counters: Record<string, number> = {}) {
+function makeEntitlements(
+  sub: any,
+  plan: any,
+  counters: Record<string, number> = {},
+  // Real usage in the source collections; defaults to "matches the counter".
+  actual: Record<string, number> = {},
+) {
   const lean = (v: any) => ({ lean: async () => v });
   const subscriptionModel: any = { findOne: jest.fn(() => lean(sub)) };
   const planModel: any = { findById: jest.fn(() => lean(plan)) };
@@ -300,6 +306,12 @@ function makeEntitlements(sub: any, plan: any, counters: Record<string, number> 
     }),
     releaseCounter: jest.fn(async (_id: string, field: string) => {
       if ((counters[field] ?? 0) > 0) counters[field] -= 1;
+    }),
+    recountCounter: jest.fn(async (_id: string, field: string) => {
+      const before = counters[field] ?? 0;
+      const after = field in actual ? actual[field] : before;
+      counters[field] = after;
+      return { before, after };
     }),
   };
   return { svc: new EntitlementService(planModel, subscriptionModel, orgSvc), counters };
@@ -371,6 +383,40 @@ describe('EntitlementService', () => {
     );
     await expect(svc.reserveQuota(ORG_A, 'bot')).rejects.toBeInstanceOf(ForbiddenException);
     expect(counters.botCount).toBe(3);
+  });
+
+  it('a drifted counter is repaired from real usage instead of blocking', async () => {
+    // Counter says 2/2 but both bots were deleted: the create must succeed.
+    const { svc, counters } = makeEntitlements(
+      { planId: 'p', status: SubscriptionStatus.ACTIVE, overrides: {} },
+      PLAN,
+      { botCount: 2 },
+      { botCount: 0 },
+    );
+    await expect(svc.reserveQuota(ORG_A, 'bot')).resolves.toBeUndefined();
+    expect(counters.botCount).toBe(1);
+  });
+
+  it('a drifted platform counter is repaired too', async () => {
+    const { svc, counters } = makeEntitlements(
+      { planId: 'p', status: SubscriptionStatus.ACTIVE, overrides: {} },
+      PLAN,
+      { platformCount: 1 },
+      { platformCount: 0 },
+    );
+    await svc.reserveQuota(ORG_A, 'platform');
+    expect(counters.platformCount).toBe(1);
+  });
+
+  it('real usage at the limit is still refused after a recount', async () => {
+    const { svc, counters } = makeEntitlements(
+      { planId: 'p', status: SubscriptionStatus.ACTIVE, overrides: {} },
+      PLAN,
+      { botCount: 2 },
+      { botCount: 2 },
+    );
+    await expect(svc.reserveQuota(ORG_A, 'bot')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(counters.botCount).toBe(2);
   });
 
   it('release never drives a counter negative', async () => {

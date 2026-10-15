@@ -47,6 +47,13 @@ export class Social {
   @Prop()
   botId: string;
 
+  // WhatsApp Cloud API only: the sending phone number id. `botId` holds the
+  // WhatsApp Business Account id the webhook arrives under; replies are POSTed
+  // to /{phoneNumberId}/messages, so without this an agent could only answer
+  // after an inbound message had told us the number id.
+  @Prop()
+  phoneNumberId: string;
+
   @Prop({
     enum: SocialStatusEnum,
     default: SocialStatusEnum.DRAFT,

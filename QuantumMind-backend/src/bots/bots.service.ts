@@ -383,7 +383,7 @@ export class BotsService {
     if (mongoose.isValidObjectId(id)) or.unshift({ _id: id });
     const bot = await this.botModel
       .findOne({ $or: or })
-      .select("_id organizationId");
+      .select("_id organizationId status");
     if (!bot) {
       throw new HttpException("No Bot Found by this Id", 404);
     }
@@ -408,13 +408,34 @@ export class BotsService {
         );
       }
 
-      const bot = await this.botModel.findOneAndUpdate(
-        { _id: owned._id },
-        changes,
-        { new: true }
-      );
+      // Restoring a soft-deleted bot makes it count as usage again, so it must
+      // take a quota slot back (its slot was released on delete).
+      const restoring =
+        (owned as any).status === BotStatusEnum.DELETED &&
+        changes.status !== undefined &&
+        changes.status !== BotStatusEnum.DELETED;
+      if (restoring) {
+        await this.entitlementService.reserveQuota(orgId, "bot");
+      }
+
+      let bot: BotDocument | null;
+      try {
+        // The status guard makes the restore atomic: a concurrent restore
+        // matches nothing and gives its reserved slot back below.
+        bot = await this.botModel.findOneAndUpdate(
+          restoring
+            ? { _id: owned._id, status: BotStatusEnum.DELETED }
+            : { _id: owned._id },
+          changes,
+          { new: true }
+        );
+      } catch (error) {
+        if (restoring) await this.entitlementService.releaseQuota(orgId, "bot");
+        throw error;
+      }
 
       if (!bot) {
+        if (restoring) await this.entitlementService.releaseQuota(orgId, "bot");
         throw new HttpException("No Bot Found by this Id", 404);
       }
       if (changes.agents) {

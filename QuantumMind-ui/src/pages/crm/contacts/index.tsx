@@ -299,14 +299,11 @@ const CrmContacts = () => {
                 }}
               >
                 <MenuItem value="">All sources</MenuItem>
-                {Object.entries(CAPTURE_SOURCE_LABELS)
-                  // whatsapp and whatsapp_web share a label; list each channel once.
-                  .filter(([key]) => key !== 'whatsapp_web')
-                  .map(([key, label]) => (
-                    <MenuItem key={key} value={key === 'whatsapp' ? 'whatsapp,whatsapp_web' : key}>
-                      {label}
-                    </MenuItem>
-                  ))}
+                {Object.entries(CAPTURE_SOURCE_LABELS).map(([key, label]) => (
+                  <MenuItem key={key} value={key}>
+                    {label}
+                  </MenuItem>
+                ))}
                 <MenuItem value="unassigned">Added in CRM</MenuItem>
               </Select>
             </FormControl>

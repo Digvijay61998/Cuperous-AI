@@ -167,8 +167,8 @@ export function matchesFilters(card: CardLike, f: SrFilters, me?: string): boole
 
 export const CHANNEL_OPTIONS: { value: string; label: string }[] = [
   { value: 'widget', label: 'Website chat' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'whatsapp_web', label: 'WhatsApp (web)' },
+  { value: 'whatsapp', label: 'WhatsApp Business' },
+  { value: 'whatsapp_web', label: 'WhatsApp Web' },
   { value: 'telegram', label: 'Telegram' },
   { value: 'facebook', label: 'Messenger' },
 ];

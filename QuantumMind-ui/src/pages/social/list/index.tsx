@@ -37,7 +37,7 @@ import { AppDispatch, RootState } from 'src/store';
 
 // ** Custom Table Components Imports
 import { Tooltip } from '@mui/material';
-import returnPlatformIcon from 'src/components/PlatforomIcons';
+import returnPlatformIcon, { platformLabel } from 'src/components/PlatforomIcons';
 import { fetchBotData } from 'src/store/apps/bots';
 import { deleteSocial, fetchSocialList, updateSocialStatus } from 'src/store/apps/social';
 import WhatsappWebActions from 'src/views/social/list/WhatsappWebActions';
@@ -92,7 +92,7 @@ const SocialList = () => {
   const [platform, setPlatform] = useState<string>('');
   const [pageSize, setPageSize] = useState<number>(10);
   const [addSocialOpen, setAddSocialOpen] = useState<boolean>(false);
-  const { canCreate } = useEntitlements();
+  const { canCreate, refetch: refetchEntitlements } = useEntitlements();
   const platformQuotaReached = !canCreate('platforms');
 
   const initAddData:any = {
@@ -108,6 +108,11 @@ const SocialList = () => {
   // ** Hooks
   const dispatch = useDispatch<AppDispatch>();
   const { socialListData, socialListSearch } = useSelector((state: RootState) => state.social);
+  // The list is re-fetched after every connect/delete; refresh usage too so the
+  // Add button re-enables as soon as a connection frees a quota slot.
+  useEffect(() => {
+    refetchEntitlements();
+  }, [socialListData, refetchEntitlements]);
   const botList = useSelector((state: RootState) => state.bots.list);
 
   // ** publish and draft and delete dialog and Social
@@ -224,7 +229,7 @@ console.log("filteredDatafilteredData",platform)
         return (
           <div style={{ width:'100%', display:'flex', justifyContent:'center', alignItems: 'center' }}>
             <Tooltip 
-              title={row?.platform.charAt(0).toUpperCase() + row?.platform.slice(1)} 
+              title={platformLabel(row?.platform)} 
               placement='top' 
               arrow
             >

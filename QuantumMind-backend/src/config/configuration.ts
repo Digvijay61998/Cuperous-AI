@@ -180,6 +180,18 @@ export default () => ({
     whatsapp: {
       baseUrl: "https://api.chat-api.com/instance",
     },
+    // Meta WhatsApp Cloud API (the official "whatsapp" platform).
+    whatsappCloud: {
+      graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
+      // Meta App Secret. When set, every webhook POST must carry a valid
+      // X-Hub-Signature-256; unsigned or forged payloads are rejected. Leave
+      // unset only in development: the webhook is public, so without it anyone
+      // can inject messages into a tenant's inbox.
+      appSecret: process.env.WHATSAPP_APP_SECRET || "",
+      // Largest inbound media file we download and re-host (bytes).
+      maxMediaBytes:
+        parseInt(process.env.WHATSAPP_MAX_MEDIA_BYTES, 10) || 25 * 1024 * 1024,
+    },
   },
 
   // WhatsApp Web (baileys) — native in-process engine ported from OpenWA.

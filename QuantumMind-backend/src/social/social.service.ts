@@ -169,6 +169,7 @@ export class SocialService {
           jarcubeBot: createSocialDto.jarcubeBot,
           organizationId,
           accessToken: await this.encrypt(createSocialDto.accessToken),
+          phoneNumberId: this.normalizePhoneNumberId(createSocialDto.phoneNumberId),
         });
         return this.redact(social);
       } catch (error) {
@@ -251,6 +252,11 @@ export class SocialService {
       const changes: Record<string, any> = {};
       if (updateSocialDto.name !== undefined) changes.name = updateSocialDto.name;
       if (updateSocialDto.botId !== undefined) changes.botId = updateSocialDto.botId;
+      if (updateSocialDto.phoneNumberId !== undefined) {
+        changes.phoneNumberId = this.normalizePhoneNumberId(
+          updateSocialDto.phoneNumberId,
+        );
+      }
       if (updateSocialDto.accessToken) {
         changes.accessToken = await this.encrypt(updateSocialDto.accessToken);
       }
@@ -396,6 +402,74 @@ export class SocialService {
       this.logger.error(`Error while getting all webhooks : ${error.message}`);
       throw new HttpException(error.message, error.status || 500);
     }
+  }
+
+  /** The form posts a numeric input; `0`/blank means "not provided". */
+  private normalizePhoneNumberId(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    const s = String(value).trim();
+    return s && s !== '0' ? s : undefined;
+  }
+
+  /**
+   * Credentials for one connected account of `platform`, matched on any of the
+   * given account keys (platform `botId`, or for WhatsApp Cloud also the phone
+   * number id). Platform-scoped, unlike {@link getBotToken}, so a WhatsApp
+   * business id can never resolve to another platform's row.
+   */
+  async getChannelCredentials(
+    platform: string,
+    keys: Array<string | undefined | null>,
+  ): Promise<{
+    socialId: string;
+    accountId: string;
+    name: string;
+    accessToken: string;
+    phoneNumberId?: string;
+    jarcubeBotId: string;
+    organizationId: string | null;
+    status: string;
+  } | null> {
+    const ids = keys.filter((k): k is string => !!k).map(String);
+    if (!ids.length) return null;
+    const social = await this.socialModel.findOne({
+      platform,
+      $or: [{ botId: { $in: ids } }, { phoneNumberId: { $in: ids } }],
+    });
+    if (!social?.accessToken || !social.jarcubeBot) return null;
+    return {
+      socialId: String(social._id),
+      accountId: social.botId,
+      name: social.name,
+      accessToken: await this.decrypt(social.accessToken),
+      phoneNumberId: social.phoneNumberId || undefined,
+      jarcubeBotId: String(social.jarcubeBot),
+      organizationId: social.organizationId ? String(social.organizationId) : null,
+      status: social.status,
+    };
+  }
+
+  /**
+   * Connected accounts of one platform, for the inbox connection banner.
+   * `botIds` is the caller's scope: null/undefined = unscoped, [] = nothing.
+   */
+  async listChannelAccounts(
+    platform: string,
+    botIds?: string[] | null,
+  ): Promise<Array<{ accountId: string; name: string; status: string }>> {
+    const filter: Record<string, any> = { platform };
+    if (botIds !== undefined && botIds !== null) {
+      filter.jarcubeBot = { $in: botIds };
+    }
+    const rows = await this.socialModel
+      .find(filter)
+      .select('botId name status')
+      .lean();
+    return rows.map((r: any) => ({
+      accountId: r.botId,
+      name: r.name,
+      status: r.status,
+    }));
   }
 
   async getBotToken(botId: string) {
